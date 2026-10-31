@@ -1,0 +1,23 @@
+[Unit]
+Description=Hotel Automation API
+After=network-online.target postgresql.service
+Wants=network-online.target
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=hotelapp
+Group=hotelapp
+WorkingDirectory=/opt/hotel-automation/current/apps/server
+EnvironmentFile=/etc/hotel-automation/server.env
+ExecStart=/opt/node24/bin/node /opt/hotel-automation/current/apps/server/dist/index.js
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target
