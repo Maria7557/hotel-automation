@@ -1,0 +1,72 @@
+import { describe, expect, it, vi } from "vitest";
+
+import { GoogleProvider } from "../src/providers/google.js";
+import type { ProviderFetch } from "../src/providers/http.js";
+import { WahaProvider, toWahaChatId } from "../src/providers/waha.js";
+import { sealPrivateValue, unsealPrivateValue } from "../src/lib/public-token.js";
+
+describe("provider adapters", () => {
+  it("round-trips AES-GCM sealed values and rejects tampering", () => {
+    const secret = "test-auth-secret-that-is-at-least-32-characters";
+    const sealed = sealPrivateValue("private-token", secret);
+    expect(unsealPrivateValue(sealed, secret)).toBe("private-token");
+    const parts = sealed.split(".");
+    parts[3] = `${parts[3]?.startsWith("A") ? "B" : "A"}${parts[3]?.slice(1)}`;
+    expect(() => unsealPrivateValue(parts.join("."), secret)).toThrow("Invalid sealed value");
+  });
+
+  it("refreshes Google access, builds RFC 2822 base64url, and sends through Gmail", async () => {
+    const mock = vi.fn(async (input: string | URL, _init?: RequestInit) => {
+      if (String(input) === "https://oauth2.googleapis.com/token") {
+        return json({ access_token: "fresh-access", expires_in: 3600, token_type: "Bearer" });
+      }
+      return json({ id: "gmail-id" });
+    });
+    const provider = new GoogleProvider(mock as ProviderFetch);
+    const result = await provider.send(
+      {
+        accessToken: "expired-access",
+        refreshToken: "refresh-token",
+        accessTokenExpiresAt: new Date(0).toISOString(),
+        scope: "https://www.googleapis.com/auth/gmail.send",
+        tokenType: "Bearer",
+      },
+      { clientId: "client", clientSecret: "secret", redirectUri: "https://api.example/callback" },
+      { to: "guest@example.com", subject: "Offer", html: "<strong>Hello</strong>" },
+    );
+    expect(result).toMatchObject({ providerMessageId: "gmail-id", credentials: { accessToken: "fresh-access" } });
+    const refreshCall = mock.mock.calls[0];
+    expect(String(refreshCall?.[1]?.body)).toContain("grant_type=refresh_token");
+    expect(String(refreshCall?.[1]?.body)).toContain("refresh_token=refresh-token");
+    const sendCall = mock.mock.calls[1];
+    expect(sendCall?.[1]?.headers).toMatchObject({ Authorization: "Bearer fresh-access" });
+    const raw = JSON.parse(String(sendCall?.[1]?.body)).raw as string;
+    expect(raw).not.toContain("=");
+    expect(Buffer.from(raw, "base64url").toString("utf8")).toBe(
+      "To: guest@example.com\r\nSubject: Offer\r\nMIME-Version: 1.0\r\n" +
+        "Content-Type: text/html; charset=UTF-8\r\nContent-Transfer-Encoding: 8bit\r\n\r\n" +
+        "<strong>Hello</strong>",
+    );
+  });
+
+  it("uses WAHA X-Api-Key, session health, and normalized E.164 chat ids", async () => {
+    const mock = vi.fn(async (input: string | URL, _init?: RequestInit) =>
+      String(input).includes("/api/sessions/")
+        ? json({ status: "WORKING", me: { id: "393331234567@c.us" } })
+        : json({ key: { id: "waha-id" } }),
+    );
+    const provider = new WahaProvider(mock as ProviderFetch);
+    const config = { baseUrl: "https://waha.example", apiKey: "api-secret", sessionName: "hotel-main" };
+    expect(await provider.sessionStatus(config)).toEqual({ status: "WORKING", working: true });
+    expect(await provider.sendText(config, "+39 333-123-4567", "Hello")).toEqual({
+      providerMessageId: "waha-id",
+      chatId: "393331234567@c.us",
+    });
+    expect(mock.mock.calls[1]?.[1]?.headers).toMatchObject({ "X-Api-Key": "api-secret" });
+    expect(toWahaChatId("+39 333-123-4567")).toBe("393331234567@c.us");
+  });
+});
+
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+}

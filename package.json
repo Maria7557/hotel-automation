@@ -1,0 +1,23 @@
+{
+  "name": "hotel-automation",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace @hotel/server",
+    "dev:server": "npm run dev --workspace @hotel/server",
+    "dev:mobile": "npm run start --workspace @hotel/mobile",
+    "check": "npm run typecheck --workspaces --if-present && npm run test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "devDependencies": {
+    "@types/react": "~19.3.0"
+  }
+}

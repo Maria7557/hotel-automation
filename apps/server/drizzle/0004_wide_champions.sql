@@ -1,0 +1,1 @@
+ALTER TABLE "offer_versions" ADD COLUMN "selected_option_index" integer;

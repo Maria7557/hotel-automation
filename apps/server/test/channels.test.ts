@@ -1,0 +1,482 @@
+import type { FastifyInstance } from "fastify";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { createApp } from "../src/app.js";
+import type { ProviderFetch } from "../src/providers/http.js";
+import { createMemoryRepositories, type MemoryRepositories } from "./helpers/memory-repositories.js";
+
+const baseEnv = {
+  AUTH_SECRET: "test-auth-secret-that-is-at-least-32-characters",
+  SESSION_TTL_DAYS: 30,
+  PUBLIC_BASE_URL: "https://offers.example",
+  corsOrigins: ["http://localhost:8081"],
+};
+
+const googleEnv = {
+  ...baseEnv,
+  GOOGLE_CLIENT_ID: "google-client-id.apps.googleusercontent.com",
+  GOOGLE_CLIENT_SECRET: "google-client-secret",
+  GOOGLE_REDIRECT_URI: "https://api.example/v1/connections/google/oauth/callback",
+};
+
+describe("message settings and channel connections", () => {
+  let app: FastifyInstance;
+  let repositories: MemoryRepositories;
+  let providerFetch: ProviderFetch;
+  let providerFetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(async () => {
+    repositories = createMemoryRepositories();
+    providerFetchMock = vi.fn(async (input: string | URL) => {
+      const url = String(input);
+      if (url.includes("/api/sessions/")) {
+        return new Response(JSON.stringify({ name: "hotel-main", status: "WORKING", me: { id: "1@c.us" } }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.endsWith("/api/sendText")) {
+        return new Response(JSON.stringify({ id: "waha-message-1" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      throw new Error("Unexpected provider URL");
+    });
+    providerFetch = providerFetchMock as ProviderFetch;
+    app = await createApp({ env: baseEnv, repositories, providerFetch, logger: false });
+  });
+
+  afterEach(async () => app.close());
+
+  it("requires authentication and an onboarded hotel", async () => {
+    expect((await app.inject({ method: "GET", url: "/v1/hotel/message-settings" })).statusCode).toBe(401);
+    const token = await register(app, "owner@example.com");
+    const missing = await app.inject({
+      method: "GET",
+      url: "/v1/connections",
+      headers: auth(token),
+    });
+    expect(missing.statusCode).toBe(404);
+    expect(missing.json().error.code).toBe("HOTEL_NOT_FOUND");
+  });
+
+  it("reads defaults, replaces settings and rejects unknown variables", async () => {
+    const owner = await onboard(app, "owner@example.com", "Casa Blu");
+    const defaults = await app.inject({
+      method: "GET",
+      url: "/v1/hotel/message-settings",
+      headers: auth(owner.token),
+    });
+    expect(defaults.statusCode).toBe(200);
+    expect(defaults.json().data.settings).toMatchObject({
+      hotelId: owner.hotelId,
+      emailSubjectTemplate: "Your offer from {{hotel_name}}",
+      allowedVariables: expect.arrayContaining(["guest_name", "offer_url"]),
+    });
+
+    const updated = await app.inject({
+      method: "PUT",
+      url: "/v1/hotel/message-settings",
+      headers: auth(owner.token),
+      payload: {
+        emailSubjectTemplate: "Offerta {{hotel_name}} per {{guest_name}}",
+        emailBodyTemplate: "Ciao {{guest_name}}\nTotale {{total}}\n{{offer_url}}",
+        whatsappBodyTemplate: "{{hotel_name}}: {{offer_url}}",
+      },
+    });
+    expect(updated.statusCode).toBe(200);
+    expect(updated.json().data.settings.emailBodyTemplate).toContain("{{total}}");
+
+    const invalid = await app.inject({
+      method: "PUT",
+      url: "/v1/hotel/message-settings",
+      headers: auth(owner.token),
+      payload: {
+        emailSubjectTemplate: "{{password}}",
+        emailBodyTemplate: "Body",
+        whatsappBodyTemplate: "Message",
+      },
+    });
+    expect(invalid.statusCode).toBe(400);
+    expect(invalid.json().error.code).toBe("VALIDATION_ERROR");
+    expect(JSON.stringify(invalid.json())).toContain("Unknown template variable");
+  });
+
+  it("renders safe preview HTML and never appends PII to the offer URL", async () => {
+    const owner = await onboard(app, "owner@example.com", "Casa <Blu>");
+    await app.inject({
+      method: "PUT",
+      url: "/v1/hotel/message-settings",
+      headers: auth(owner.token),
+      payload: {
+        emailSubjectTemplate: "Proposta {{hotel_name}} per {{guest_name}}",
+        emailBodyTemplate: "<script>alert(1)</script> Ciao {{guest_name}} {{offer_url}}",
+        whatsappBodyTemplate: "Ciao {{guest_name}} {{offer_url}}",
+      },
+    });
+    const preview = await app.inject({
+      method: "POST",
+      url: "/v1/hotel/message-settings/preview",
+      headers: auth(owner.token),
+      payload: {
+        channel: "email",
+        sample: {
+          guestName: "Anna <img src=x onerror=alert(1)>",
+          checkIn: "2027-01-01",
+          checkOut: "2027-01-02",
+          guestCount: 1,
+          totalCents: 12_345,
+        },
+      },
+    });
+    expect(preview.statusCode).toBe(200);
+    const rendered = preview.json().data.preview;
+    expect(rendered.text).toContain("https://offers.example/proposal/preview");
+    expect(rendered.html).not.toContain("<script>alert");
+    expect(rendered.html).not.toContain("<img src=x");
+    expect(rendered.html).toContain("&lt;script&gt;");
+    expect(rendered.html).not.toContain("Anna%20");
+  });
+
+  it("creates a transparent fake Delivery through the preview path without claiming sent", async () => {
+    const owner = await onboard(app, "owner@example.com", "Casa Blu");
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/hotel/message-settings/test-send",
+      headers: auth(owner.token),
+      payload: { channel: "email", recipient: "owner@example.com" },
+    });
+    expect(response.statusCode).toBe(202);
+    expect(response.json().data).toMatchObject({
+      provider: "fake",
+      accepted: false,
+      delivery: {
+        channel: "email",
+        state: "unknown",
+        recipient: "owner@example.com",
+        lastErrorCode: "FAKE_PROVIDER",
+      },
+      rendered: { channel: "email" },
+    });
+    const [delivery] = repositories.automation.deliveries.values();
+    expect(delivery).toMatchObject({
+      hotelId: owner.hotelId,
+      kind: "test",
+      state: "unknown",
+      providerMessageId: null,
+      lastErrorMessage: "No external provider call was made.",
+    });
+    expect(delivery?.payload.rendered).toEqual(response.json().data.rendered);
+    expect(JSON.stringify(delivery)).not.toContain('"delivered"');
+    expect(JSON.stringify(delivery)).not.toContain('"provider_accepted"');
+  });
+
+  it("isolates settings, connections and test deliveries by hotel", async () => {
+    const owner = await onboard(app, "owner@example.com", "Owner Hotel");
+    const other = await onboard(app, "other@example.com", "Other Hotel");
+    await app.inject({
+      method: "PUT",
+      url: "/v1/hotel/message-settings",
+      headers: auth(owner.token),
+      payload: {
+        emailSubjectTemplate: "OWNER {{hotel_name}}",
+        emailBodyTemplate: "Owner body",
+        whatsappBodyTemplate: "Owner WA",
+      },
+    });
+    const otherSettings = await app.inject({
+      method: "GET",
+      url: "/v1/hotel/message-settings",
+      headers: auth(other.token),
+    });
+    expect(otherSettings.json().data.settings.emailSubjectTemplate).not.toContain("OWNER");
+
+    await app.inject({
+      method: "PUT",
+      url: "/v1/connections/waha",
+      headers: auth(owner.token),
+      payload: { baseUrl: "https://waha.owner.example", apiKey: "owner-secret-key", sessionName: "owner" },
+    });
+    const otherConnections = await app.inject({
+      method: "GET",
+      url: "/v1/connections",
+      headers: auth(other.token),
+    });
+    expect(otherConnections.json().data.connections.find(({ kind }: { kind: string }) => kind === "waha"))
+      .toMatchObject({ configured: false, state: "disconnected" });
+  });
+
+  it("encrypts WAHA credentials and never returns the API key", async () => {
+    const owner = await onboard(app, "owner@example.com", "Casa Blu");
+    const apiKey = "very-secret-waha-api-key";
+    const configured = await app.inject({
+      method: "PUT",
+      url: "/v1/connections/waha",
+      headers: auth(owner.token),
+      payload: { baseUrl: "https://waha.example/", apiKey, sessionName: "hotel-main" },
+    });
+    expect(configured.statusCode).toBe(200);
+    expect(configured.json().data.connection).toEqual({
+      kind: "waha",
+      configured: true,
+      available: true,
+      state: "disconnected",
+      lastCheckedAt: null,
+      lastErrorCode: null,
+      baseUrl: "https://waha.example",
+      sessionName: "hotel-main",
+    });
+    expect(configured.body).not.toContain(apiKey);
+    const stored = repositories.channels.connections.get(`${owner.hotelId}:waha`);
+    expect(stored?.encryptedCredentials).toMatch(/^v1\./);
+    expect(stored?.encryptedCredentials).not.toContain(apiKey);
+
+    const status = await app.inject({
+      method: "GET",
+      url: "/v1/connections/waha",
+      headers: auth(owner.token),
+    });
+    expect(status.body).not.toContain(apiKey);
+    expect(status.json().data.connection.configured).toBe(true);
+  });
+
+  it("checks a WAHA session and performs a real test send only after it is connected", async () => {
+    const owner = await onboard(app, "owner@example.com", "Casa Blu");
+    await app.inject({
+      method: "PUT",
+      url: "/v1/connections/waha",
+      headers: auth(owner.token),
+      payload: { baseUrl: "https://waha.example/", apiKey: "secret-waha-key", sessionName: "hotel-main" },
+    });
+
+    const checked = await app.inject({
+      method: "POST",
+      url: "/v1/connections/waha/check",
+      headers: auth(owner.token),
+    });
+    expect(checked.statusCode).toBe(200);
+    expect(checked.json().data.connection).toMatchObject({ state: "connected", lastErrorCode: null });
+
+    const sent = await app.inject({
+      method: "POST",
+      url: "/v1/hotel/message-settings/test-send",
+      headers: auth(owner.token),
+      payload: { channel: "whatsapp", recipient: "+393331234567" },
+    });
+    expect(sent.statusCode).toBe(202);
+    expect(sent.json().data).toMatchObject({
+      provider: "waha",
+      accepted: true,
+      delivery: { state: "provider_accepted", lastErrorCode: null },
+    });
+    const sendCall = providerFetchMock.mock.calls.find(([url]) => String(url).endsWith("/api/sendText"));
+    expect(sendCall?.[1]?.headers).toMatchObject({ "X-Api-Key": "secret-waha-key" });
+    expect(JSON.parse(String(sendCall?.[1]?.body))).toMatchObject({
+      session: "hotel-main",
+      chatId: "393331234567@c.us",
+    });
+    expect(JSON.stringify(sent.json())).not.toContain("secret-waha-key");
+  });
+
+  it("returns CONFIG_REQUIRED when Google OAuth environment credentials are absent", async () => {
+    const owner = await onboard(app, "owner@example.com", "Casa Blu");
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/connections/google/oauth/start",
+      headers: auth(owner.token),
+    });
+    expect(response.statusCode).toBe(503);
+    expect(response.json().error.code).toBe("CONFIG_REQUIRED");
+  });
+});
+
+describe("Google OAuth state architecture", () => {
+  let app: FastifyInstance;
+  let repositories: MemoryRepositories;
+  let providerFetch: ProviderFetch;
+  let providerFetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(async () => {
+    repositories = createMemoryRepositories();
+    providerFetchMock = vi.fn(async (input: string | URL) => {
+      const url = String(input);
+      if (url === "https://oauth2.googleapis.com/token") {
+        return new Response(JSON.stringify({
+          access_token: "google-access-token",
+          refresh_token: "google-refresh-token",
+          expires_in: 3600,
+          token_type: "Bearer",
+          scope: "https://www.googleapis.com/auth/gmail.send",
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.includes("gmail.googleapis.com")) {
+        return new Response(JSON.stringify({ id: "gmail-message-1" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      throw new Error("Unexpected provider URL");
+    });
+    providerFetch = providerFetchMock as ProviderFetch;
+    app = await createApp({ env: googleEnv, repositories, providerFetch, logger: false });
+  });
+
+  afterEach(async () => app.close());
+
+  it("exchanges the code, stores encrypted tokens, and consumes signed state once", async () => {
+    const owner = await onboard(app, "owner@example.com", "Casa Blu");
+    const start = await app.inject({
+      method: "GET",
+      url: "/v1/connections/google/oauth/start",
+      headers: auth(owner.token),
+    });
+    expect(start.statusCode).toBe(200);
+    const authorizationUrl = new URL(start.json().data.authorizationUrl);
+    expect(authorizationUrl.origin + authorizationUrl.pathname).toBe(
+      "https://accounts.google.com/o/oauth2/v2/auth",
+    );
+    expect(authorizationUrl.searchParams.get("client_id")).toBe(googleEnv.GOOGLE_CLIENT_ID);
+    expect(authorizationUrl.searchParams.get("redirect_uri")).toBe(googleEnv.GOOGLE_REDIRECT_URI);
+    expect(authorizationUrl.searchParams.get("scope")).toBe("https://www.googleapis.com/auth/gmail.send");
+    expect(start.body).not.toContain(googleEnv.GOOGLE_CLIENT_SECRET);
+    const state = authorizationUrl.searchParams.get("state");
+    expect(state).toBeTruthy();
+
+    const callback = await app.inject({
+      method: "GET",
+      url: `/v1/connections/google/oauth/callback?state=${encodeURIComponent(state!)}&code=one-time-code`,
+    });
+    expect(callback.statusCode).toBe(202);
+    expect(callback.json().data).toMatchObject({
+      status: "connected",
+      connection: {
+        kind: "google",
+        configured: true,
+        available: true,
+        state: "connected",
+        lastErrorCode: null,
+      },
+    });
+    const stored = repositories.channels.connections.get(`${owner.hotelId}:google`);
+    expect(stored?.metadata.oauthNonceHash).toBeUndefined();
+    expect(JSON.stringify(stored)).not.toContain("one-time-code");
+    expect(stored?.encryptedCredentials).toMatch(/^v1\./);
+    expect(callback.body).not.toContain("google-access-token");
+    expect(callback.body).not.toContain("google-refresh-token");
+    const tokenCall = providerFetchMock.mock.calls[0];
+    expect(String(tokenCall?.[0])).toBe("https://oauth2.googleapis.com/token");
+    expect(String(tokenCall?.[1]?.body)).toContain("grant_type=authorization_code");
+    expect(String(tokenCall?.[1]?.body)).toContain("code=one-time-code");
+
+    const replay = await app.inject({
+      method: "GET",
+      url: `/v1/connections/google/oauth/callback?state=${encodeURIComponent(state!)}&code=replayed-code`,
+    });
+    expect(replay.statusCode).toBe(409);
+    expect(replay.json().error.code).toBe("OAUTH_STATE_INVALID");
+  });
+
+  it("uses Gmail for test-send after a successful OAuth connection", async () => {
+    const owner = await onboard(app, "owner@example.com", "Casa Blu");
+    const start = await app.inject({
+      method: "GET",
+      url: "/v1/connections/google/oauth/start",
+      headers: auth(owner.token),
+    });
+    const state = new URL(start.json().data.authorizationUrl).searchParams.get("state")!;
+    await app.inject({
+      method: "GET",
+      url: `/v1/connections/google/oauth/callback?state=${encodeURIComponent(state)}&code=code`,
+    });
+    const sent = await app.inject({
+      method: "POST",
+      url: "/v1/hotel/message-settings/test-send",
+      headers: auth(owner.token),
+      payload: { channel: "email", recipient: "owner@example.com" },
+    });
+    expect(sent.statusCode).toBe(202);
+    expect(sent.json().data).toMatchObject({
+      provider: "gmail",
+      accepted: true,
+      delivery: { state: "provider_accepted", lastErrorCode: null },
+    });
+    const gmailCall = providerFetchMock.mock.calls.find(([url]) => String(url).includes("gmail.googleapis.com"));
+    expect(gmailCall?.[1]?.headers).toMatchObject({ Authorization: "Bearer google-access-token" });
+    const raw = JSON.parse(String(gmailCall?.[1]?.body)).raw as string;
+    expect(Buffer.from(raw, "base64url").toString("utf8")).toContain("To: owner@example.com\r\n");
+  });
+
+  it("rejects a tampered signed state", async () => {
+    const owner = await onboard(app, "owner@example.com", "Casa Blu");
+    const start = await app.inject({
+      method: "GET",
+      url: "/v1/connections/google/oauth/start",
+      headers: auth(owner.token),
+    });
+    const url = new URL(start.json().data.authorizationUrl);
+    const state = url.searchParams.get("state")!;
+    const response = await app.inject({
+      method: "GET",
+      url: `/v1/connections/google/oauth/callback?state=${encodeURIComponent(`${state}x`)}&code=code`,
+    });
+    expect(response.statusCode).toBe(409);
+    expect(response.json().error.code).toBe("OAUTH_STATE_INVALID");
+  });
+
+  it("consumes OAuth state and marks the connection attention when token exchange fails", async () => {
+    providerFetchMock.mockImplementationOnce(async () =>
+      new Response(JSON.stringify({ error: "invalid_grant", secret: "must-not-leak" }), {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    const owner = await onboard(app, "failure@example.com", "Casa Blu");
+    const start = await app.inject({
+      method: "GET",
+      url: "/v1/connections/google/oauth/start",
+      headers: auth(owner.token),
+    });
+    const state = new URL(start.json().data.authorizationUrl).searchParams.get("state")!;
+    const failed = await app.inject({
+      method: "GET",
+      url: `/v1/connections/google/oauth/callback?state=${encodeURIComponent(state)}&code=bad-code`,
+    });
+    expect(failed.statusCode).toBe(502);
+    expect(failed.json().error.code).toBe("PROVIDER_CONNECTION_FAILED");
+    expect(failed.body).not.toContain("must-not-leak");
+    expect(repositories.channels.connections.get(`${owner.hotelId}:google`)).toMatchObject({
+      state: "attention",
+      lastErrorCode: "GOOGLE_TOKEN_HTTP_400",
+    });
+    const replay = await app.inject({
+      method: "GET",
+      url: `/v1/connections/google/oauth/callback?state=${encodeURIComponent(state)}&code=other-code`,
+    });
+    expect(replay.statusCode).toBe(409);
+  });
+});
+
+async function register(app: FastifyInstance, email: string): Promise<string> {
+  const response = await app.inject({
+    method: "POST",
+    url: "/v1/auth/register",
+    payload: { email, password: "a-strong-password", displayName: "Owner" },
+  });
+  return response.json().data.accessToken as string;
+}
+
+async function onboard(app: FastifyInstance, email: string, name: string) {
+  const token = await register(app, email);
+  const response = await app.inject({
+    method: "POST",
+    url: "/v1/hotel",
+    headers: auth(token),
+    payload: { name, city: "Firenze" },
+  });
+  return { token, hotelId: response.json().data.hotel.id as string };
+}
+
+function auth(token: string): Record<string, string> {
+  return { authorization: `Bearer ${token}` };
+}

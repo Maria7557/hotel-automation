@@ -1,0 +1,1 @@
+ALTER TABLE "hotels" ALTER COLUMN "locale" SET DEFAULT 'en-GB';
