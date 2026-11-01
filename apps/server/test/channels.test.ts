@@ -39,7 +39,7 @@ describe("message settings and channel connections", () => {
         }), { status: 200, headers: { "Content-Type": "application/json" } });
       }
       if (url.includes("/api/sessions/")) {
-        return new Response(JSON.stringify({ name: "hotel-main", status: "WORKING", me: { id: "1@c.us" } }), {
+        return new Response(JSON.stringify({ name: "hotel-main", status: "WORKING", me: { id: "971505554801@c.us" } }), {
           status: 200,
           headers: { "Content-Type": "application/json" },
         });
@@ -273,6 +273,7 @@ describe("message settings and channel connections", () => {
       state: "connected",
       lastErrorCode: null,
       baseUrl: "https://waha.example",
+      phoneNumber: "971505554801",
     });
     expect(configured.json().data.connection.sessionName).toMatch(/^hotel-/);
     expect(configured.body).not.toContain(baseEnv.WAHA_API_KEY);
@@ -324,6 +325,35 @@ describe("message settings and channel connections", () => {
       chatId: "89902624575692@lid",
     });
     expect(JSON.stringify(sent.json())).not.toContain(baseEnv.WAHA_API_KEY);
+  });
+
+  it("blocks a WhatsApp test sent to the connected sender number", async () => {
+    const owner = await onboard(app, "self-send@example.com", "Casa Blu");
+    await app.inject({
+      method: "POST",
+      url: "/v1/connections/waha/connect",
+      headers: auth(owner.token),
+    });
+
+    const sent = await app.inject({
+      method: "POST",
+      url: "/v1/hotel/message-settings/test-send",
+      headers: auth(owner.token),
+      payload: { channel: "whatsapp", recipient: "+971505554801" },
+    });
+
+    expect(sent.statusCode).toBe(202);
+    expect(sent.json().data).toMatchObject({
+      provider: "waha",
+      accepted: false,
+      delivery: { state: "failed", lastErrorCode: "WAHA_RECIPIENT_IS_SENDER" },
+    });
+    expect(providerFetchMock.mock.calls.some(([url]) => String(url).endsWith("/api/sendText"))).toBe(false);
+    expect(repositories.channels.connections.get(`${owner.hotelId}:waha`)).toMatchObject({
+      state: "connected",
+      metadata: { phoneNumber: "971505554801" },
+      lastErrorCode: null,
+    });
   });
 
   it("refreshes WhatsApp status on page load and can disconnect the linked phone", async () => {

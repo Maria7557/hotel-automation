@@ -48,6 +48,7 @@ export function MessageSettingsScreen({ onBack, demo }: { onBack: () => void; de
   const [recipient, setRecipient] = useState("");
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<TestSendResult | null>(null);
+  const [connectedWhatsappNumber, setConnectedWhatsappNumber] = useState<string | null>(null);
 
   const applySettings = (next: MessageSettings) => {
     setSettings(next);
@@ -60,7 +61,20 @@ export function MessageSettingsScreen({ onBack, demo }: { onBack: () => void; de
   const load = async () => {
     setLoading(true);
     setError(null);
-    try { applySettings(demo ? demoSettings : await apiClient.getMessageSettings()); }
+    try {
+      if (demo) {
+        applySettings(demoSettings);
+        setConnectedWhatsappNumber(null);
+      } else {
+        const [nextSettings, connections] = await Promise.all([
+          apiClient.getMessageSettings(),
+          apiClient.getConnections().catch(() => []),
+        ]);
+        applySettings(nextSettings);
+        const whatsapp = connections.find((connection) => connection.kind === "waha");
+        setConnectedWhatsappNumber(whatsapp?.phoneNumber ?? null);
+      }
+    }
     catch (nextError) { setError(authErrorMessage(nextError)); }
     finally { setLoading(false); }
   };
@@ -74,6 +88,9 @@ export function MessageSettingsScreen({ onBack, demo }: { onBack: () => void; de
   }), [subject, emailBody, whatsappBody]);
   const dirty = saved ? JSON.stringify(current) !== JSON.stringify(saved) : false;
   const valid = subject.trim().length > 0 && !/[\r\n]/.test(subject) && emailBody.trim().length > 0 && whatsappBody.trim().length > 0;
+  const recipientIsConnectedWhatsapp = testChannel === "whatsapp"
+    && connectedWhatsappNumber !== null
+    && phoneDigits(recipient) === phoneDigits(connectedWhatsappNumber);
 
   const save = async () => {
     setError(null);
@@ -112,6 +129,10 @@ export function MessageSettingsScreen({ onBack, demo }: { onBack: () => void; de
     const validRecipient = testChannel === "email" ? recipient.includes("@") : /^\+[1-9]\d{7,14}$/.test(recipient);
     if (!validRecipient) {
       setError(testChannel === "email" ? "Check the recipient email address." : "Use a phone number in the format +390000000000.");
+      return;
+    }
+    if (recipientIsConnectedWhatsapp) {
+      setError("Use a different recipient. WhatsApp cannot send this test to the same number connected to the hotel account.");
       return;
     }
     setTesting(true);
@@ -193,8 +214,9 @@ export function MessageSettingsScreen({ onBack, demo }: { onBack: () => void; de
                 keyboardType={testChannel === "email" ? "email-address" : "phone-pad"}
                 autoCapitalize="none"
                 editable={!testing}
+                error={recipientIsConnectedWhatsapp ? "This is the connected hotel WhatsApp number. Enter a different recipient." : undefined}
               />
-              <Button variant="secondary" icon={Send} onPress={() => void sendTest()} loading={testing} disabled={dirty && !demo}>Send test</Button>
+              <Button variant="secondary" icon={Send} onPress={() => void sendTest()} loading={testing} disabled={(dirty && !demo) || recipientIsConnectedWhatsapp}>Send test</Button>
               <Text style={styles.helper}>With a verified connection, the test is sent through Gmail or WAHA. Without one, a clearly labelled fake record is created and nothing is sent externally.</Text>
               {testResult ? <TestResultCard result={testResult} /> : null}
             </View>
@@ -218,9 +240,16 @@ function PreviewCard({ preview }: { preview: MessagePreview }) {
 
 function TestResultCard({ result }: { result: TestSendResult }) {
   const Icon = result.accepted ? Check : MessageCircle;
+  const recipientIsSender = result.delivery.lastErrorCode === "WAHA_RECIPIENT_IS_SENDER";
+  const heading = recipientIsSender
+    ? "Use a different WhatsApp number"
+    : result.accepted
+      ? "Accepted by external provider"
+      : "Not sent to an external channel";
   return (
     <View style={[styles.fakeResult, result.accepted && styles.acceptedResult]} accessibilityRole="alert">
-      <View style={styles.fakeResultTitle}><Icon size={18} color={result.accepted ? theme.colors.success : theme.colors.warning} /><Text style={[styles.fakeResultHeading, result.accepted && styles.acceptedResultHeading]}>{result.accepted ? "Accepted by external provider" : "Not sent to an external channel"}</Text></View>
+      <View style={styles.fakeResultTitle}><Icon size={18} color={result.accepted ? theme.colors.success : theme.colors.warning} /><Text style={[styles.fakeResultHeading, result.accepted && styles.acceptedResultHeading]}>{heading}</Text></View>
+      {recipientIsSender ? <Text style={styles.fakeResultText}>This number is connected as the hotel sender, so WhatsApp cannot receive its own test message.</Text> : null}
       <Text style={styles.fakeResultText}>Provider: {result.provider} · accepted: {String(result.accepted)}</Text>
       <Text style={styles.fakeResultText}>Delivery: {result.delivery.state} · {result.delivery.lastErrorCode ?? "no code"}</Text>
       <Text style={styles.fakeResultText}>Recipient: {result.delivery.recipient}</Text>
@@ -248,6 +277,10 @@ function ScreenHeader({ title, onBack }: { title: string; onBack: () => void }) 
 
 function toInput(settings: MessageSettings): MessageSettingsInput {
   return { emailSubjectTemplate: settings.emailSubjectTemplate, emailBodyTemplate: settings.emailBodyTemplate, whatsappBodyTemplate: settings.whatsappBodyTemplate };
+}
+
+function phoneDigits(value: string): string {
+  return value.replace(/\D/g, "");
 }
 
 function renderDemoPreview(channel: MessageChannel, settings: MessageSettingsInput): MessagePreview {

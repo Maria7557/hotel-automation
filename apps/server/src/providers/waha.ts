@@ -2,6 +2,11 @@ import { asRecord, type ProviderFetch, ProviderError, providerJson } from "./htt
 
 export type WahaConfig = { baseUrl: string; apiKey: string; sessionName: string };
 export type WahaPlatformConfig = Omit<WahaConfig, "sessionName">;
+export type WahaSessionState = {
+  status: string;
+  working: boolean;
+  phoneNumber: string | null;
+};
 export type WahaSessionSummary = {
   name: string;
   status: string;
@@ -20,7 +25,7 @@ export type WahaSessionSummary = {
 export class WahaProvider {
   constructor(private readonly fetchClient: ProviderFetch) {}
 
-  async prepareSession(config: WahaConfig): Promise<{ status: string; working: boolean }> {
+  async prepareSession(config: WahaConfig): Promise<WahaSessionState> {
     const current = await providerJson(
       this.fetchClient,
       `${config.baseUrl}/api/sessions/${encodeURIComponent(config.sessionName)}`,
@@ -120,7 +125,7 @@ export class WahaProvider {
     return `data:${mimetype};base64,${body.data}`;
   }
 
-  async sessionStatus(config: WahaConfig): Promise<{ status: string; working: boolean }> {
+  async sessionStatus(config: WahaConfig): Promise<WahaSessionState> {
     const result = await providerJson(
       this.fetchClient,
       `${config.baseUrl}/api/sessions/${encodeURIComponent(config.sessionName)}`,
@@ -257,12 +262,15 @@ function numberOrNull(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-function sessionState(value: unknown, errorCode: string): { status: string; working: boolean } {
+function sessionState(value: unknown, errorCode: string): WahaSessionState {
   const body = asRecord(value);
   if (!body || typeof body.status !== "string") throw new ProviderError(errorCode, false);
+  const me = asRecord(body.me);
+  const rawId = typeof me?.id === "string" ? me.id : null;
   return {
     status: body.status,
-    working: body.status === "WORKING" && body.me !== null && body.me !== undefined,
+    working: body.status === "WORKING" && me !== null,
+    phoneNumber: rawId ? rawId.split("@")[0]?.replace(/\D/g, "") || null : null,
   };
 }
 

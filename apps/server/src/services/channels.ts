@@ -127,11 +127,27 @@ export class ChannelService {
         });
       }
 
-      const sent = await this.wahaProvider.sendText(
-        this.wahaConfig(connection),
-        input.recipient,
-        rendered.text,
-      );
+      const wahaConfig = this.wahaConfig(connection);
+      const session = await this.wahaProvider.sessionStatus(wahaConfig);
+      if (session.phoneNumber && samePhoneNumber(session.phoneNumber, input.recipient)) {
+        await this.repository.updateConnectionForHotel({
+          hotelId: hotel.id,
+          kind: "waha",
+          state: "connected",
+          metadata: { ...connection.metadata, sessionStatus: session.status, phoneNumber: session.phoneNumber },
+          lastCheckedAt: new Date(),
+          lastErrorCode: null,
+        });
+        return this.saveTestResult(userId, input, rendered, {
+          provider: "waha",
+          accepted: false,
+          state: "failed",
+          providerMessageId: null,
+          lastErrorCode: "WAHA_RECIPIENT_IS_SENDER",
+          lastErrorMessage: "The test recipient is the same number as the connected WhatsApp sender.",
+        });
+      }
+      const sent = await this.wahaProvider.sendText(wahaConfig, input.recipient, rendered.text);
       await this.repository.updateConnectionForHotel({
         hotelId: hotel.id,
         kind: "waha",
@@ -209,6 +225,7 @@ export class ChannelService {
         baseUrl: platform.baseUrl,
         sessionName,
         sessionStatus: prepared.status,
+        phoneNumber: prepared.phoneNumber,
         configuredAt: new Date().toISOString(),
       },
     });
@@ -245,7 +262,7 @@ export class ChannelService {
         hotelId: hotel.id,
         kind: "waha",
         state: status.working ? "connected" : connecting ? "connecting" : "attention",
-        metadata: { ...current.metadata, sessionStatus: status.status },
+        metadata: { ...current.metadata, sessionStatus: status.status, phoneNumber: status.phoneNumber },
         lastCheckedAt: now,
         lastErrorCode: status.working || connecting ? null : `WAHA_SESSION_${status.status}`,
       });
@@ -409,6 +426,7 @@ export class ChannelService {
         ? {
             baseUrl: typeof metadata.baseUrl === "string" ? metadata.baseUrl : null,
             sessionName: typeof metadata.sessionName === "string" ? metadata.sessionName : null,
+            phoneNumber: typeof metadata.phoneNumber === "string" ? metadata.phoneNumber : null,
           }
         : {}),
     };
@@ -547,6 +565,11 @@ export class ChannelService {
 
 function wait(milliseconds: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function samePhoneNumber(left: string, right: string): boolean {
+  const digits = (value: string) => value.replace(/\D/g, "");
+  return digits(left).length > 0 && digits(left) === digits(right);
 }
 
 function providerFailure(error: unknown, fallback: string): ProviderError {

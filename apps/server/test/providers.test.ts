@@ -62,7 +62,11 @@ describe("provider adapters", () => {
     });
     const provider = new WahaProvider(mock as ProviderFetch);
     const config = { baseUrl: "https://waha.example", apiKey: "api-secret", sessionName: "hotel-main" };
-    expect(await provider.sessionStatus(config)).toEqual({ status: "WORKING", working: true });
+    expect(await provider.sessionStatus(config)).toEqual({
+      status: "WORKING",
+      working: true,
+      phoneNumber: "393331234567",
+    });
     expect(await provider.sendText(config, "+39 333-123-4567", "Hello")).toEqual({
       providerMessageId: "waha-id",
       chatId: "89902624575692@lid",
@@ -104,7 +108,11 @@ describe("provider adapters", () => {
     const provider = new WahaProvider(mock as ProviderFetch);
     const config = { baseUrl: "https://waha.example", apiKey: "platform-secret", sessionName: "hotel-1" };
 
-    expect(await provider.prepareSession(config)).toEqual({ status: "SCAN_QR_CODE", working: false });
+    expect(await provider.prepareSession(config)).toEqual({
+      status: "SCAN_QR_CODE",
+      working: false,
+      phoneNumber: null,
+    });
     expect(await provider.qrCode(config)).toBe("data:image/png;base64,cXItYnl0ZXM=");
     expect(mock.mock.calls[1]?.[1]?.headers).toMatchObject({ "X-Api-Key": "platform-secret" });
     expect(JSON.parse(String(mock.mock.calls[1]?.[1]?.body))).toMatchObject({

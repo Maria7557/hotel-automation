@@ -177,6 +177,7 @@ export type ConnectionStatus = {
   lastErrorCode: string | null;
   baseUrl?: string | null;
   sessionName?: string | null;
+  phoneNumber?: string | null;
 };
 
 export type PlatformWhatsAppSession = {
