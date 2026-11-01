@@ -104,6 +104,31 @@ export function ConnectionsScreen({ onBack, demo }: { onBack: () => void; demo: 
     };
   }, [demo]);
 
+  useEffect(() => {
+    if (demo || !qrCode || waha.state === "connected") return undefined;
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const updated = await apiClient.checkWaha();
+        if (cancelled) return;
+        replaceConnection(updated);
+        if (updated.state === "connected") {
+          setQrCode(null);
+          setNotice("WhatsApp is connected.");
+          setError(null);
+        }
+      } catch {
+        // Keep the QR visible and retry while this screen remains open.
+      }
+    };
+    void refresh();
+    const timer = setInterval(() => { void refresh(); }, 2_000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [demo, qrCode, waha.state]);
+
   const connectMail = async () => {
     setError(null);
     setNotice(null);
@@ -231,6 +256,61 @@ export function ConnectionsScreen({ onBack, demo }: { onBack: () => void; demo: 
     }
   };
 
+  const disconnectWhatsApp = () => {
+    const confirm = async () => {
+      setBusyKind("waha");
+      setError(null);
+      setNotice(null);
+      try {
+        replaceConnection(await apiClient.disconnectWaha());
+        setQrCode(null);
+        setNotice("WhatsApp is disconnected.");
+      } catch (nextError) {
+        setError(authErrorMessage(nextError));
+      } finally {
+        setBusyKind(null);
+      }
+    };
+    if (Platform.OS === "web") {
+      if (typeof window !== "undefined" && window.confirm("Disconnect this WhatsApp account?")) void confirm();
+      return;
+    }
+    Alert.alert("Disconnect WhatsApp?", "Hotel WhatsApp messages will stop sending from this number.", [
+      { text: "Cancel", style: "cancel" },
+      { text: "Disconnect", style: "destructive", onPress: () => void confirm() },
+    ]);
+  };
+
+  const changeWhatsApp = () => {
+    const confirm = async () => {
+      setBusyKind("waha");
+      setError(null);
+      setNotice(null);
+      try {
+        const disconnected = await apiClient.disconnectWaha();
+        replaceConnection(disconnected);
+        const result = await apiClient.connectWaha();
+        replaceConnection(result.connection);
+        setQrCode(result.qrCode);
+        setNotice(result.connection.state === "connected"
+          ? "WhatsApp is connected."
+          : "Scan the QR code with the new WhatsApp phone.");
+      } catch (nextError) {
+        setError(authErrorMessage(nextError));
+      } finally {
+        setBusyKind(null);
+      }
+    };
+    if (Platform.OS === "web") {
+      if (typeof window !== "undefined" && window.confirm("Change the connected WhatsApp account? The current phone will be disconnected.")) void confirm();
+      return;
+    }
+    Alert.alert("Change WhatsApp?", "The current phone will be disconnected before a new QR code is created.", [
+      { text: "Cancel", style: "cancel" },
+      { text: "Change", style: "destructive", onPress: () => void confirm() },
+    ]);
+  };
+
   return (
     <View style={uiStyles.screen}>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
@@ -260,6 +340,8 @@ export function ConnectionsScreen({ onBack, demo }: { onBack: () => void; demo: 
               icon={MessageCircle}
               busy={busyKind === "waha"}
               onPress={() => void connectWhatsApp()}
+              onEdit={changeWhatsApp}
+              onDisconnect={disconnectWhatsApp}
             />
           </View>
         )}

@@ -173,7 +173,11 @@ export class ChannelService {
     if (!records) throw errors.hotelNotFound();
     const mail = records.find((record) => ["google", "microsoft", "smtp"].includes(record.kind) && record.state === "connected")
       ?? records.find((record) => ["google", "microsoft", "smtp"].includes(record.kind)) ?? null;
-    return [this.publicMailConnection(mail), this.publicConnection("waha", records.find((record) => record.kind === "waha") ?? null)];
+    const storedWaha = records.find((record) => record.kind === "waha") ?? null;
+    const waha = storedWaha?.encryptedCredentials
+      ? await this.checkWaha(userId)
+      : this.publicConnection("waha", storedWaha);
+    return [this.publicMailConnection(mail), waha];
   }
 
   async wahaStatus(userId: string) {
@@ -236,13 +240,14 @@ export class ChannelService {
     const now = new Date();
     try {
       const status = await this.wahaProvider.sessionStatus(this.wahaConfig(current));
+      const connecting = ["STARTING", "SCAN_QR_CODE"].includes(status.status);
       const updated = await this.repository.updateConnectionForHotel({
         hotelId: hotel.id,
         kind: "waha",
-        state: status.working ? "connected" : "attention",
+        state: status.working ? "connected" : connecting ? "connecting" : "attention",
         metadata: { ...current.metadata, sessionStatus: status.status },
         lastCheckedAt: now,
-        lastErrorCode: status.working ? null : `WAHA_SESSION_${status.status}`,
+        lastErrorCode: status.working || connecting ? null : `WAHA_SESSION_${status.status}`,
       });
       return this.publicConnection("waha", updated);
     } catch (error) {
@@ -256,6 +261,34 @@ export class ChannelService {
       });
       return this.publicConnection("waha", updated);
     }
+  }
+
+  async disconnectWaha(userId: string) {
+    const hotel = await this.requireHotel(userId);
+    const current = await this.repository.findConnectionForUser(userId, "waha");
+    if (!current?.encryptedCredentials) {
+      return this.publicConnection("waha", current);
+    }
+    try {
+      await this.wahaProvider.logoutSession(this.wahaConfig(current));
+    } catch {
+      throw errors.providerConnectionFailed("WhatsApp");
+    }
+    const now = new Date();
+    const updated = await this.repository.updateConnectionForHotel({
+      hotelId: hotel.id,
+      kind: "waha",
+      state: "disconnected",
+      encryptedCredentials: null,
+      metadata: {
+        ...current.metadata,
+        sessionStatus: "DISCONNECTED",
+        disconnectedAt: now.toISOString(),
+      },
+      lastCheckedAt: now,
+      lastErrorCode: null,
+    });
+    return this.publicConnection("waha", updated);
   }
 
   async startGoogleOAuth(userId: string) {

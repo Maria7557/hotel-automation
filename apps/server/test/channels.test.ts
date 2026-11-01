@@ -319,6 +319,47 @@ describe("message settings and channel connections", () => {
     expect(JSON.stringify(sent.json())).not.toContain(baseEnv.WAHA_API_KEY);
   });
 
+  it("refreshes WhatsApp status on page load and can disconnect the linked phone", async () => {
+    const owner = await onboard(app, "refresh@example.com", "Casa Verde");
+    await app.inject({
+      method: "POST",
+      url: "/v1/connections/waha/connect",
+      headers: auth(owner.token),
+    });
+    await repositories.channels.updateConnectionForHotel({
+      hotelId: owner.hotelId,
+      kind: "waha",
+      state: "connecting",
+      lastCheckedAt: new Date(),
+      lastErrorCode: null,
+    });
+
+    const refreshed = await app.inject({
+      method: "GET",
+      url: "/v1/connections",
+      headers: auth(owner.token),
+    });
+    expect(refreshed.statusCode).toBe(200);
+    expect(refreshed.json().data.connections.find(({ kind }: { kind: string }) => kind === "waha"))
+      .toMatchObject({ configured: true, state: "connected" });
+
+    const disconnected = await app.inject({
+      method: "DELETE",
+      url: "/v1/connections/waha",
+      headers: auth(owner.token),
+    });
+    expect(disconnected.statusCode).toBe(200);
+    expect(disconnected.json().data.connection).toMatchObject({
+      configured: false,
+      available: true,
+      state: "disconnected",
+    });
+    expect(repositories.channels.connections.get(`${owner.hotelId}:waha`)?.encryptedCredentials).toBeNull();
+    const logoutCall = providerFetchMock.mock.calls.find(([url, init]) =>
+      String(url).includes("/logout") && init?.method === "POST");
+    expect(logoutCall).toBeTruthy();
+  });
+
   it("lets a hotel connect WhatsApp without entering platform credentials", async () => {
     await app.close();
     repositories = createMemoryRepositories();

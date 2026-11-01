@@ -62,6 +62,10 @@ export async function registerChannelRoutes(
     data: { connection: await channelService.checkWaha(userId(request)) },
   }));
 
+  app.delete("/v1/connections/waha", { preHandler: authenticate }, async (request) => ({
+    data: { connection: await channelService.disconnectWaha(userId(request)) },
+  }));
+
   app.get("/v1/connections/google/oauth/start", { preHandler: authenticate }, async (request) => ({
     data: await channelService.startGoogleOAuth(userId(request)),
   }));

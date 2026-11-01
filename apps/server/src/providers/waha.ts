@@ -166,6 +166,21 @@ export class WahaProvider {
     return sessionSummary(result.body);
   }
 
+  async logoutSession(config: WahaConfig): Promise<void> {
+    const result = await providerJson(
+      this.fetchClient,
+      `${config.baseUrl}/api/sessions/${encodeURIComponent(config.sessionName)}/logout`,
+      { method: "POST", headers: headers(config.apiKey), body: "{}" },
+      "WAHA_SESSION_LOGOUT",
+    );
+    if (!result.response.ok) {
+      throw new ProviderError(
+        `WAHA_SESSION_LOGOUT_HTTP_${result.response.status}`,
+        result.response.status === 429 || result.response.status >= 500,
+      );
+    }
+  }
+
   async sendText(config: WahaConfig, phone: string, text: string) {
     const chatId = toWahaChatId(phone);
     const result = await providerJson(

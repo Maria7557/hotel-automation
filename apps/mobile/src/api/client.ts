@@ -469,6 +469,16 @@ export const apiClient = {
     return response.data.connection;
   },
 
+  async disconnectWaha(): Promise<ConnectionStatus> {
+    const token = await requireToken();
+    const response = await apiRequest<{ data: { connection: ConnectionStatus } }>(
+      "/v1/connections/waha",
+      { method: "DELETE" },
+      token,
+    );
+    return response.data.connection;
+  },
+
   async getPlatformAdminAccess(): Promise<boolean> {
     const token = await requireToken();
     const response = await apiRequest<{ data: { enabled: boolean } }>("/v1/platform-admin/access", {}, token);
