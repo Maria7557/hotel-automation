@@ -243,6 +243,9 @@ export function ConnectionsScreen({ onBack, demo }: { onBack: () => void; demo: 
             <Text style={styles.providerText}>Suggested: {provider === "google" ? "Google" : provider === "microsoft" ? "Microsoft" : "Other mail provider"}</Text>
             <View style={styles.providerRow}>{(["google", "microsoft", "smtp"] as const).map((value) => <Pressable key={value} onPress={() => setProvider(value)} style={[styles.providerChoice, provider === value && styles.providerSelected]}><Text>{value === "smtp" ? "Other" : value === "microsoft" ? "Microsoft" : "Google"}</Text></Pressable>)}</View>
             {provider === "smtp" ? <>
+              <View style={styles.providerRow}>{[
+                ["Zoho", "smtp.zoho.com"], ["Namecheap", "mail.privateemail.com"], ["Aruba", "smtps.aruba.it"],
+              ].map(([label, host]) => <Pressable key={label} onPress={() => { setSmtpHost(host!); setSmtpPort(465); }} style={styles.providerChoice}><Text>{label}</Text></Pressable>)}</View>
               <TextInput autoCapitalize="none" placeholder="SMTP hostname" value={smtpHost} onChangeText={setSmtpHost} style={styles.input} />
               <View style={styles.providerRow}>{([465, 587] as const).map((port) => <Pressable key={port} onPress={() => setSmtpPort(port)} style={[styles.providerChoice, smtpPort === port && styles.providerSelected]}><Text>{port} · {port === 465 ? "TLS" : "STARTTLS"}</Text></Pressable>)}</View>
               <TextInput autoCapitalize="none" placeholder="Username" value={smtpUser} onChangeText={setSmtpUser} style={styles.input} />

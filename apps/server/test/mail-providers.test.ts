@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { detectMailProvider } from "../src/services/mail-detection.js";
-import { resolveSafeSmtpHost } from "../src/providers/smtp.js";
+import { parseSmtpCredentials, resolveSafeSmtpHost } from "../src/providers/smtp.js";
 import { MicrosoftProvider } from "../src/providers/microsoft.js";
 
 describe("mail provider detection", () => {
@@ -14,6 +14,8 @@ describe("SMTP SSRF protection", () => {
   it.each(["localhost", "mail.local", "metadata.google.internal"])("rejects %s", async (host) => expect(resolveSafeSmtpHost(host, async () => [{ address: "93.184.216.34", family: 4 }])).rejects.toMatchObject({ code: "SMTP_HOST_FORBIDDEN" }));
   it.each(["127.0.0.1", "10.0.0.2", "169.254.169.254", "192.168.1.1"])("rejects private result %s", async (address) => expect(resolveSafeSmtpHost("mail.hotel.it", async () => [{ address, family: 4 }])).rejects.toMatchObject({ code: "SMTP_HOST_FORBIDDEN" }));
   it("accepts a public result", async () => expect(resolveSafeSmtpHost("mail.hotel.it", async () => [{ address: "93.184.216.34", family: 4 }])).resolves.toMatchObject({ hostname: "mail.hotel.it" }));
+  it.each([[465, "tls"], [587, "starttls"]] as const)("accepts secure port %s", (port, encryption) => expect(parseSmtpCredentials({ email: "booking@hotel.it", hostname: "mail.hotel.it", port, username: "booking", appPassword: "secret", encryption })).toMatchObject({ port, encryption }));
+  it("rejects mismatched port encryption", () => expect(() => parseSmtpCredentials({ email: "booking@hotel.it", hostname: "mail.hotel.it", port: 587, username: "booking", appPassword: "secret", encryption: "tls" })).toThrow());
 });
 
 describe("Microsoft Graph", () => {
