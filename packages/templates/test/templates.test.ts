@@ -105,12 +105,12 @@ describe("public offer page", () => {
       acceptActionPath: "/o/opaque-token/accept",
       selectedOptionIndex: 1,
     });
-    expect(html).toContain("Request sent");
     expect(html).toContain('class="confirmation"');
     expect(html).toContain("Thank you, Anna.");
-    expect(html).toContain("Usually within 15 minutes");
-    expect(html).toContain("Confirmation and payment link");
-    expect(html).toContain("You can close this page.");
+    expect(html).toContain("Stay");
+    expect(html).toContain("You will receive the booking confirmation soon from Hotel Sole.");
+    expect(html).not.toContain("Usually within 15 minutes");
+    expect(html).not.toContain("payment link");
     expect(html).not.toContain('class="option-card"');
   });
 
