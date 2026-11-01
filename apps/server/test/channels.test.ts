@@ -31,6 +31,13 @@ describe("message settings and channel connections", () => {
     repositories = createMemoryRepositories();
     providerFetchMock = vi.fn(async (input: string | URL) => {
       const url = String(input);
+      if (url.includes("/api/contacts/check-exists")) {
+        return new Response(JSON.stringify({
+          numberExists: true,
+          chatId: "89902624575692@lid",
+          pn: "393331234567@c.us",
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
       if (url.includes("/api/sessions/")) {
         return new Response(JSON.stringify({ name: "hotel-main", status: "WORKING", me: { id: "1@c.us" } }), {
           status: 200,
@@ -314,7 +321,7 @@ describe("message settings and channel connections", () => {
     expect(sendCall?.[1]?.headers).toMatchObject({ "X-Api-Key": baseEnv.WAHA_API_KEY });
     expect(JSON.parse(String(sendCall?.[1]?.body))).toMatchObject({
       session: expect.stringMatching(/^hotel-/),
-      chatId: "393331234567@c.us",
+      chatId: "89902624575692@lid",
     });
     expect(JSON.stringify(sent.json())).not.toContain(baseEnv.WAHA_API_KEY);
   });

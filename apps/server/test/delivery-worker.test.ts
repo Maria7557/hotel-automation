@@ -75,7 +75,7 @@ describe("DeliveryWorker", () => {
       createdAt: now,
       updatedAt: now,
     });
-    const fetchMock = vi.fn(async () =>
+    const fetchMock = wahaFetch(async () =>
       new Response(JSON.stringify({ id: "waha-message-1" }), {
         status: 201,
         headers: { "content-type": "application/json" },
@@ -91,11 +91,12 @@ describe("DeliveryWorker", () => {
       lastErrorCode: null,
       processedAt: now,
     });
-    const request = (fetchMock.mock.calls as unknown as Array<[string | URL, RequestInit?]>)[0];
+    const request = (fetchMock.mock.calls as unknown as Array<[string | URL, RequestInit?]>)
+      .find(([url]) => String(url).endsWith("/api/sendText"));
     const body = JSON.parse(String(request?.[1]?.body)) as Record<string, unknown>;
     expect(body).toMatchObject({
       session: "hotel-main",
-      chatId: "393331234567@c.us",
+      chatId: "89902624575692@lid",
     });
     expect(body.text).toContain("Ciao Anna");
     expect(body.text).toContain("220,00");
@@ -133,7 +134,7 @@ describe("DeliveryWorker", () => {
     const repositories = createMemoryRepositories();
     const { delivery, hotel } = seedDelivery(repositories, "whatsapp");
     connectWaha(repositories, hotel.id);
-    const fetchMock = vi.fn(async () =>
+    const fetchMock = wahaFetch(async () =>
       new Response(JSON.stringify({ error: "busy" }), {
         status: 429,
         headers: { "content-type": "application/json" },
@@ -154,14 +155,14 @@ describe("DeliveryWorker", () => {
       attemptCount: 2,
       lastErrorCode: "MAX_ATTEMPTS_WAHA_SEND_HTTP_429",
     });
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 
   it("fails a permanent provider 4xx without retry", async () => {
     const repositories = createMemoryRepositories();
     const { delivery, hotel } = seedDelivery(repositories, "whatsapp");
     connectWaha(repositories, hotel.id);
-    const fetchMock = vi.fn(async () =>
+    const fetchMock = wahaFetch(async () =>
       new Response(JSON.stringify({ error: "bad request" }), {
         status: 400,
         headers: { "content-type": "application/json" },
@@ -182,7 +183,7 @@ describe("DeliveryWorker", () => {
     connectWaha(timeoutRepositories, timeoutSeed.hotel.id);
     const timeout = new Error("timeout");
     timeout.name = "TimeoutError";
-    const timeoutFetch = vi.fn(async () => Promise.reject(timeout));
+    const timeoutFetch = wahaFetch(async () => Promise.reject(timeout));
     await createWorker(timeoutRepositories, timeoutFetch).processNext(now);
     expect(timeoutRepositories.automation.deliveries.get(timeoutSeed.delivery.id)).toMatchObject({
       state: "scheduled",
@@ -194,7 +195,7 @@ describe("DeliveryWorker", () => {
     const ambiguousRepositories = createMemoryRepositories();
     const ambiguousSeed = seedDelivery(ambiguousRepositories, "whatsapp");
     connectWaha(ambiguousRepositories, ambiguousSeed.hotel.id);
-    const networkFetch = vi.fn(async () => Promise.reject(new Error("socket closed")));
+    const networkFetch = wahaFetch(async () => Promise.reject(new Error("socket closed")));
     await createWorker(ambiguousRepositories, networkFetch).processNext(now);
     expect(ambiguousRepositories.automation.deliveries.get(ambiguousSeed.delivery.id)).toMatchObject({
       state: "unknown",
@@ -203,7 +204,7 @@ describe("DeliveryWorker", () => {
       processedAt: now,
     });
     expect(await createWorker(ambiguousRepositories, networkFetch).processNext(now)).toBe(false);
-    expect(networkFetch).toHaveBeenCalledTimes(1);
+    expect(networkFetch).toHaveBeenCalledTimes(2);
   });
 
   it("does not send email when Google runtime config is absent", async () => {
@@ -244,6 +245,19 @@ function createWorker(
     new WahaProvider(providerFetch),
     maxAttempts,
   );
+}
+
+function wahaFetch(send: (input: string | URL, init?: RequestInit) => Promise<Response>) {
+  return vi.fn(async (input: string | URL, init?: RequestInit) => {
+    if (String(input).includes("/api/contacts/check-exists")) {
+      return new Response(JSON.stringify({
+        numberExists: true,
+        chatId: "89902624575692@lid",
+        pn: "393331234567@c.us",
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    return send(input, init);
+  });
 }
 
 function seedDelivery(repositories: MemoryRepositories, channel: "email" | "whatsapp") {

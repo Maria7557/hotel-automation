@@ -182,7 +182,7 @@ export class WahaProvider {
   }
 
   async sendText(config: WahaConfig, phone: string, text: string) {
-    const chatId = toWahaChatId(phone);
+    const chatId = await this.resolveChatId(config, phone);
     const result = await providerJson(
       this.fetchClient,
       `${config.baseUrl}/api/sendText`,
@@ -197,6 +197,35 @@ export class WahaProvider {
       throw new ProviderError(`WAHA_SEND_HTTP_${result.response.status}`, result.response.status === 429 || result.response.status >= 500);
     }
     return { providerMessageId: messageId(result.body), chatId };
+  }
+
+  private async resolveChatId(config: WahaConfig, phone: string): Promise<string> {
+    const normalized = toWahaChatId(phone);
+    const digits = normalized.slice(0, -"@c.us".length);
+    const url = new URL(`${config.baseUrl}/api/contacts/check-exists`);
+    url.searchParams.set("phone", digits);
+    url.searchParams.set("session", config.sessionName);
+    const result = await providerJson(
+      this.fetchClient,
+      url,
+      { method: "GET", headers: headers(config.apiKey) },
+      "WAHA_CONTACT_CHECK",
+    );
+    if (!result.response.ok) {
+      throw new ProviderError(
+        `WAHA_CONTACT_CHECK_HTTP_${result.response.status}`,
+        result.response.status === 429 || result.response.status >= 500,
+      );
+    }
+    const body = asRecord(result.body);
+    if (body?.numberExists !== true) {
+      throw new ProviderError("WAHA_PHONE_NOT_REGISTERED", false);
+    }
+    const chatId = typeof body.chatId === "string" ? body.chatId : null;
+    if (!chatId || !/^\d+@(c\.us|lid)$/.test(chatId)) {
+      throw new ProviderError("WAHA_CONTACT_CHECK_RESPONSE_INVALID", false);
+    }
+    return chatId;
   }
 }
 

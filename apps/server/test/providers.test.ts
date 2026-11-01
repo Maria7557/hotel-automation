@@ -50,20 +50,38 @@ describe("provider adapters", () => {
   });
 
   it("uses WAHA X-Api-Key, session health, and normalized E.164 chat ids", async () => {
-    const mock = vi.fn(async (input: string | URL, _init?: RequestInit) =>
-      String(input).includes("/api/sessions/")
-        ? json({ status: "WORKING", me: { id: "393331234567@c.us" } })
-        : json({ key: { id: "waha-id" } }),
-    );
+    const mock = vi.fn(async (input: string | URL, _init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/sessions/")) {
+        return json({ status: "WORKING", me: { id: "393331234567@c.us" } });
+      }
+      if (url.includes("/api/contacts/check-exists")) {
+        return json({ numberExists: true, chatId: "89902624575692@lid", pn: "393331234567@c.us" });
+      }
+      return json({ key: { id: "waha-id" } });
+    });
     const provider = new WahaProvider(mock as ProviderFetch);
     const config = { baseUrl: "https://waha.example", apiKey: "api-secret", sessionName: "hotel-main" };
     expect(await provider.sessionStatus(config)).toEqual({ status: "WORKING", working: true });
     expect(await provider.sendText(config, "+39 333-123-4567", "Hello")).toEqual({
       providerMessageId: "waha-id",
-      chatId: "393331234567@c.us",
+      chatId: "89902624575692@lid",
     });
-    expect(mock.mock.calls[1]?.[1]?.headers).toMatchObject({ "X-Api-Key": "api-secret" });
+    expect(mock.mock.calls[2]?.[1]?.headers).toMatchObject({ "X-Api-Key": "api-secret" });
+    expect(JSON.parse(String(mock.mock.calls[2]?.[1]?.body))).toMatchObject({
+      chatId: "89902624575692@lid",
+    });
     expect(toWahaChatId("+39 333-123-4567")).toBe("393331234567@c.us");
+  });
+
+  it("does not send WhatsApp messages to numbers WAHA cannot resolve", async () => {
+    const mock = vi.fn(async () => json({ numberExists: false, chatId: null }));
+    const provider = new WahaProvider(mock as ProviderFetch);
+    const config = { baseUrl: "https://waha.example", apiKey: "api-secret", sessionName: "hotel-main" };
+
+    await expect(provider.sendText(config, "+971 50 555 4801", "Hello"))
+      .rejects.toMatchObject({ code: "WAHA_PHONE_NOT_REGISTERED", retryable: false });
+    expect(mock).toHaveBeenCalledTimes(1);
   });
 
   it("creates a WAHA session and returns a data URL for its QR code", async () => {
