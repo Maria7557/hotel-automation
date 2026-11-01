@@ -10,6 +10,8 @@ User=hotelapp
 Group=hotelapp
 WorkingDirectory=/opt/hotel-automation/current/apps/server
 EnvironmentFile=/etc/hotel-automation/server.env
+Environment=UPLOADS_DIRECTORY=/var/lib/hotel-automation/uploads
+StateDirectory=hotel-automation
 ExecStart=/opt/node24/bin/node /opt/hotel-automation/current/apps/server/dist/index.js
 Restart=on-failure
 RestartSec=5
