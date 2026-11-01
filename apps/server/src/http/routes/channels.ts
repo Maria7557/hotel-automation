@@ -10,6 +10,7 @@ import {
   previewInputSchema,
   testSendInputSchema,
 } from "../channel-schemas.js";
+import { oauthFailureStatus, sendOAuthResultPage } from "../oauth-result-page.js";
 
 export async function registerChannelRoutes(
   app: FastifyInstance,
@@ -69,8 +70,17 @@ export async function registerChannelRoutes(
     "/v1/connections/google/oauth/callback",
     { logLevel: "silent" },
     async (request, reply) => {
-      const { state, code } = googleCallbackQuerySchema.parse(request.query);
-      return reply.code(202).send({ data: await channelService.completeGoogleOAuth(state, code) });
+      try {
+        const { state, code } = googleCallbackQuerySchema.parse(request.query);
+        await channelService.completeGoogleOAuth(state, code);
+        return sendOAuthResultPage(reply, { success: true, provider: "Google" });
+      } catch (error) {
+        return sendOAuthResultPage(reply, {
+          success: false,
+          provider: "Google",
+          statusCode: oauthFailureStatus(error),
+        });
+      }
     },
   );
 }

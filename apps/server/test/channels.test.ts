@@ -398,17 +398,10 @@ describe("Google OAuth state architecture", () => {
       method: "GET",
       url: `/v1/connections/google/oauth/callback?state=${encodeURIComponent(state!)}&code=one-time-code`,
     });
-    expect(callback.statusCode).toBe(202);
-    expect(callback.json().data).toMatchObject({
-      status: "connected",
-      connection: {
-        kind: "google",
-        configured: true,
-        available: true,
-        state: "connected",
-        lastErrorCode: null,
-      },
-    });
+    expect(callback.statusCode).toBe(200);
+    expect(callback.headers["content-type"]).toContain("text/html");
+    expect(callback.body).toContain("Mail connected");
+    expect(callback.body).toContain("Back to Hotel");
     const stored = repositories.channels.connections.get(`${owner.hotelId}:google`);
     expect(stored?.metadata.oauthNonceHash).toBeUndefined();
     expect(JSON.stringify(stored)).not.toContain("one-time-code");
@@ -425,7 +418,8 @@ describe("Google OAuth state architecture", () => {
       url: `/v1/connections/google/oauth/callback?state=${encodeURIComponent(state!)}&code=replayed-code`,
     });
     expect(replay.statusCode).toBe(409);
-    expect(replay.json().error.code).toBe("OAUTH_STATE_INVALID");
+    expect(replay.headers["content-type"]).toContain("text/html");
+    expect(replay.body).toContain("Connection unsuccessful");
   });
 
   it("uses Gmail for test-send after a successful OAuth connection", async () => {
@@ -472,7 +466,8 @@ describe("Google OAuth state architecture", () => {
       url: `/v1/connections/google/oauth/callback?state=${encodeURIComponent(`${state}x`)}&code=code`,
     });
     expect(response.statusCode).toBe(409);
-    expect(response.json().error.code).toBe("OAUTH_STATE_INVALID");
+    expect(response.headers["content-type"]).toContain("text/html");
+    expect(response.body).toContain("Connection unsuccessful");
   });
 
   it("consumes OAuth state and marks the connection attention when token exchange fails", async () => {
@@ -494,7 +489,8 @@ describe("Google OAuth state architecture", () => {
       url: `/v1/connections/google/oauth/callback?state=${encodeURIComponent(state)}&code=bad-code`,
     });
     expect(failed.statusCode).toBe(502);
-    expect(failed.json().error.code).toBe("PROVIDER_CONNECTION_FAILED");
+    expect(failed.headers["content-type"]).toContain("text/html");
+    expect(failed.body).toContain("Connection unsuccessful");
     expect(failed.body).not.toContain("must-not-leak");
     expect(repositories.channels.connections.get(`${owner.hotelId}:google`)).toMatchObject({
       state: "attention",
