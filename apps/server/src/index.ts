@@ -5,6 +5,8 @@ import { loadEnv } from "./config/env.js";
 import { createDatabase } from "./db/client.js";
 import { GoogleProvider } from "./providers/google.js";
 import { WahaProvider } from "./providers/waha.js";
+import { MicrosoftProvider } from "./providers/microsoft.js";
+import { SmtpProvider } from "./providers/smtp.js";
 import { createPostgresRepositories } from "./repositories/postgres.js";
 import { DeliveryWorker, DeliveryWorkerLoop } from "./services/delivery-worker.js";
 
@@ -29,6 +31,13 @@ const worker = new DeliveryWorker(
     ...(env.WAHA_BASE_URL ? { baseUrl: env.WAHA_BASE_URL } : {}),
     ...(env.WAHA_API_KEY ? { apiKey: env.WAHA_API_KEY } : {}),
   },
+  {
+    ...(env.MICROSOFT_CLIENT_ID ? { MICROSOFT_CLIENT_ID: env.MICROSOFT_CLIENT_ID } : {}),
+    ...(env.MICROSOFT_CLIENT_SECRET ? { MICROSOFT_CLIENT_SECRET: env.MICROSOFT_CLIENT_SECRET } : {}),
+    ...(env.MICROSOFT_REDIRECT_URI ? { MICROSOFT_REDIRECT_URI: env.MICROSOFT_REDIRECT_URI } : {}),
+  },
+  new MicrosoftProvider(fetch),
+  new SmtpProvider(),
 );
 const workerLoop = env.DELIVERY_WORKER_ENABLED
   ? new DeliveryWorkerLoop(worker, env.DELIVERY_WORKER_INTERVAL_MS, 10, app.log)

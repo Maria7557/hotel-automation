@@ -7,6 +7,7 @@ import { ZodError } from "zod";
 import type { AppEnv } from "./config/env.js";
 import { registerAuthRoutes } from "./http/routes/auth.js";
 import { registerChannelRoutes } from "./http/routes/channels.js";
+import { registerMailConnectionRoutes } from "./http/routes/mail-connections.js";
 import { registerAutomationRoutes } from "./http/routes/automation.js";
 import { registerEmbedRoutes } from "./http/routes/embed.js";
 import { registerHotelRoutes } from "./http/routes/hotels.js";
@@ -14,6 +15,8 @@ import { registerInventoryRoutes } from "./http/routes/inventory.js";
 import { registerMediaRoutes } from "./http/routes/media.js";
 import { AppError } from "./lib/errors.js";
 import { GoogleProvider } from "./providers/google.js";
+import { MicrosoftProvider } from "./providers/microsoft.js";
+import { SmtpProvider } from "./providers/smtp.js";
 import type { ProviderFetch } from "./providers/http.js";
 import {
   RemoteSocialTokenVerifier,
@@ -25,6 +28,7 @@ import type { Repositories } from "./repositories/types.js";
 import { AuthService } from "./services/auth.js";
 import { AutomationService } from "./services/automation.js";
 import { ChannelService } from "./services/channels.js";
+import { MailConnectionService } from "./services/mail-connections.js";
 import { HotelService } from "./services/hotels.js";
 import { InventoryService } from "./services/inventory.js";
 
@@ -34,7 +38,8 @@ type AppOptions = {
       Pick<
         AppEnv,
         "NODE_ENV" | "PUBLIC_BASE_URL" | "GOOGLE_CLIENT_ID" | "GOOGLE_CLIENT_SECRET" | "GOOGLE_REDIRECT_URI" |
-        "GOOGLE_AUTH_CLIENT_IDS" | "APPLE_AUTH_CLIENT_IDS" | "WAHA_BASE_URL" | "WAHA_API_KEY"
+        "GOOGLE_AUTH_CLIENT_IDS" | "APPLE_AUTH_CLIENT_IDS" | "WAHA_BASE_URL" | "WAHA_API_KEY" |
+        "MICROSOFT_CLIENT_ID" | "MICROSOFT_CLIENT_SECRET" | "MICROSOFT_REDIRECT_URI"
       >
     >;
   repositories: Repositories;
@@ -52,6 +57,7 @@ export async function createApp(options: AppOptions): Promise<FastifyInstance> {
             "req.body.password",
             "req.body.idToken",
             "req.body.apiKey",
+            "req.body.appPassword",
             "req.query.code",
             "res.headers['set-cookie']",
           ],
@@ -108,6 +114,10 @@ export async function createApp(options: AppOptions): Promise<FastifyInstance> {
       ...(options.env.WAHA_API_KEY ? { apiKey: options.env.WAHA_API_KEY } : {}),
     },
   );
+  const mailService = new MailConnectionService(
+    options.repositories.channels, options.repositories.hotels, options.env.AUTH_SECRET, options.env,
+    new GoogleProvider(options.providerFetch ?? fetch), new MicrosoftProvider(options.providerFetch ?? fetch), new SmtpProvider(),
+  );
 
   app.get("/health", async (_request, reply) => {
     const database = await options.repositories.system.checkDatabase();
@@ -122,6 +132,7 @@ export async function createApp(options: AppOptions): Promise<FastifyInstance> {
     secure: options.env.NODE_ENV === "production" || options.env.PUBLIC_BASE_URL?.startsWith("https://") === true,
   });
   await registerChannelRoutes(app, authService, channelService);
+  await registerMailConnectionRoutes(app, authService, mailService);
   await registerHotelRoutes(app, authService, hotelService);
   await registerInventoryRoutes(app, authService, inventoryService);
   await registerMediaRoutes(app, authService, options.env.PUBLIC_BASE_URL);

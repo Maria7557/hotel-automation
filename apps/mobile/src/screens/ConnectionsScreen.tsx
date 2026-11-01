@@ -9,6 +9,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import { ArrowLeft, Check, Mail, MessageCircle, RefreshCw } from "lucide-react-native";
@@ -17,8 +18,8 @@ import { apiClient, authErrorMessage } from "@/api/client";
 import type { ConnectionStatus } from "@/api/types";
 import { Button, InlineState, uiStyles } from "@/components/ui";
 
-const disconnectedGoogle: ConnectionStatus = {
-  kind: "google",
+const disconnectedMail: ConnectionStatus = {
+  kind: "mail",
   configured: false,
   available: false,
   state: "disconnected",
@@ -36,7 +37,7 @@ const disconnectedWaha: ConnectionStatus = {
 };
 
 const demoConnections: ConnectionStatus[] = [
-  { ...disconnectedGoogle, available: true },
+  { ...disconnectedMail, available: true },
   { ...disconnectedWaha, available: true },
 ];
 
@@ -47,9 +48,14 @@ export function ConnectionsScreen({ onBack, demo }: { onBack: () => void; demo: 
   const [qrCode, setQrCode] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [mailOpen, setMailOpen] = useState(false);
+  const [email, setEmail] = useState("");
+  const [provider, setProvider] = useState<"google" | "microsoft" | "smtp" | null>(null);
+  const [smtpHost, setSmtpHost] = useState(""); const [smtpPort, setSmtpPort] = useState<465 | 587>(587);
+  const [smtpUser, setSmtpUser] = useState(""); const [smtpPassword, setSmtpPassword] = useState("");
 
-  const google = useMemo(
-    () => connections.find((connection) => connection.kind === "google") ?? disconnectedGoogle,
+  const mail = useMemo(
+    () => connections.find((connection) => connection.kind === "mail") ?? disconnectedMail,
     [connections],
   );
   const waha = useMemo(
@@ -104,15 +110,27 @@ export function ConnectionsScreen({ onBack, demo }: { onBack: () => void; demo: 
       setNotice("Demo mode: no connection was created.");
       return;
     }
-    if (!google.available) {
-      setError("Mail connection is temporarily unavailable.");
-      return;
-    }
-    setBusyKind("google");
+    setMailOpen(true);
+  };
+
+  const detectMail = async () => {
+    if (!email.includes("@")) { setError("Check the email address."); return; }
+    setBusyKind("mail"); setError(null);
     try {
-      const authorization = await apiClient.startGoogleOAuth();
+      const result = await apiClient.detectMailProvider(email); setProvider(result.provider);
+    } catch (nextError) { setError(authErrorMessage(nextError)); } finally { setBusyKind(null); }
+  };
+
+  const finishMail = async () => {
+    if (!provider) return; setBusyKind("mail"); setError(null);
+    try {
+      if (provider === "smtp") {
+        const updated = await apiClient.connectSmtp({ email, hostname: smtpHost, port: smtpPort, username: smtpUser, appPassword: smtpPassword, encryption: smtpPort === 465 ? "tls" : "starttls" });
+        replaceConnection(updated); setMailOpen(false); setSmtpPassword(""); setNotice("Mail is connected and the test email was accepted."); return;
+      }
+      const authorization = await apiClient.startMailOAuth(provider, email);
       const url = new URL(authorization.authorizationUrl);
-      if (url.protocol !== "https:" || url.hostname !== "accounts.google.com") {
+      if (url.protocol !== "https:" || !["accounts.google.com", "login.microsoftonline.com"].includes(url.hostname)) {
         throw new Error("Unexpected authorization URL");
       }
       if (!(await Linking.canOpenURL(authorization.authorizationUrl))) {
@@ -185,10 +203,10 @@ export function ConnectionsScreen({ onBack, demo }: { onBack: () => void; demo: 
         ) : (
           <View style={styles.list}>
             <ConnectionRow
-              connection={google}
+              connection={mail}
               title="Mail"
               icon={Mail}
-              busy={busyKind === "google"}
+              busy={busyKind === "mail"}
               onPress={() => void connectMail()}
             />
             <ConnectionRow
@@ -217,6 +235,22 @@ export function ConnectionsScreen({ onBack, demo }: { onBack: () => void; demo: 
             </Button>
           </View>
         ) : null}
+        {mailOpen ? <View style={styles.mailCard}>
+          <Text style={styles.qrTitle}>Connect mail</Text>
+          <Text style={styles.qrText}>Enter the address used to send hotel messages.</Text>
+          <TextInput autoCapitalize="none" keyboardType="email-address" placeholder="booking@hotel.it" value={email} onChangeText={(v) => { setEmail(v); setProvider(null); }} style={styles.input} />
+          {!provider ? <Button loading={busyKind === "mail"} onPress={() => void detectMail()}>Continue</Button> : <>
+            <Text style={styles.providerText}>Suggested: {provider === "google" ? "Google" : provider === "microsoft" ? "Microsoft" : "Other mail provider"}</Text>
+            <View style={styles.providerRow}>{(["google", "microsoft", "smtp"] as const).map((value) => <Pressable key={value} onPress={() => setProvider(value)} style={[styles.providerChoice, provider === value && styles.providerSelected]}><Text>{value === "smtp" ? "Other" : value === "microsoft" ? "Microsoft" : "Google"}</Text></Pressable>)}</View>
+            {provider === "smtp" ? <>
+              <TextInput autoCapitalize="none" placeholder="SMTP hostname" value={smtpHost} onChangeText={setSmtpHost} style={styles.input} />
+              <View style={styles.providerRow}>{([465, 587] as const).map((port) => <Pressable key={port} onPress={() => setSmtpPort(port)} style={[styles.providerChoice, smtpPort === port && styles.providerSelected]}><Text>{port} · {port === 465 ? "TLS" : "STARTTLS"}</Text></Pressable>)}</View>
+              <TextInput autoCapitalize="none" placeholder="Username" value={smtpUser} onChangeText={setSmtpUser} style={styles.input} />
+              <TextInput placeholder="App password" secureTextEntry value={smtpPassword} onChangeText={setSmtpPassword} style={styles.input} />
+            </> : null}
+            <Button loading={busyKind === "mail"} onPress={() => void finishMail()}>Connect and send test</Button>
+          </>}
+        </View> : null}
       </ScrollView>
     </View>
   );
@@ -363,6 +397,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: theme.colors.border,
   },
+  mailCard: { gap: theme.spacing[3], padding: theme.spacing[5], borderRadius: theme.radii.lg, backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border },
+  input: { minHeight: 48, paddingHorizontal: theme.spacing[3], borderWidth: 1, borderColor: theme.colors.borderStrong, borderRadius: theme.radii.md, color: theme.colors.text, backgroundColor: theme.colors.background },
+  providerText: { ...theme.typography.bodySmallMedium, color: theme.colors.text },
+  providerRow: { flexDirection: "row", flexWrap: "wrap", gap: theme.spacing[2] },
+  providerChoice: { paddingHorizontal: theme.spacing[3], paddingVertical: theme.spacing[2], borderRadius: theme.radii.md, borderWidth: 1, borderColor: theme.colors.border },
+  providerSelected: { borderColor: theme.colors.action, backgroundColor: theme.colors.actionTint },
   qrTitle: { ...theme.typography.h4, color: theme.colors.text },
   qrText: { ...theme.typography.bodySmall, color: theme.colors.textSecondary, textAlign: "center", maxWidth: 460 },
   qrFrame: {

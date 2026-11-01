@@ -64,6 +64,13 @@
       "when": 1793532178584,
       "tag": "0008_awesome_doctor_doom",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1793535162489,
+      "tag": "0009_fancy_whizzer",
+      "breakpoints": true
     }
   ]
 }

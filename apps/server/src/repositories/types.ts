@@ -264,7 +264,7 @@ export type MessageSettingsUpdate = Pick<
   "emailSubjectTemplate" | "emailBodyTemplate" | "whatsappBodyTemplate"
 >;
 
-export type ConnectionKind = "google" | "waha";
+export type ConnectionKind = "google" | "microsoft" | "smtp" | "waha";
 export type ConnectionRecord = {
   id: string;
   hotelId: string;
@@ -291,6 +291,9 @@ export interface ChannelRepository {
     encryptedCredentials: string;
     metadata: Record<string, unknown>;
   }): Promise<ConnectionRecord | null>;
+  configureMailForUser(input: { userId: string; kind: "smtp"; encryptedCredentials: string; metadata: Record<string, unknown> }): Promise<ConnectionRecord | null>;
+  beginMailOAuthForUser(input: { userId: string; kind: "google" | "microsoft"; nonceHash: string; expiresAt: Date; metadata: Record<string, unknown> }): Promise<{ hotelId: string; connection: ConnectionRecord } | null>;
+  consumeMailOAuthState(input: { hotelId: string; kind: "google" | "microsoft"; nonceHash: string; now: Date }): Promise<ConnectionRecord | null>;
   beginGoogleOAuthForUser(input: {
     userId: string;
     nonceHash: string;

@@ -453,6 +453,24 @@ class MemoryChannelRepository implements ChannelRepository {
     });
   }
 
+  async configureMailForUser(input: { userId: string; kind: "smtp"; encryptedCredentials: string; metadata: Record<string, unknown> }) {
+    const hotelId = this.hotels.memberships.get(input.userId);
+    if (!hotelId) return null;
+    return this.saveConnection(hotelId, input.kind, { state: "connected", encryptedCredentials: input.encryptedCredentials, metadata: input.metadata, lastCheckedAt: new Date(), lastErrorCode: null });
+  }
+
+  async beginMailOAuthForUser(input: { userId: string; kind: "google" | "microsoft"; nonceHash: string; expiresAt: Date; metadata: Record<string, unknown> }) {
+    const hotelId = this.hotels.memberships.get(input.userId); if (!hotelId) return null;
+    const connection = this.saveConnection(hotelId, input.kind, { state: "connecting", encryptedCredentials: this.connections.get(`${hotelId}:${input.kind}`)?.encryptedCredentials ?? null, metadata: { ...input.metadata, oauthNonceHash: input.nonceHash, oauthExpiresAt: input.expiresAt.toISOString() }, lastCheckedAt: null, lastErrorCode: null });
+    return { hotelId, connection };
+  }
+
+  async consumeMailOAuthState(input: { hotelId: string; kind: "google" | "microsoft"; nonceHash: string; now: Date }) {
+    const current = this.connections.get(`${input.hotelId}:${input.kind}`); const expires = current?.metadata.oauthExpiresAt;
+    if (!current || current.metadata.oauthNonceHash !== input.nonceHash || typeof expires !== "string" || new Date(expires) <= input.now) return null;
+    return this.saveConnection(input.hotelId, input.kind, { state: "connecting", encryptedCredentials: current.encryptedCredentials, metadata: { ...current.metadata, oauthNonceHash: null, oauthExpiresAt: null }, lastCheckedAt: input.now, lastErrorCode: "TOKEN_EXCHANGE_PENDING" });
+  }
+
   async beginGoogleOAuthForUser(input: {
     userId: string;
     nonceHash: string;

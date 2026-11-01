@@ -1,5 +1,7 @@
 import { sealPrivateValue, unsealPrivateValue } from "../lib/public-token.js";
 import { GoogleProvider, parseGoogleCredentials } from "../providers/google.js";
+import { MicrosoftProvider, parseMicrosoftCredentials } from "../providers/microsoft.js";
+import { parseSmtpCredentials, SmtpProvider } from "../providers/smtp.js";
 import { ProviderError } from "../providers/http.js";
 import { WahaProvider, type WahaConfig } from "../providers/waha.js";
 import type {
@@ -15,6 +17,7 @@ type GoogleConfig = {
   GOOGLE_REDIRECT_URI?: string;
 };
 type WahaPlatformConfig = { baseUrl?: string; apiKey?: string };
+type MicrosoftConfig = { MICROSOFT_CLIENT_ID?: string; MICROSOFT_CLIENT_SECRET?: string; MICROSOFT_REDIRECT_URI?: string };
 
 export type DeliveryWorkerLogger = {
   info(fields: Record<string, unknown>, message: string): void;
@@ -34,6 +37,9 @@ export class DeliveryWorker {
     private readonly maxAttempts = 5,
     private readonly logger: DeliveryWorkerLogger = silentLogger,
     private readonly wahaPlatform: WahaPlatformConfig = {},
+    private readonly microsoftConfig: MicrosoftConfig = {},
+    private readonly microsoftProvider = new MicrosoftProvider(fetch),
+    private readonly smtpProvider = new SmtpProvider(),
   ) {}
 
   async processNext(now = new Date()): Promise<boolean> {
@@ -59,7 +65,7 @@ export class DeliveryWorker {
         await this.deferWithoutAttempt(delivery.id, delivery.attemptCount, now, `${delivery.channel.toUpperCase()}_CONNECTION_NOT_READY`);
         return;
       }
-      if (delivery.channel === "email" && !this.googleIsConfigured()) {
+      if (delivery.channel === "email" && job.connection.kind === "google" && !this.googleIsConfigured()) {
         await this.deferWithoutAttempt(
           delivery.id,
           delivery.attemptCount,
@@ -85,20 +91,12 @@ export class DeliveryWorker {
 
       if (delivery.channel === "email") {
         if (rendered.channel !== "email") throw new Error("Email render mismatch.");
-        const config = this.requireGoogleConfig();
-        const credentials = parseGoogleCredentials(
-          JSON.parse(unsealPrivateValue(job.connection.encryptedCredentials, this.authSecret)) as unknown,
-        );
-        const sent = await this.googleProvider.send(credentials, config, {
-          to: delivery.recipient,
-          subject: rendered.subject,
-          html: rendered.html,
-        });
+        const sent = await this.sendEmail(job.connection, { to: delivery.recipient, subject: rendered.subject, html: rendered.html });
         await this.succeed(delivery.id, nextAttempt, now, sent.providerMessageId);
         try {
           await this.channels.updateConnectionForHotel({
             hotelId: delivery.hotelId,
-            kind: "google",
+            kind: job.connection.kind,
             state: "connected",
             encryptedCredentials: sealPrivateValue(JSON.stringify(sent.credentials), this.authSecret),
             lastCheckedAt: now,
@@ -177,6 +175,18 @@ export class DeliveryWorker {
       clientSecret: this.googleConfig.GOOGLE_CLIENT_SECRET!,
       redirectUri: this.googleConfig.GOOGLE_REDIRECT_URI!,
     };
+  }
+
+  private async sendEmail(connection: NonNullable<ClaimedOfferDelivery["connection"]>, message: { to: string; subject: string; html: string }) {
+    const raw = JSON.parse(unsealPrivateValue(connection.encryptedCredentials!, this.authSecret)) as unknown;
+    if (connection.kind === "google") return this.googleProvider.send(parseGoogleCredentials(raw), this.requireGoogleConfig(), message);
+    if (connection.kind === "microsoft") {
+      const { MICROSOFT_CLIENT_ID: clientId, MICROSOFT_CLIENT_SECRET: clientSecret, MICROSOFT_REDIRECT_URI: redirectUri } = this.microsoftConfig;
+      if (!clientId || !clientSecret || !redirectUri) throw new ProviderError("MICROSOFT_CONFIG_REQUIRED", true);
+      return this.microsoftProvider.send(parseMicrosoftCredentials(raw), { clientId, clientSecret, redirectUri }, message);
+    }
+    if (connection.kind === "smtp") return { ...(await this.smtpProvider.send(parseSmtpCredentials(raw), message)), credentials: raw };
+    throw new ProviderError("MAIL_PROVIDER_INVALID", false);
   }
 
   private googleIsConfigured(): boolean {

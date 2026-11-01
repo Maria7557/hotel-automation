@@ -793,7 +793,7 @@ class PostgresChannelRepository implements ChannelRepository {
 
   async findConnectionForUser(
     userId: string,
-    kind: "google" | "waha",
+    kind: ConnectionRecord["kind"],
   ): Promise<ConnectionRecord | null> {
     const hotelId = await this.findActiveHotelId(userId);
     if (!hotelId) return null;
@@ -803,6 +803,27 @@ class PostgresChannelRepository implements ChannelRepository {
       .where(and(eq(connections.hotelId, hotelId), eq(connections.kind, kind)))
       .limit(1);
     return row ? mapConnection(row) : null;
+  }
+
+  async configureMailForUser(input: { userId: string; kind: "smtp"; encryptedCredentials: string; metadata: Record<string, unknown> }) {
+    const hotelId = await this.findActiveHotelId(input.userId);
+    if (!hotelId) return null;
+    const rows = await this.db.insert(connections).values({ hotelId, kind: input.kind, state: "connected", encryptedCredentials: input.encryptedCredentials, metadata: input.metadata, lastCheckedAt: new Date(), lastErrorCode: null }).onConflictDoUpdate({ target: [connections.hotelId, connections.kind], set: { state: "connected", encryptedCredentials: input.encryptedCredentials, metadata: input.metadata, lastCheckedAt: new Date(), lastErrorCode: null, updatedAt: new Date() } }).returning();
+    return rows[0] ? mapConnection(rows[0]) : null;
+  }
+
+  async beginMailOAuthForUser(input: { userId: string; kind: "google" | "microsoft"; nonceHash: string; expiresAt: Date; metadata: Record<string, unknown> }) {
+    const hotelId = await this.findActiveHotelId(input.userId); if (!hotelId) return null;
+    const metadata = { ...input.metadata, oauthNonceHash: input.nonceHash, oauthExpiresAt: input.expiresAt.toISOString() };
+    const rows = await this.db.insert(connections).values({ hotelId, kind: input.kind, state: "connecting", metadata }).onConflictDoUpdate({ target: [connections.hotelId, connections.kind], set: { state: "connecting", metadata, lastCheckedAt: null, lastErrorCode: null, updatedAt: new Date() } }).returning();
+    return rows[0] ? { hotelId, connection: mapConnection(rows[0]) } : null;
+  }
+
+  async consumeMailOAuthState(input: { hotelId: string; kind: "google" | "microsoft"; nonceHash: string; now: Date }) {
+    const [current] = await this.db.select().from(connections).where(and(eq(connections.hotelId, input.hotelId), eq(connections.kind, input.kind))).limit(1);
+    if (!current || current.metadata.oauthNonceHash !== input.nonceHash || typeof current.metadata.oauthExpiresAt !== "string" || new Date(current.metadata.oauthExpiresAt) <= input.now) return null;
+    const rows = await this.db.update(connections).set({ state: "connecting", metadata: { ...current.metadata, oauthNonceHash: null, oauthExpiresAt: null, authorizationReceivedAt: input.now.toISOString() }, lastCheckedAt: input.now, lastErrorCode: "TOKEN_EXCHANGE_PENDING", updatedAt: input.now }).where(and(eq(connections.id, current.id), sql`${connections.metadata}->>'oauthNonceHash' = ${input.nonceHash}`)).returning();
+    return rows[0] ? mapConnection(rows[0]) : null;
   }
 
   async configureWahaForUser(input: {
@@ -1005,7 +1026,7 @@ class PostgresDeliveryWorkerRepository implements DeliveryWorkerRepository {
           .where(
             and(
               eq(connections.hotelId, claimed.hotelId),
-              eq(connections.kind, claimed.channel === "email" ? "google" : "waha"),
+              claimed.channel === "email" ? inArray(connections.kind, ["google", "microsoft", "smtp"]) : eq(connections.kind, "waha"),
             ),
           )
           .limit(1)

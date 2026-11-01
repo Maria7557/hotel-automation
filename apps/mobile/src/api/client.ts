@@ -467,6 +467,16 @@ export const apiClient = {
     return response.data;
   },
 
+  async detectMailProvider(email: string): Promise<{ provider: "google" | "microsoft" | "smtp"; confidence: string }> {
+    const token = await requireToken(); const response = await apiRequest<{ data: { provider: "google" | "microsoft" | "smtp"; confidence: string } }>("/v1/connections/mail/detect", { method: "POST", body: JSON.stringify({ email }) }, token); return response.data;
+  },
+  async startMailOAuth(provider: "google" | "microsoft", email: string): Promise<{ authorizationUrl: string; expiresAt: string }> {
+    const token = await requireToken(); const response = await apiRequest<{ data: { authorizationUrl: string; expiresAt: string } }>(`/v1/connections/mail/${provider}/oauth/start`, { method: "POST", body: JSON.stringify({ email }) }, token); return response.data;
+  },
+  async connectSmtp(input: { email: string; hostname: string; port: 465 | 587; username: string; appPassword: string; encryption: "tls" | "starttls" }): Promise<ConnectionStatus> {
+    const token = await requireToken(); const response = await apiRequest<{ data: { connection: ConnectionStatus } }>("/v1/connections/mail/smtp", { method: "POST", body: JSON.stringify(input) }, token); return response.data.connection;
+  },
+
   async getDashboard(options: { demo?: boolean } = {}): Promise<DashboardSnapshot> {
     if (options.demo) {
       await new Promise((resolve) => setTimeout(resolve, 240));

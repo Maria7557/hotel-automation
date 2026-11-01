@@ -169,9 +169,9 @@ export class ChannelService {
     await this.requireHotel(userId);
     const records = await this.repository.listConnectionsForUser(userId);
     if (!records) throw errors.hotelNotFound();
-    return (["google", "waha"] as const).map((kind) =>
-      this.publicConnection(kind, records.find((record) => record.kind === kind) ?? null),
-    );
+    const mail = records.find((record) => ["google", "microsoft", "smtp"].includes(record.kind) && record.state === "connected")
+      ?? records.find((record) => ["google", "microsoft", "smtp"].includes(record.kind)) ?? null;
+    return [this.publicMailConnection(mail), this.publicConnection("waha", records.find((record) => record.kind === "waha") ?? null)];
   }
 
   async wahaStatus(userId: string) {
@@ -372,6 +372,19 @@ export class ChannelService {
             sessionName: typeof metadata.sessionName === "string" ? metadata.sessionName : null,
           }
         : {}),
+    };
+  }
+
+  private publicMailConnection(connection: ConnectionRecord | null) {
+    return {
+      kind: "mail" as const,
+      provider: connection?.kind ?? null,
+      configured: Boolean(connection?.encryptedCredentials),
+      available: this.googleConfigured() || Boolean(connection),
+      state: connection?.state ?? "disconnected",
+      senderEmail: typeof connection?.metadata.senderEmail === "string" ? connection.metadata.senderEmail : null,
+      lastCheckedAt: connection?.lastCheckedAt?.toISOString() ?? null,
+      lastErrorCode: connection?.lastErrorCode ?? null,
     };
   }
 

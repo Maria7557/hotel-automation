@@ -77,7 +77,7 @@ function DashboardHeader({ hotelName, todayLabel, dashboard, technicalIssueCount
   hotelName: string; todayLabel: string; dashboard: DashboardSnapshot; technicalIssueCount: number; failedDeliveryCount: number;
   connections: ConnectionStatus[]; filter: Filter; setFilter: (filter: Filter) => void; shownCount: number;
 }) {
-  const connectionNames = connections.filter((connection) => connection.configured && connection.state !== "connected").map((connection) => connection.kind === "google" ? "Google Mail" : "WhatsApp");
+  const connectionNames = connections.filter((connection) => connection.configured && connection.state !== "connected").map((connection) => connection.kind === "mail" ? "Mail" : "WhatsApp");
   const alertParts = [
     failedDeliveryCount > 0 ? `${failedDeliveryCount} failed deliver${failedDeliveryCount === 1 ? "y" : "ies"}` : null,
     connectionNames.length ? `${connectionNames.join(" and ")} need reconnection` : null,

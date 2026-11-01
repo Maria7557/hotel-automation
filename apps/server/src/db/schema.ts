@@ -19,7 +19,7 @@ const timestamps = {
 };
 
 export const memberRole = pgEnum("member_role", ["owner", "staff"]);
-export const connectionKind = pgEnum("connection_kind", ["google", "waha"]);
+export const connectionKind = pgEnum("connection_kind", ["google", "microsoft", "smtp", "waha"]);
 export const connectionState = pgEnum("connection_state", [
   "disconnected",
   "connecting",

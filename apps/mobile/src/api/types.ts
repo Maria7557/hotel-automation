@@ -159,7 +159,9 @@ export type TestSendResult = {
 };
 
 export type ConnectionStatus = {
-  kind: "google" | "waha";
+  kind: "mail" | "waha";
+  provider?: "google" | "microsoft" | "smtp" | null;
+  senderEmail?: string | null;
   configured: boolean;
   available: boolean;
   state: string;
