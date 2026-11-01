@@ -44,10 +44,16 @@ export const users = pgTable(
     id: uuid("id").primaryKey().defaultRandom(),
     email: varchar("email", { length: 320 }).notNull(),
     displayName: varchar("display_name", { length: 120 }),
-    passwordHash: text("password_hash").notNull(),
+    passwordHash: text("password_hash"),
+    googleSubject: varchar("google_subject", { length: 255 }),
+    appleSubject: varchar("apple_subject", { length: 255 }),
     ...timestamps,
   },
-  (table) => [uniqueIndex("users_email_lower_unique").on(table.email)],
+  (table) => [
+    uniqueIndex("users_email_lower_unique").on(table.email),
+    uniqueIndex("users_google_subject_unique").on(table.googleSubject),
+    uniqueIndex("users_apple_subject_unique").on(table.appleSubject),
+  ],
 );
 
 export const authSessions = pgTable(

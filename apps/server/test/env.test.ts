@@ -31,10 +31,14 @@ describe("environment validation", () => {
       GOOGLE_CLIENT_ID: "",
       GOOGLE_CLIENT_SECRET: "",
       GOOGLE_REDIRECT_URI: "",
+      GOOGLE_AUTH_CLIENT_IDS: "",
+      APPLE_AUTH_CLIENT_IDS: "",
     });
     expect(env.GOOGLE_CLIENT_ID).toBeUndefined();
     expect(env.GOOGLE_CLIENT_SECRET).toBeUndefined();
     expect(env.GOOGLE_REDIRECT_URI).toBeUndefined();
+    expect(env.GOOGLE_AUTH_CLIENT_IDS).toBeUndefined();
+    expect(env.APPLE_AUTH_CLIENT_IDS).toBeUndefined();
     expect(env.DELIVERY_WORKER_ENABLED).toBe(false);
     expect(env.DELIVERY_WORKER_INTERVAL_MS).toBe(5_000);
   });

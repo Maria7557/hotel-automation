@@ -38,6 +38,15 @@ npm run dev:mobile
 
 Для физического телефона укажите в `apps/mobile/.env` LAN-адрес компьютера вместо `127.0.0.1`, например `http://192.168.1.20:4000`.
 
+## Быстрый вход
+
+- Google web: задайте `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID`; в Google Cloud добавьте точный web origin приложения.
+- Google iOS/Android: используйте тот же Web client ID, задайте `EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID` и `EXPO_PUBLIC_GOOGLE_IOS_URL_SCHEME`, создайте отдельные iOS/Android OAuth clients для `com.hotel.staff` и Android signing SHA-1. Нужен Expo development/production build — Expo Go не включает нативный модуль.
+- Apple iOS: включите Sign in with Apple для App ID `com.hotel.staff` в Apple Developer. Проверять нужно на реальном iPhone.
+- Сервер: перечислите допустимые Google audiences в `GOOGLE_AUTH_CLIENT_IDS`, Apple bundle/Services IDs — в `APPLE_AUTH_CLIENT_IDS`.
+
+Вход в аккаунт запрашивает только базовый профиль и подтверждённый email. OAuth-доступ к Gmail для отправки писем подключается отдельно в настройках.
+
 ## Проверка
 
 ```bash

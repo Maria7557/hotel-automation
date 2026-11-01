@@ -1,5 +1,6 @@
 import { useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
   Platform,
@@ -10,6 +11,7 @@ import {
   View,
 } from "react-native";
 import { BedDouble, BellRing, Building2, Check, LogIn, Sparkles, Upload } from "lucide-react-native";
+import Svg, { Path } from "react-native-svg";
 import { theme } from "@hotel/design";
 import { ApiError, apiClient, authErrorMessage } from "@/api/client";
 import { mockProfile } from "@/api/mock";
@@ -19,13 +21,17 @@ import { Button, Field, InlineState, uiStyles } from "@/components/ui";
 type AuthStep = "welcome" | "account" | "hotel";
 type AuthMode = "register" | "login";
 
+export type SocialAuthProvider = "google" | "apple";
+export type SocialAuthResult = { user: SessionUser; profile?: HotelProfile | null };
+
 type AuthFlowProps = {
   initialUser?: SessionUser | undefined;
   onAuthenticated: (user: SessionUser, profile: HotelProfile) => void;
   onDemo: (profile: HotelProfile) => void;
+  onSocialAuth?: (provider: SocialAuthProvider) => Promise<SocialAuthResult>;
 };
 
-export function AuthFlow({ initialUser, onAuthenticated, onDemo }: AuthFlowProps) {
+export function AuthFlow({ initialUser, onAuthenticated, onDemo, onSocialAuth }: AuthFlowProps) {
   const [step, setStep] = useState<AuthStep>(initialUser ? "hotel" : "welcome");
   const [mode, setMode] = useState<AuthMode>("register");
   const [user, setUser] = useState<SessionUser | null>(initialUser ?? null);
@@ -37,6 +43,7 @@ export function AuthFlow({ initialUser, onAuthenticated, onDemo }: AuthFlowProps
   const [countryCode, setCountryCode] = useState("IT");
   const [submitted, setSubmitted] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [socialLoading, setSocialLoading] = useState<SocialAuthProvider | null>(null);
   const [requestError, setRequestError] = useState<string | null>(null);
 
   const accountValid =
@@ -50,6 +57,32 @@ export function AuthFlow({ initialUser, onAuthenticated, onDemo }: AuthFlowProps
     setSubmitted(false);
     setRequestError(null);
     setStep("account");
+  };
+
+  const submitSocial = async (provider: SocialAuthProvider) => {
+    setRequestError(null);
+    if (!onSocialAuth) {
+      setRequestError(`${provider === "google" ? "Google" : "Apple"} sign-in is not connected to the backend yet. Continue with email and password.`);
+      return;
+    }
+
+    setSocialLoading(provider);
+    try {
+      const result = await onSocialAuth(provider);
+      setUser(result.user);
+      setName(result.user.displayName ?? "");
+      setEmail(result.user.email);
+      if (result.profile) {
+        onAuthenticated(result.user, result.profile);
+        return;
+      }
+      setSubmitted(false);
+      setStep("hotel");
+    } catch (error) {
+      setRequestError(authErrorMessage(error));
+    } finally {
+      setSocialLoading(null);
+    }
   };
 
   const submitAccount = async () => {
@@ -116,7 +149,12 @@ export function AuthFlow({ initialUser, onAuthenticated, onDemo }: AuthFlowProps
 
   if (step === "welcome") {
     return (
-      <View style={styles.welcome}>
+      <ScrollView
+        style={styles.welcomeCanvas}
+        contentContainerStyle={styles.welcome}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
         <View style={styles.glow} />
         <View style={styles.brandMark} accessibilityLabel="Hotel">
           <BedDouble size={30} color={theme.colors.onAction} strokeWidth={2.2} />
@@ -136,11 +174,31 @@ export function AuthFlow({ initialUser, onAuthenticated, onDemo }: AuthFlowProps
         </View>
 
         <View style={styles.welcomeActions}>
-          <Button onPress={() => openAccount("register")}>Create account</Button>
-          <Button variant="secondary" icon={LogIn} onPress={() => openAccount("login")}>Sign in</Button>
-          <Button variant="tertiary" onPress={() => onDemo(mockProfile)}>Open demo without an account</Button>
+          {requestError ? <InlineState tone="warning">{requestError}</InlineState> : null}
+          <SocialButton
+            provider="google"
+            loading={socialLoading === "google"}
+            disabled={socialLoading !== null}
+            onPress={() => void submitSocial("google")}
+          />
+          {Platform.OS === "ios" ? (
+            <SocialButton
+              provider="apple"
+              loading={socialLoading === "apple"}
+              disabled={socialLoading !== null}
+              onPress={() => void submitSocial("apple")}
+            />
+          ) : null}
+          <View style={styles.authDivider} accessibilityLabel="Or continue with email and password">
+            <View style={styles.authDividerLine} />
+            <Text style={styles.authDividerText}>OR USE EMAIL</Text>
+            <View style={styles.authDividerLine} />
+          </View>
+          <Button disabled={socialLoading !== null} onPress={() => openAccount("register")}>Create account with email</Button>
+          <Button disabled={socialLoading !== null} variant="secondary" icon={LogIn} onPress={() => openAccount("login")}>Sign in with password</Button>
+          <Button disabled={socialLoading !== null} variant="tertiary" onPress={() => onDemo(mockProfile)}>Open demo without an account</Button>
         </View>
-      </View>
+      </ScrollView>
     );
   }
 
@@ -313,8 +371,70 @@ function Feature({ icon: Icon, title }: { icon: typeof Sparkles; title: string }
   );
 }
 
+function SocialButton({
+  provider,
+  loading,
+  disabled,
+  onPress,
+}: {
+  provider: SocialAuthProvider;
+  loading: boolean;
+  disabled: boolean;
+  onPress: () => void;
+}) {
+  const apple = provider === "apple";
+  const label = apple ? "Continue with Apple" : "Continue with Google";
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={{ disabled, busy: loading }}
+      disabled={disabled}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.socialButton,
+        apple ? styles.appleButton : styles.googleButton,
+        pressed && !disabled && styles.socialPressed,
+        disabled && !loading && styles.socialDisabled,
+      ]}
+    >
+      {loading ? (
+        <ActivityIndicator color={apple ? theme.colors.onAction : theme.colors.action} />
+      ) : (
+        <View style={styles.socialContent}>
+          {apple ? <AppleLogo /> : <GoogleLogo />}
+          <Text style={[styles.socialLabel, apple ? styles.appleLabel : styles.googleLabel]}>{label}</Text>
+        </View>
+      )}
+    </Pressable>
+  );
+}
+
+function GoogleLogo() {
+  return (
+    <Svg width={20} height={20} viewBox="0 0 24 24" accessibilityLabel="Google">
+      <Path fill="#4285F4" d="M21.6 12.23c0-.71-.06-1.39-.18-2.05H12v3.87h5.38a4.6 4.6 0 0 1-2 3.02v2.51h3.24c1.9-1.75 2.98-4.33 2.98-7.35Z" />
+      <Path fill="#34A853" d="M12 22c2.7 0 4.98-.9 6.63-2.42l-3.24-2.51c-.9.6-2.05.96-3.39.96-2.61 0-4.82-1.76-5.61-4.13H3.04v2.59A10 10 0 0 0 12 22Z" />
+      <Path fill="#FBBC05" d="M6.39 13.9A6.02 6.02 0 0 1 6.07 12c0-.66.11-1.3.32-1.9V7.51H3.04A10 10 0 0 0 2 12c0 1.61.38 3.14 1.04 4.49l3.35-2.59Z" />
+      <Path fill="#EA4335" d="M12 5.97c1.47 0 2.79.5 3.83 1.5L18.7 4.6A9.62 9.62 0 0 0 12 2a10 10 0 0 0-8.96 5.51l3.35 2.59C7.18 7.73 9.39 5.97 12 5.97Z" />
+    </Svg>
+  );
+}
+
+function AppleLogo() {
+  return (
+    <Svg width={20} height={20} viewBox="0 0 24 24" accessibilityLabel="Apple">
+      <Path
+        fill="#FFFFFF"
+        d="M17.05 12.54c.02-2.04 1.67-3.02 1.75-3.07a3.76 3.76 0 0 0-2.96-1.6c-1.25-.13-2.46.75-3.1.75-.65 0-1.63-.74-2.7-.72a3.95 3.95 0 0 0-3.33 2.03c-1.44 2.49-.37 6.14 1.01 8.15.69.97 1.49 2.06 2.55 2.02 1.03-.04 1.42-.65 2.66-.65 1.23 0 1.6.65 2.68.63 1.11-.02 1.81-.98 2.47-1.96a8.1 8.1 0 0 0 1.13-2.3 3.53 3.53 0 0 1-2.16-3.28Zm-2.03-5.99a3.6 3.6 0 0 0 .83-2.58 3.68 3.68 0 0 0-2.38 1.23 3.42 3.42 0 0 0-.85 2.48 3.04 3.04 0 0 0 2.4-1.13Z"
+      />
+    </Svg>
+  );
+}
+
 const styles = StyleSheet.create({
-  welcome: { flex: 1, backgroundColor: theme.colors.surface, paddingHorizontal: theme.controls.contentInset, paddingTop: theme.spacing[10], paddingBottom: theme.spacing[5], overflow: "hidden" },
+  welcomeCanvas: { flex: 1, backgroundColor: theme.colors.surface },
+  welcome: { flexGrow: 1, backgroundColor: theme.colors.surface, paddingHorizontal: theme.controls.contentInset, paddingTop: theme.spacing[10], paddingBottom: theme.spacing[5], overflow: "hidden" },
   glow: { position: "absolute", width: 280, height: 280, borderRadius: 140, backgroundColor: theme.colors.actionTint, right: -120, top: -100 },
   brandMark: { width: 58, height: 58, borderRadius: theme.radii.lg, backgroundColor: theme.colors.action, alignItems: "center", justifyContent: "center" },
   welcomeCopy: { marginTop: theme.spacing[10], gap: theme.spacing[3] },
@@ -325,7 +445,19 @@ const styles = StyleSheet.create({
   feature: { minHeight: 58, flexDirection: "row", alignItems: "center", gap: theme.spacing[3], borderRadius: theme.radii.md, backgroundColor: theme.colors.background, paddingHorizontal: theme.spacing[3] },
   featureIcon: { width: 36, height: 36, borderRadius: theme.radii.md, alignItems: "center", justifyContent: "center", backgroundColor: theme.colors.actionTint },
   featureLabel: { ...theme.typography.bodySmallMedium, color: theme.colors.text, flex: 1 },
-  welcomeActions: { marginTop: "auto", gap: theme.spacing[2] },
+  welcomeActions: { marginTop: theme.spacing[8], gap: theme.spacing[2] },
+  socialButton: { minHeight: theme.controls.buttonHeight, borderRadius: theme.radii.md, alignItems: "center", justifyContent: "center", paddingHorizontal: theme.spacing[5] },
+  googleButton: { backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.borderStrong },
+  appleButton: { backgroundColor: theme.colors.text, borderWidth: 1, borderColor: theme.colors.text },
+  socialPressed: { opacity: 0.78, transform: [{ scale: 0.99 }] },
+  socialDisabled: { opacity: 0.48 },
+  socialContent: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: theme.spacing[3] },
+  socialLabel: theme.typography.button,
+  googleLabel: { color: theme.colors.text },
+  appleLabel: { color: theme.colors.onAction },
+  authDivider: { minHeight: 44, flexDirection: "row", alignItems: "center", gap: theme.spacing[3] },
+  authDividerLine: { flex: 1, height: 1, backgroundColor: theme.colors.border },
+  authDividerText: { ...theme.typography.captionMedium, color: theme.colors.textMuted, letterSpacing: 0.8 },
   formContent: { paddingHorizontal: theme.controls.contentInset, paddingTop: theme.spacing[5], paddingBottom: 48, gap: theme.spacing[4] },
   progressRow: { flexDirection: "row", gap: theme.spacing[2], marginBottom: theme.spacing[1] },
   progressActive: { height: 4, flex: 1, borderRadius: theme.radii.pill, backgroundColor: theme.colors.action },

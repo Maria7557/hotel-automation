@@ -180,7 +180,7 @@ function mapHotel(hotel: ApiHotel): HotelProfile {
 }
 
 async function authenticate(
-  path: "/v1/auth/register" | "/v1/auth/login",
+  path: "/v1/auth/register" | "/v1/auth/login" | "/v1/auth/social",
   payload: Record<string, unknown>,
 ): Promise<AuthSession> {
   const response = await apiRequest<{ data: AuthSession }>(path, {
@@ -203,6 +203,9 @@ export const apiClient = {
 
   login: (input: { email: string; password: string }) =>
     authenticate("/v1/auth/login", input),
+
+  socialLogin: (input: { provider: "google" | "apple"; idToken: string }) =>
+    authenticate("/v1/auth/social", input),
 
   async getSession(): Promise<SessionUser | null> {
     const token = await readToken();
@@ -568,6 +571,13 @@ export function authErrorMessage(error: unknown): string {
     INVALID_RATE_RANGE: "Check the rate period dates.",
     ROOM_CAPACITY_EXCEEDED: "The number of guests exceeds the room capacity.",
     CONFIG_REQUIRED: "This connection is not configured on the server yet. Add the provider settings and try again.",
+    SOCIAL_AUTH_NOT_CONFIGURED: error.message,
+    SOCIAL_AUTH_UNAVAILABLE: error.message,
+    SOCIAL_AUTH_FAILED: error.message,
+    SOCIAL_AUTH_CANCELLED: error.message,
+    SOCIAL_TOKEN_INVALID: "The identity provider could not verify this sign-in. Please try again.",
+    SOCIAL_EMAIL_UNVERIFIED: "Use an account with a verified email address.",
+    SOCIAL_ACCOUNT_CONFLICT: "This email is already linked to a different sign-in method.",
   };
   return messages[error.code] ?? error.message;
 }

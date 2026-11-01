@@ -42,6 +42,7 @@ import type {
   RoomProfile,
   RoomUpdate,
   SystemRepository,
+  SocialProvider,
   UserRecord,
 } from "./types.js";
 
@@ -49,6 +50,17 @@ function requireRow<T>(rows: T[], operation: string): T {
   const row = rows[0];
   if (!row) throw new Error(`Database did not return a row for ${operation}.`);
   return row;
+}
+
+function mapUser(row: typeof users.$inferSelect): UserRecord {
+  return {
+    id: row.id,
+    email: row.email,
+    displayName: row.displayName,
+    passwordHash: row.passwordHash,
+    googleSubject: row.googleSubject,
+    appleSubject: row.appleSubject,
+  };
 }
 
 function mapHotel(row: typeof hotels.$inferSelect): HotelProfile {
@@ -160,15 +172,77 @@ class PostgresAuthRepository implements AuthRepository {
 
   async findUserByEmail(email: string): Promise<UserRecord | null> {
     const [row] = await this.db.select().from(users).where(eq(users.email, email)).limit(1);
-    return row
-      ? { id: row.id, email: row.email, displayName: row.displayName, passwordHash: row.passwordHash }
-      : null;
+    return row ? mapUser(row) : null;
   }
 
   async createUser(input: { email: string; displayName: string | null; passwordHash: string }): Promise<UserRecord> {
     const rows = await this.db.insert(users).values(input).returning();
     const row = requireRow(rows, "create user");
-    return { id: row.id, email: row.email, displayName: row.displayName, passwordHash: row.passwordHash };
+    return mapUser(row);
+  }
+
+  async findOrCreateSocialUser(input: {
+    provider: SocialProvider;
+    subject: string;
+    email: string;
+    displayName: string | null;
+    allowEmailLink: boolean;
+  }): Promise<UserRecord> {
+    return this.db.transaction(async (transaction) => {
+      const subjectColumn = input.provider === "google" ? users.googleSubject : users.appleSubject;
+      const [bySubject] = await transaction.select().from(users).where(eq(subjectColumn, input.subject)).limit(1);
+      if (bySubject) return mapUser(bySubject);
+
+      const [byEmail] = await transaction.select().from(users).where(eq(users.email, input.email)).limit(1);
+      if (byEmail) {
+        if (!input.allowEmailLink) {
+          const error = new Error("The provider is not authoritative for automatic email linking.");
+          error.name = "SocialIdentityConflictError";
+          throw error;
+        }
+        const linkedSubject = input.provider === "google" ? byEmail.googleSubject : byEmail.appleSubject;
+        if (linkedSubject && linkedSubject !== input.subject) {
+          const error = new Error("This provider is already linked to another identity for the account.");
+          error.name = "SocialIdentityConflictError";
+          throw error;
+        }
+
+        const rows = await transaction
+          .update(users)
+          .set({
+            ...(input.provider === "google"
+              ? { googleSubject: input.subject }
+              : { appleSubject: input.subject }),
+            ...(byEmail.displayName ? {} : { displayName: input.displayName }),
+            updatedAt: new Date(),
+          })
+          .where(and(eq(users.id, byEmail.id), isNull(subjectColumn)))
+          .returning();
+        const linked = rows[0];
+        if (linked) return mapUser(linked);
+
+        const [current] = await transaction.select().from(users).where(eq(users.id, byEmail.id)).limit(1);
+        if (current && (input.provider === "google" ? current.googleSubject : current.appleSubject) === input.subject) {
+          return mapUser(current);
+        }
+        const error = new Error("Social identity link changed concurrently.");
+        error.name = "SocialIdentityConflictError";
+        throw error;
+      }
+
+      const rows = await transaction
+        .insert(users)
+        .values({
+          email: input.email,
+          displayName: input.displayName,
+          passwordHash: null,
+          ...(input.provider === "google"
+            ? { googleSubject: input.subject }
+            : { appleSubject: input.subject }),
+        })
+        .returning();
+      return mapUser(requireRow(rows, "create social user"));
+    });
   }
 
   async createSession(input: { userId: string; tokenHash: string; expiresAt: Date }): Promise<void> {

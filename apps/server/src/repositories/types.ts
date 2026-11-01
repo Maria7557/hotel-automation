@@ -2,10 +2,14 @@ export type UserRecord = {
   id: string;
   email: string;
   displayName: string | null;
-  passwordHash: string;
+  passwordHash: string | null;
+  googleSubject: string | null;
+  appleSubject: string | null;
 };
 
-export type PublicUser = Omit<UserRecord, "passwordHash">;
+export type PublicUser = Pick<UserRecord, "id" | "email" | "displayName">;
+
+export type SocialProvider = "google" | "apple";
 
 export type HotelProfile = {
   id: string;
@@ -91,6 +95,13 @@ export type RateOverlap = Pick<RatePeriodProfile, "id" | "start" | "endExclusive
 export interface AuthRepository {
   findUserByEmail(email: string): Promise<UserRecord | null>;
   createUser(input: { email: string; displayName: string | null; passwordHash: string }): Promise<UserRecord>;
+  findOrCreateSocialUser(input: {
+    provider: SocialProvider;
+    subject: string;
+    email: string;
+    displayName: string | null;
+    allowEmailLink: boolean;
+  }): Promise<UserRecord>;
   createSession(input: { userId: string; tokenHash: string; expiresAt: Date }): Promise<void>;
   findUserBySessionHash(tokenHash: string, now: Date): Promise<PublicUser | null>;
   deleteSession(tokenHash: string): Promise<void>;

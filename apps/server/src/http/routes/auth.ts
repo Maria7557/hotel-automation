@@ -3,7 +3,7 @@ import type { FastifyInstance } from "fastify";
 import { errors } from "../../lib/errors.js";
 import type { AuthService } from "../../services/auth.js";
 import { bearerToken, requireAuthentication } from "../authenticate.js";
-import { loginSchema, registerSchema } from "../schemas.js";
+import { loginSchema, registerSchema, socialLoginSchema } from "../schemas.js";
 
 export async function registerAuthRoutes(app: FastifyInstance, authService: AuthService): Promise<void> {
   const authenticate = requireAuthentication(authService);
@@ -15,6 +15,11 @@ export async function registerAuthRoutes(app: FastifyInstance, authService: Auth
 
   app.post("/v1/auth/login", async (request) => {
     const result = await authService.login(loginSchema.parse(request.body));
+    return { data: serializeAuthResult(result) };
+  });
+
+  app.post("/v1/auth/social", async (request) => {
+    const result = await authService.socialLogin(socialLoginSchema.parse(request.body));
     return { data: serializeAuthResult(result) };
   });
 

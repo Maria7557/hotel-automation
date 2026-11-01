@@ -11,6 +11,7 @@ import { StatusBar } from "expo-status-bar";
 import { theme } from "@hotel/design";
 import { ApiError, apiClient, authErrorMessage } from "@/api/client";
 import type { HotelProfile, SessionUser } from "@/api/types";
+import { getSocialIdentityToken } from "@/auth/social-auth";
 import { AuthFlow } from "@/screens/AuthFlow";
 import { RequestsScreen } from "@/screens/RequestsScreen";
 import { SettingsScreen } from "@/screens/SettingsScreen";
@@ -90,6 +91,20 @@ export default function App() {
     }
   };
 
+  const handleSocialAuth = async (provider: "google" | "apple") => {
+    const idToken = await getSocialIdentityToken(provider);
+    const session = await apiClient.socialLogin({ provider, idToken });
+    try {
+      const profile = await apiClient.getHotel();
+      return { user: session.user, profile };
+    } catch (error) {
+      if (error instanceof ApiError && error.code === "HOTEL_NOT_FOUND") {
+        return { user: session.user, profile: null };
+      }
+      throw error;
+    }
+  };
+
   if (!fontsLoaded) return <View style={styles.loadingCanvas} />;
 
   const profile = appState.status === "authenticated" ? appState.profile : appState.status === "demo" ? appState.profile : null;
@@ -113,6 +128,7 @@ export default function App() {
             ) : null}
             <AuthFlow
               initialUser={appState.status === "authenticated" ? appState.user : undefined}
+              onSocialAuth={handleSocialAuth}
               onAuthenticated={(user, nextProfile) => setAppState({ status: "authenticated", user, profile: nextProfile })}
               onDemo={(demoProfile) => setAppState({ status: "demo", profile: demoProfile })}
             />

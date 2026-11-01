@@ -13,6 +13,14 @@ export class AppError extends Error {
 export const errors = {
   unauthorized: () => new AppError(401, "UNAUTHORIZED", "Authentication is required."),
   invalidCredentials: () => new AppError(401, "INVALID_CREDENTIALS", "Email or password is incorrect."),
+  socialTokenInvalid: () =>
+    new AppError(401, "SOCIAL_TOKEN_INVALID", "The identity token is invalid or expired."),
+  socialEmailUnverified: () =>
+    new AppError(401, "SOCIAL_EMAIL_UNVERIFIED", "A verified email address is required."),
+  socialAccountConflict: () =>
+    new AppError(409, "SOCIAL_ACCOUNT_CONFLICT", "This sign-in identity cannot be linked to the account."),
+  socialProviderUnavailable: (provider: string) =>
+    new AppError(502, "SOCIAL_PROVIDER_UNAVAILABLE", `${provider} identity verification is unavailable.`),
   emailInUse: () => new AppError(409, "EMAIL_IN_USE", "An account with this email already exists."),
   hotelExists: () => new AppError(409, "HOTEL_EXISTS", "This account already belongs to a hotel."),
   hotelNotFound: () => new AppError(404, "HOTEL_NOT_FOUND", "Hotel profile was not found."),

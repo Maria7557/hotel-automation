@@ -14,6 +14,11 @@ import { registerMediaRoutes } from "./http/routes/media.js";
 import { AppError } from "./lib/errors.js";
 import { GoogleProvider } from "./providers/google.js";
 import type { ProviderFetch } from "./providers/http.js";
+import {
+  RemoteSocialTokenVerifier,
+  socialClientIds,
+  type SocialTokenVerifier,
+} from "./providers/social-auth.js";
 import { WahaProvider } from "./providers/waha.js";
 import type { Repositories } from "./repositories/types.js";
 import { AuthService } from "./services/auth.js";
@@ -27,11 +32,13 @@ type AppOptions = {
     Partial<
       Pick<
         AppEnv,
-        "PUBLIC_BASE_URL" | "GOOGLE_CLIENT_ID" | "GOOGLE_CLIENT_SECRET" | "GOOGLE_REDIRECT_URI"
+        "PUBLIC_BASE_URL" | "GOOGLE_CLIENT_ID" | "GOOGLE_CLIENT_SECRET" | "GOOGLE_REDIRECT_URI" |
+        "GOOGLE_AUTH_CLIENT_IDS" | "APPLE_AUTH_CLIENT_IDS"
       >
     >;
   repositories: Repositories;
   providerFetch?: ProviderFetch;
+  socialTokenVerifier?: SocialTokenVerifier;
   logger?: boolean;
 };
 
@@ -42,6 +49,7 @@ export async function createApp(options: AppOptions): Promise<FastifyInstance> {
           redact: [
             "req.headers.authorization",
             "req.body.password",
+            "req.body.idToken",
             "req.body.apiKey",
             "req.query.code",
             "res.headers['set-cookie']",
@@ -64,6 +72,10 @@ export async function createApp(options: AppOptions): Promise<FastifyInstance> {
     options.repositories.auth,
     options.env.AUTH_SECRET,
     options.env.SESSION_TTL_DAYS,
+    options.socialTokenVerifier ?? new RemoteSocialTokenVerifier({
+      google: socialClientIds(options.env.GOOGLE_AUTH_CLIENT_IDS),
+      apple: socialClientIds(options.env.APPLE_AUTH_CLIENT_IDS),
+    }),
   );
   const hotelService = new HotelService(options.repositories.hotels);
   const inventoryService = new InventoryService(options.repositories.inventory);

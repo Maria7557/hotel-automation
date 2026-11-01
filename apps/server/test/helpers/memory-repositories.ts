@@ -28,6 +28,7 @@ import type {
   RoomCreate,
   RoomProfile,
   RoomUpdate,
+  SocialProvider,
   SystemRepository,
   UserRecord,
 } from "../../src/repositories/types.js";
@@ -45,7 +46,52 @@ class MemoryAuthRepository implements AuthRepository {
       const error = Object.assign(new Error("duplicate email"), { code: "23505" });
       throw error;
     }
-    const user = { id: randomUUID(), ...input };
+    const user: UserRecord = {
+      id: randomUUID(),
+      ...input,
+      googleSubject: null,
+      appleSubject: null,
+    };
+    this.users.set(user.id, user);
+    return user;
+  }
+
+  async findOrCreateSocialUser(input: {
+    provider: SocialProvider;
+    subject: string;
+    email: string;
+    displayName: string | null;
+    allowEmailLink: boolean;
+  }): Promise<UserRecord> {
+    const subjectKey = input.provider === "google" ? "googleSubject" : "appleSubject";
+    const bySubject = [...this.users.values()].find((user) => user[subjectKey] === input.subject);
+    if (bySubject) return bySubject;
+
+    const byEmail = await this.findUserByEmail(input.email);
+    if (byEmail) {
+      if (!input.allowEmailLink) {
+        const error = new Error("non-authoritative email link");
+        error.name = "SocialIdentityConflictError";
+        throw error;
+      }
+      if (byEmail[subjectKey] && byEmail[subjectKey] !== input.subject) {
+        const error = new Error("social identity conflict");
+        error.name = "SocialIdentityConflictError";
+        throw error;
+      }
+      byEmail[subjectKey] = input.subject;
+      byEmail.displayName ||= input.displayName;
+      return byEmail;
+    }
+
+    const user: UserRecord = {
+      id: randomUUID(),
+      email: input.email,
+      displayName: input.displayName,
+      passwordHash: null,
+      googleSubject: input.provider === "google" ? input.subject : null,
+      appleSubject: input.provider === "apple" ? input.subject : null,
+    };
     this.users.set(user.id, user);
     return user;
   }
