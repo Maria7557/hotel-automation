@@ -140,9 +140,17 @@ export type MessageSettings = {
 
 export type MessageSettingsInput = Omit<MessageSettings, "allowedVariables">;
 
+export type MessageOfferContext = {
+  url: string;
+  hotelName: string;
+  checkIn: string;
+  checkOut: string;
+  roomNames: string[];
+};
+
 export type MessagePreview =
-  | { channel: "email"; subject: string; text: string; html: string }
-  | { channel: "whatsapp"; text: string };
+  | { channel: "email"; subject: string; text: string; html: string; offer: MessageOfferContext }
+  | { channel: "whatsapp"; text: string; offer: MessageOfferContext };
 
 export type TestSendResult = {
   provider: "fake" | "gmail" | "waha";

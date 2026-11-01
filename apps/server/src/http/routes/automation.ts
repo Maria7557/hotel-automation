@@ -61,6 +61,29 @@ export async function registerAutomationRoutes(
     },
   );
 
+  app.get("/proposal/test/:token", async (request, reply) => {
+    const { token } = publicOfferParamsSchema.parse(request.params);
+    const snapshot = await automationService.testProposalPage(token);
+    const accepted = (request.query as { accepted?: unknown }).accepted === "1";
+    const html = renderPublicOfferPage(snapshot as unknown as OfferSnapshot, {
+      state: accepted ? "accepted" : "active",
+      acceptActionPath: `/proposal/test/${token}/accept`,
+      locale: snapshot.hotelSnapshot.locale,
+      testMode: true,
+    });
+    return reply
+      .header("Cache-Control", "private, no-store")
+      .header("X-Robots-Tag", "noindex, nofollow, noarchive, nosnippet")
+      .type("text/html; charset=utf-8")
+      .send(html);
+  });
+
+  app.post("/proposal/test/:token/accept", async (request, reply) => {
+    const { token } = publicOfferParamsSchema.parse(request.params);
+    await automationService.testProposalPage(token);
+    return reply.redirect(`/proposal/test/${token}?accepted=1`, 303);
+  });
+
   app.get("/proposal/:token", async (request, reply) => {
     const { token } = publicOfferParamsSchema.parse(request.params);
     const { offer, state } = await automationService.proposalPage(token);

@@ -99,7 +99,7 @@ export async function createApp(options: AppOptions): Promise<FastifyInstance> {
     options.repositories.channels,
     options.repositories.hotels,
     options.env.AUTH_SECRET,
-    options.env.PUBLIC_BASE_URL ?? "http://localhost:4000",
+    automationService,
     {
       ...(options.env.GOOGLE_CLIENT_ID ? { GOOGLE_CLIENT_ID: options.env.GOOGLE_CLIENT_ID } : {}),
       ...(options.env.GOOGLE_CLIENT_SECRET

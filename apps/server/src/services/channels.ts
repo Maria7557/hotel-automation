@@ -1,7 +1,5 @@
 import { randomUUID } from "node:crypto";
 
-import { escapeHtml, safeHeaderText } from "@hotel/templates";
-
 import type { AppEnv } from "../config/env.js";
 import type { z } from "zod";
 import {
@@ -28,6 +26,8 @@ import type {
   HotelRepository,
   MessageSettingsUpdate,
 } from "../repositories/types.js";
+import type { AutomationService } from "./automation.js";
+import { renderOfferDelivery } from "./offer-delivery-renderer.js";
 
 export const defaultMessageSettings: MessageSettingsUpdate = {
   emailSubjectTemplate: "Your offer from {{hotel_name}}",
@@ -47,7 +47,7 @@ export class ChannelService {
     private readonly repository: ChannelRepository,
     private readonly hotels: HotelRepository,
     private readonly authSecret: string,
-    private readonly publicBaseUrl: string,
+    private readonly automation: AutomationService,
     private readonly google: Partial<OAuthConfig>,
     private readonly googleProvider: GoogleProvider,
     private readonly wahaProvider: WahaProvider,
@@ -73,13 +73,15 @@ export class ChannelService {
   async preview(userId: string, input: PreviewInput) {
     const hotel = await this.requireHotel(userId);
     const settings = await this.effectiveSettings(userId);
-    return this.renderPreview(hotel, settings, input);
+    const testOffer = await this.automation.createTestProposal(userId, input.sample);
+    return this.renderTestPreview(hotel, settings, input, testOffer);
   }
 
   async testSend(userId: string, input: TestSendInput) {
     const hotel = await this.requireHotel(userId);
     const settings = await this.effectiveSettings(userId);
-    const rendered = this.renderPreview(hotel, settings, input);
+    const testOffer = await this.automation.createTestProposal(userId, input.sample);
+    const rendered = this.renderTestPreview(hotel, settings, input, testOffer);
     const connectionKind = input.channel === "email" ? "google" : "waha";
     const connection = await this.repository.findConnectionForUser(userId, connectionKind);
     if (connection?.state !== "connected" || !connection.encryptedCredentials) {
@@ -329,40 +331,33 @@ export class ChannelService {
     return (await this.repository.findMessageSettingsForUser(userId)) ?? defaultMessageSettings;
   }
 
-  private renderPreview(
+  private renderTestPreview(
     hotel: HotelProfile,
     settings: MessageSettingsUpdate,
     input: PreviewInput,
+    testOffer: Awaited<ReturnType<AutomationService["createTestProposal"]>>,
   ) {
-    const sample = {
-      guestName: input.sample?.guestName ?? "Mario Rossi",
-      checkIn: input.sample?.checkIn ?? "2027-06-10",
-      checkOut: input.sample?.checkOut ?? "2027-06-12",
-      guestCount: input.sample?.guestCount ?? 2,
-      totalCents: input.sample?.totalCents ?? 24_000,
-    };
-    const values: Record<string, string> = {
-      guest_name: sample.guestName,
-      hotel_name: hotel.name,
-      check_in: sample.checkIn,
-      check_out: sample.checkOut,
-      guest_count: String(sample.guestCount),
-      total: new Intl.NumberFormat(hotel.locale, { style: "currency", currency: "EUR" }).format(
-        sample.totalCents / 100,
-      ),
-      offer_url: `${this.publicBaseUrl.replace(/\/$/, "")}/proposal/preview`,
-    };
-    if (input.channel === "whatsapp") {
-      return { channel: "whatsapp" as const, text: renderText(settings.whatsappBodyTemplate, values) };
-    }
-    const subject = safeHeaderText(renderText(settings.emailSubjectTemplate, values));
-    const text = renderText(settings.emailBodyTemplate, values);
-    const safeBody = escapeHtml(text).replace(/\n/g, "<br>");
+    const rendered = renderOfferDelivery({
+      snapshot: testOffer.snapshot,
+      proposalUrl: testOffer.proposalUrl,
+      channel: input.channel,
+      settings: { hotelId: hotel.id, ...settings, createdAt: new Date(), updatedAt: new Date() },
+      locale: hotel.locale,
+    });
+    const guest = record(testOffer.snapshot.guestSnapshot);
+    const options = Array.isArray(testOffer.snapshot.options) ? testOffer.snapshot.options : [];
     return {
-      channel: "email" as const,
-      subject,
-      text,
-      html: `<!doctype html><html lang="it"><head><meta charset="utf-8"><meta name="robots" content="noindex,nofollow"></head><body style="margin:0;background:#f1f1f1;color:#202020;font-family:Poppins,Inter,Arial,sans-serif"><main style="max-width:600px;margin:0 auto;padding:32px 20px"><section style="background:#fff;border-radius:20px;padding:24px"><h1 style="font-size:22px;line-height:28px">${escapeHtml(subject)}</h1><p style="font-size:16px;line-height:24px">${safeBody}</p></section></main></body></html>`,
+      ...rendered,
+      offer: {
+        url: testOffer.proposalUrl,
+        hotelName: hotel.name,
+        checkIn: typeof guest?.checkIn === "string" ? guest.checkIn : "",
+        checkOut: typeof guest?.checkOut === "string" ? guest.checkOut : "",
+        roomNames: options.flatMap((option) => {
+          const value = record(option)?.roomName;
+          return typeof value === "string" ? [value] : [];
+        }),
+      },
     };
   }
 
@@ -420,7 +415,7 @@ export class ChannelService {
   private async saveTestResult(
     userId: string,
     input: TestSendInput,
-    rendered: ReturnType<ChannelService["renderPreview"]>,
+    rendered: ReturnType<ChannelService["renderTestPreview"]>,
     result: {
       provider: "fake" | "gmail" | "waha";
       accepted: boolean;
@@ -525,6 +520,8 @@ function providerFailure(error: unknown, fallback: string): ProviderError {
   return error instanceof ProviderError ? error : new ProviderError(`${fallback}_FAILED`, false);
 }
 
-function renderText(template: string, values: Readonly<Record<string, string>>): string {
-  return template.replace(/{{\s*([a-z_][a-z0-9_]*)\s*}}/g, (_match, variable: string) => values[variable] ?? "");
+function record(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
 }

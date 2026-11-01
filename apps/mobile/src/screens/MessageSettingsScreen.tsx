@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
+  Linking,
   Platform,
   Pressable,
   ScrollView,
@@ -9,7 +10,7 @@ import {
   Text,
   View,
 } from "react-native";
-import { ArrowLeft, Check, Eye, Mail, MessageCircle, Send, Variable } from "lucide-react-native";
+import { ArrowLeft, Building2, Check, ExternalLink, Eye, Mail, MessageCircle, Send, Variable } from "lucide-react-native";
 import { theme } from "@hotel/design";
 import { apiClient, authErrorMessage } from "@/api/client";
 import type {
@@ -210,6 +211,7 @@ function PreviewCard({ preview }: { preview: MessagePreview }) {
       <View style={styles.previewHeading}><Eye size={18} color={theme.colors.action} /><Text style={styles.previewChannel}>{preview.channel === "email" ? "Email preview" : "WhatsApp preview"}</Text></View>
       {preview.channel === "email" ? <Text style={styles.previewSubject}>{preview.subject}</Text> : null}
       <Text style={styles.previewText}>{preview.text}</Text>
+      <OfferLinkCard offer={preview.offer} />
     </View>
   );
 }
@@ -222,8 +224,18 @@ function TestResultCard({ result }: { result: TestSendResult }) {
       <Text style={styles.fakeResultText}>Provider: {result.provider} · accepted: {String(result.accepted)}</Text>
       <Text style={styles.fakeResultText}>Delivery: {result.delivery.state} · {result.delivery.lastErrorCode ?? "no code"}</Text>
       <Text style={styles.fakeResultText}>Recipient: {result.delivery.recipient}</Text>
+      <OfferLinkCard offer={result.rendered.offer} />
     </View>
   );
+}
+
+function OfferLinkCard({ offer }: { offer: MessagePreview["offer"] }) {
+  return <View style={styles.offerContext}>
+    <View style={styles.offerContextHeading}><Building2 size={17} color={theme.colors.action} /><Text style={styles.offerContextTitle}>{offer.hotelName}</Text></View>
+    <Text style={styles.offerContextMeta}>{offer.checkIn} → {offer.checkOut}</Text>
+    <Text style={styles.offerContextMeta}>{offer.roomNames.length > 0 ? offer.roomNames.join(" · ") : "No priced rooms are available for this test period"}</Text>
+    <Button variant="secondary" icon={ExternalLink} onPress={() => void Linking.openURL(offer.url)}>Open test offer</Button>
+  </View>;
 }
 
 function ChannelChoice({ selected, onSelect }: { selected: MessageChannel; onSelect: (channel: MessageChannel) => void }) {
@@ -239,9 +251,10 @@ function toInput(settings: MessageSettings): MessageSettingsInput {
 }
 
 function renderDemoPreview(channel: MessageChannel, settings: MessageSettingsInput): MessagePreview {
-  const values: Record<string, string> = { guest_name: "Mario Rossi", hotel_name: "Casa Aurelia", check_in: "2027-06-10", check_out: "2027-06-12", guest_count: "2", total: "240,00 €", offer_url: "https://example.com/proposal/preview" };
+  const offer = { url: "https://example.com/proposal/preview", hotelName: "Casa Aurelia", checkIn: "2027-06-10", checkOut: "2027-06-12", roomNames: ["Deluxe Room", "Junior Suite"] };
+  const values: Record<string, string> = { guest_name: "Mario Rossi", hotel_name: offer.hotelName, check_in: offer.checkIn, check_out: offer.checkOut, guest_count: "2", total: "240,00 €", offer_url: offer.url };
   const render = (value: string) => value.replace(/{{\s*([a-z_][a-z0-9_]*)\s*}}/g, (_, key: string) => values[key] ?? "");
-  return channel === "email" ? { channel, subject: render(settings.emailSubjectTemplate), text: render(settings.emailBodyTemplate), html: "" } : { channel, text: render(settings.whatsappBodyTemplate) };
+  return channel === "email" ? { channel, subject: render(settings.emailSubjectTemplate), text: render(settings.emailBodyTemplate), html: "", offer } : { channel, text: render(settings.whatsappBodyTemplate), offer };
 }
 
 function fakeDemoResult(channel: MessageChannel, recipient: string, settings: MessageSettingsInput): TestSendResult {
@@ -273,6 +286,10 @@ const styles = StyleSheet.create({
   previewChannel: { ...theme.typography.captionMedium, color: theme.colors.action },
   previewSubject: { ...theme.typography.h4, color: theme.colors.text },
   previewText: { ...theme.typography.bodySmall, color: theme.colors.textSecondary },
+  offerContext: { gap: theme.spacing[2], padding: theme.spacing[3], borderRadius: theme.radii.md, backgroundColor: theme.colors.actionTint },
+  offerContextHeading: { flexDirection: "row", alignItems: "center", gap: theme.spacing[2] },
+  offerContextTitle: { ...theme.typography.bodySmallMedium, color: theme.colors.text },
+  offerContextMeta: { ...theme.typography.caption, color: theme.colors.textSecondary },
   channelChoice: { flexDirection: "row", backgroundColor: theme.colors.surfaceMuted, borderRadius: theme.radii.md, padding: theme.spacing[1], minHeight: 48 },
   channelButton: { flex: 1, minHeight: 40, alignItems: "center", justifyContent: "center", borderRadius: theme.radii.sm },
   channelButtonSelected: { backgroundColor: theme.colors.surface },

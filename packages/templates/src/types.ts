@@ -67,4 +67,5 @@ export type PageRenderContext = Readonly<{
   acceptActionPath: string;
   locale?: string;
   selectedOptionIndex?: number;
+  testMode?: boolean;
 }>;

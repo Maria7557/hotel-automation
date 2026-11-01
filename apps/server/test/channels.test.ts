@@ -134,11 +134,54 @@ describe("message settings and channel connections", () => {
     });
     expect(preview.statusCode).toBe(200);
     const rendered = preview.json().data.preview;
-    expect(rendered.text).toContain("https://offers.example/proposal/preview");
+    expect(rendered.text).toContain("https://offers.example/proposal/test/");
+    expect(rendered.offer).toMatchObject({ hotelName: "Casa <Blu>", checkIn: "2027-01-01", checkOut: "2027-01-02" });
     expect(rendered.html).not.toContain("<script>alert");
     expect(rendered.html).not.toContain("<img src=x");
     expect(rendered.html).toContain("&lt;script&gt;");
     expect(rendered.html).not.toContain("Anna%20");
+  });
+
+  it("builds a working test offer from the hotel's real rooms and rates", async () => {
+    const owner = await onboard(app, "preview@example.com", "Casa Blu");
+    const room = await app.inject({
+      method: "POST", url: "/v1/rooms", headers: auth(owner.token), payload: {
+        name: "Camera Deluxe", description: "Camera matrimoniale", maxAdults: 2, maxChildren: 1, maxGuests: 3,
+        beds: [{ type: "king", count: 1 }], amenities: ["wifi"], photoUrls: ["https://images.example/room.jpg"],
+      },
+    });
+    const roomId = room.json().data.room.id as string;
+    await app.inject({
+      method: "POST", url: `/v1/rooms/${roomId}/rates`, headers: auth(owner.token), payload: {
+        planCode: "breakfast", planName: "Breakfast included", mealPlan: "breakfast",
+        start: "2026-11-01", endInclusive: "2026-12-31", nightlyBaseCents: 10_000,
+        includedAdults: 2, includedChildren: 0, extraAdultCents: 3_000, extraChildCents: 1_500,
+        breakfastAdultCents: 1_200, breakfastChildCents: 600, maxChildAge: 12, minNights: 1,
+      },
+    });
+    await app.inject({
+      method: "PUT", url: "/v1/hotel/message-settings", headers: auth(owner.token), payload: {
+        emailSubjectTemplate: "Test {{hotel_name}}", emailBodyTemplate: "Test body without a link",
+        whatsappBodyTemplate: "WhatsApp body without a link",
+      },
+    });
+
+    const preview = await app.inject({
+      method: "POST", url: "/v1/hotel/message-settings/preview", headers: auth(owner.token), payload: { channel: "email" },
+    });
+    expect(preview.statusCode).toBe(200);
+    const rendered = preview.json().data.preview;
+    expect(rendered.offer).toMatchObject({
+      hotelName: "Casa Blu", checkIn: "2026-11-01", checkOut: "2026-11-02", roomNames: ["Camera Deluxe"],
+    });
+    expect(rendered.text).toContain(rendered.offer.url);
+    const offerUrl = new URL(rendered.offer.url);
+    const page = await app.inject({ method: "GET", url: `${offerUrl.pathname}${offerUrl.search}` });
+    expect(page.statusCode).toBe(200);
+    expect(page.body).toContain("Casa Blu");
+    expect(page.body).toContain("Camera Deluxe");
+    expect(page.body).toContain("https://images.example/room.jpg");
+    expect(repositories.automation.inquiries.size).toBe(0);
   });
 
   it("creates a transparent fake Delivery through the preview path without claiming sent", async () => {

@@ -5,6 +5,7 @@ import { buildOfferDraft } from "@hotel/domain";
 import { toDomainHotel, toDomainInquiry, toDomainRatePeriod, toDomainRoom } from "../adapters/domain.js";
 import { errors } from "../lib/errors.js";
 import { createPublicToken, hashPublicToken, sealPrivateValue } from "../lib/public-token.js";
+import { createTestOfferToken, verifyTestOfferToken } from "../lib/test-offer-token.js";
 import type {
   AutomationRepository,
   DeliveryRecord,
@@ -21,6 +22,13 @@ export type PublicInquiryInput = {
   occupancy: { adults: number; childAges: number[] };
   note: string;
   source: Record<string, unknown>;
+};
+
+export type TestOfferSample = {
+  guestName?: string;
+  checkIn?: string;
+  checkOut?: string;
+  guestCount?: number;
 };
 
 export class AutomationService {
@@ -134,6 +142,37 @@ export class AutomationService {
     return this.publicOffer(offer);
   }
 
+  async createTestProposal(userId: string, sample: TestOfferSample = {}) {
+    const facts = await this.repository.dashboardFactsForUser(userId);
+    if (!facts) throw errors.hotelNotFound();
+    const catalog = await this.repository.listCatalogForHotel(facts.hotel.id);
+    const snapshot = this.testOfferSnapshot(facts.hotel, catalog, sample);
+    const token = createTestOfferToken({
+      publicKey: facts.hotel.publicKey,
+      checkIn: snapshot.guestSnapshot.checkIn,
+      checkOut: snapshot.guestSnapshot.checkOut,
+      adults: snapshot.guestSnapshot.occupancy.adults,
+    }, new Date(Date.now() + 48 * 60 * 60_000), this.authSecret);
+    return {
+      proposalUrl: `${this.publicBaseUrl}/proposal/test/${token}`,
+      snapshot: JSON.parse(JSON.stringify(snapshot)) as Record<string, unknown>,
+    };
+  }
+
+  async testProposalPage(rawToken: string) {
+    const verified = verifyTestOfferToken(rawToken, this.authSecret, new Date());
+    if (!verified) throw errors.offerNotFound();
+    const hotel = await this.repository.findPublicHotelByKey(verified.publicKey);
+    if (!hotel) throw errors.offerNotFound();
+    const catalog = await this.repository.listCatalogForHotel(hotel.id);
+    return this.testOfferSnapshot(hotel, catalog, {
+      guestName: "Test Guest",
+      checkIn: verified.checkIn,
+      checkOut: verified.checkOut,
+      guestCount: verified.adults,
+    });
+  }
+
   async proposalPage(rawToken: string) {
     const offer = await this.repository.findOfferByTokenHash(hashPublicToken(rawToken));
     if (!offer) throw errors.offerNotFound();
@@ -223,6 +262,80 @@ export class AutomationService {
     return persistable;
   }
 
+  private testOfferSnapshot(
+    hotel: Awaited<ReturnType<AutomationRepository["findPublicHotelByKey"]>> & {},
+    catalog: Awaited<ReturnType<AutomationRepository["listCatalogForHotel"]>>,
+    sample: TestOfferSample,
+  ) {
+    const requested = {
+      guestName: sample.guestName ?? "Test Guest",
+      checkIn: sample.checkIn ?? "2027-06-10",
+      checkOut: sample.checkOut ?? "2027-06-12",
+      adults: Math.max(1, Math.min(20, sample.guestCount ?? 2)),
+    };
+    const requestedDraft = this.buildTestDraft(hotel, catalog, requested);
+    if (requestedDraft) return requestedDraft;
+
+    const periods = [...catalog.ratePeriods].sort((left, right) => left.start.localeCompare(right.start));
+    for (const period of periods) {
+      const room = catalog.rooms.find(({ id }) => id === period.roomId);
+      if (!room || room.maxAdults < 1) continue;
+      const nights = Math.max(1, period.minNights);
+      const checkOut = addDays(period.start, nights);
+      if (checkOut > period.endExclusive) continue;
+      const draft = this.buildTestDraft(hotel, catalog, {
+        guestName: requested.guestName,
+        checkIn: period.start,
+        checkOut,
+        adults: Math.min(room.maxAdults, room.maxGuests, Math.max(1, period.includedAdults)),
+      });
+      if (draft) return draft;
+    }
+
+    return {
+      inquiryId: randomUUID(),
+      hotelSnapshot: {
+        id: hotel.id,
+        name: hotel.name,
+        description: hotel.description ?? "",
+        currency: hotel.currency,
+        locale: hotel.locale,
+        timezone: hotel.timezone,
+        logoUrl: hotel.logoUrl,
+        photos: hotel.photoUrls.map((url, sortOrder) => ({ url, alt: hotel.name, sortOrder })),
+      },
+      guestSnapshot: {
+        name: requested.guestName,
+        checkIn: requested.checkIn,
+        checkOut: requested.checkOut,
+        occupancy: { adults: requested.adults, childAges: [] },
+      },
+      options: [],
+    };
+  }
+
+  private buildTestDraft(
+    hotel: NonNullable<Awaited<ReturnType<AutomationRepository["findPublicHotelByKey"]>>>,
+    catalog: Awaited<ReturnType<AutomationRepository["listCatalogForHotel"]>>,
+    sample: { guestName: string; checkIn: string; checkOut: string; adults: number },
+  ) {
+    const now = new Date();
+    const inquiry: InquiryRecord = {
+      id: randomUUID(), hotelId: hotel.id, idempotencyKey: `test:${randomUUID()}`,
+      guestName: sample.guestName, guestEmail: null, guestPhone: null, locale: hotel.locale,
+      checkIn: sample.checkIn, checkOut: sample.checkOut,
+      occupancy: { adults: sample.adults, childAges: [] }, source: { test: true }, note: "",
+      attentionReason: null, currentOfferId: null, closedAt: null, createdAt: now, updatedAt: now,
+    };
+    const result = buildOfferDraft({
+      hotel: toDomainHotel(hotel),
+      rooms: catalog.rooms.map(toDomainRoom),
+      ratePeriods: catalog.ratePeriods.map(toDomainRatePeriod),
+      inquiry: toDomainInquiry(inquiry),
+    });
+    return result.ok ? result.draft : null;
+  }
+
   private intakeResponse(bundle: InquiryBundle) {
     return {
       inquiryId: bundle.inquiry.id,
@@ -273,4 +386,10 @@ function offerSummary(offer: OfferRecord): { roomName: string; totalCents: numbe
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function addDays(date: string, days: number): string {
+  const value = new Date(`${date}T00:00:00.000Z`);
+  value.setUTCDate(value.getUTCDate() + days);
+  return value.toISOString().slice(0, 10);
 }

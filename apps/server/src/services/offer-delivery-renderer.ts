@@ -48,11 +48,11 @@ export function renderOfferDelivery(input: {
   if (input.channel === "whatsapp") {
     return {
       channel: "whatsapp",
-      text: renderText(input.settings.whatsappBodyTemplate, values),
+      text: ensureOfferUrl(renderText(input.settings.whatsappBodyTemplate, values), publicOfferUrl),
     };
   }
   const subject = safeHeaderText(renderText(input.settings.emailSubjectTemplate, values));
-  const text = renderText(input.settings.emailBodyTemplate, values);
+  const text = ensureOfferUrl(renderText(input.settings.emailBodyTemplate, values), publicOfferUrl);
   return {
     channel: "email",
     subject,
@@ -107,6 +107,10 @@ function renderText(template: string, values: Readonly<Record<string, string>>):
     /{{\s*([a-z_][a-z0-9_]*)\s*}}/g,
     (_match, variable: string) => values[variable] ?? "",
   );
+}
+
+function ensureOfferUrl(text: string, publicOfferUrl: string): string {
+  return text.includes(publicOfferUrl) ? text : `${text.trim()}\n\n${publicOfferUrl}`;
 }
 
 function safeEmailHtml(subject: string, text: string): string {
