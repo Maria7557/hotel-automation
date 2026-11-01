@@ -20,7 +20,7 @@ import { HotelProfileScreen } from "@/screens/HotelProfileScreen";
 import { MessageSettingsScreen } from "@/screens/MessageSettingsScreen";
 import { ConnectionsScreen } from "@/screens/ConnectionsScreen";
 import { SiteIntegrationScreen } from "@/screens/SiteIntegrationScreen";
-import { WhatsAppAdminScreen } from "@/screens/WhatsAppAdminScreen";
+import { SupportScreen } from "@/screens/SupportScreen";
 
 type Tab = "requests" | "settings" | "support";
 type AppState =
@@ -37,7 +37,6 @@ export default function App() {
     Inter_700Bold,
   });
   const [appState, setAppState] = useState<AppState>({ status: "booting" });
-  const [platformAdmin, setPlatformAdmin] = useState(false);
   const [tab, setTab] = useState<Tab>("requests");
   const [logoutLoading, setLogoutLoading] = useState(false);
   const [logoutError, setLogoutError] = useState<string | null>(null);
@@ -54,13 +53,9 @@ export default function App() {
         const user = await apiClient.getSession();
         if (!active) return;
         if (!user) {
-          setPlatformAdmin(false);
           setAppState({ status: "signedOut", error: null });
           return;
         }
-        void apiClient.getPlatformAdminAccess()
-          .then((enabled) => { if (active) setPlatformAdmin(enabled); })
-          .catch(() => { if (active) setPlatformAdmin(false); });
         try {
           const profile = await apiClient.getHotel();
           if (active) setAppState({ status: "authenticated", user, profile });
@@ -73,7 +68,6 @@ export default function App() {
         }
       } catch (error) {
         if (active) {
-          setPlatformAdmin(false);
           setAppState({ status: "signedOut", error: authErrorMessage(error) });
         }
       }
@@ -85,7 +79,6 @@ export default function App() {
   const handleLogout = async () => {
     if (appState.status === "demo") {
       setAppState({ status: "signedOut", error: null });
-      setPlatformAdmin(false);
       setTab("requests");
       return;
     }
@@ -93,12 +86,10 @@ export default function App() {
     setLogoutError(null);
     try {
       await apiClient.logout();
-      setPlatformAdmin(false);
       setTab("requests");
       setAppState({ status: "signedOut", error: null });
     } catch (error) {
       setLogoutError(`${authErrorMessage(error)} The local session was cleared.`);
-      setPlatformAdmin(false);
       setTab("requests");
       setAppState({ status: "signedOut", error: `${authErrorMessage(error)} The local session was cleared.` });
     } finally {
@@ -154,10 +145,8 @@ export default function App() {
               onSocialAuth={handleSocialAuth}
               onAuthenticated={(user, nextProfile) => {
                 setAppState({ status: "authenticated", user, profile: nextProfile });
-                void apiClient.getPlatformAdminAccess().then(setPlatformAdmin).catch(() => setPlatformAdmin(false));
               }}
               onDemo={(demoProfile) => {
-                setPlatformAdmin(false);
                 setTab("requests");
                 setAppState({ status: "demo", profile: demoProfile });
               }}
@@ -197,8 +186,8 @@ export default function App() {
                 />
               ) : tab === "requests" ? (
                 <RequestsScreen hotelName={profile.name} demo={appState.status === "demo"} />
-              ) : tab === "support" && platformAdmin ? (
-                <WhatsAppAdminScreen />
+              ) : tab === "support" ? (
+                <SupportScreen />
               ) : (
                 <SettingsScreen
                   profile={profile}
@@ -218,7 +207,7 @@ export default function App() {
               <View style={styles.nav} accessibilityRole="tablist">
                 <NavItem label="Requests" icon={ClipboardList} selected={tab === "requests"} onPress={() => openTab("requests")} />
                 <NavItem label="Settings" icon={Settings} selected={tab === "settings"} onPress={() => openTab("settings")} />
-                {platformAdmin ? <NavItem label="Support" icon={Headphones} selected={tab === "support"} onPress={() => openTab("support")} /> : null}
+                <NavItem label="Support" icon={Headphones} selected={tab === "support"} onPress={() => openTab("support")} />
               </View>
             </SafeAreaView>
           </View>
