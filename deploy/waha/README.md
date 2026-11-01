@@ -1,6 +1,8 @@
 # WAHA service for Hotel Automation
 
-This Compose file runs the open-source WAHA Core image as the platform WhatsApp gateway.
+This Compose file runs the open-source WAHA Core image with the GOWS engine as the
+platform WhatsApp gateway. GOWS is WAHA's recommended engine for reliable automation
+and does not depend on Chromium or WhatsApp Web page internals.
 It binds only to `127.0.0.1:3000`; neither the REST API nor the native WAHA Dashboard
 must be exposed through the public nginx host.
 
@@ -39,3 +41,7 @@ must be exposed through the public nginx host.
 WAHA uses WhatsApp Web rather than the official Meta Cloud API. A linked number can be
 rate-limited or blocked by WhatsApp. Support must treat `WORKING` separately from delivery
 errors and message-capping incidents; restarting a healthy session is not a fix for capping.
+
+Engine-specific authentication data is isolated by WAHA. When migrating from WEBJS to
+GOWS, users whose session was not already paired must scan a fresh QR code. Keep
+`WAHA_NAMESPACE=all` so shared configuration remains available across engine upgrades.

@@ -1,6 +1,8 @@
 services:
   waha:
-    image: devlikeapro/waha:latest
+    # GOWS is the WAHA-recommended engine for reliable automation and avoids
+    # browser-injection breakage when WhatsApp Web changes its internal API.
+    image: devlikeapro/waha:gows
     container_name: hotel-waha
     restart: unless-stopped
     shm_size: "512mb"
@@ -11,6 +13,9 @@ services:
       - "./media:/app/.media:Z"
     env_file:
       - .env
+    environment:
+      WHATSAPP_DEFAULT_ENGINE: GOWS
+      WAHA_NAMESPACE: all
     logging:
       driver: json-file
       options:
