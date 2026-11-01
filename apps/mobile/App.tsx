@@ -207,6 +207,7 @@ export default function App() {
                   onOpenMessages={() => setMessagesOpen(true)}
                   onOpenConnections={() => setConnectionsOpen(true)}
                   onOpenSiteIntegration={() => setSiteIntegrationOpen(true)}
+                  onOpenSupport={() => setTab("support")}
                 />
               )}
             </View>
