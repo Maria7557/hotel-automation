@@ -10,6 +10,7 @@ import type {
   DeliveryWorkerRepository,
 } from "../repositories/types.js";
 import { renderOfferDelivery } from "./offer-delivery-renderer.js";
+import type { NotificationService } from "./notifications.js";
 
 type GoogleConfig = {
   GOOGLE_CLIENT_ID?: string;
@@ -40,6 +41,7 @@ export class DeliveryWorker {
     private readonly microsoftConfig: MicrosoftConfig = {},
     private readonly microsoftProvider = new MicrosoftProvider(fetch),
     private readonly smtpProvider = new SmtpProvider(),
+    private readonly notifications?: NotificationService,
   ) {}
 
   async processNext(now = new Date()): Promise<boolean> {
@@ -139,6 +141,7 @@ export class DeliveryWorker {
       if (error instanceof ProviderError) {
         if (error.ambiguous || error.code.endsWith("_NETWORK_ERROR")) {
           await this.unknown(delivery.id, nextAttempt, now, error.code);
+          await this.notifyError(job, error.code);
           this.logOutcome(delivery.id, delivery.channel, "unknown", error.code);
           return;
         }
@@ -153,16 +156,35 @@ export class DeliveryWorker {
           now,
           error.retryable ? `MAX_ATTEMPTS_${error.code}` : error.code,
         );
+        await this.notifyError(job, error.code);
         this.logOutcome(delivery.id, delivery.channel, "failed", error.code);
         return;
       }
       await this.fail(delivery.id, nextAttempt, now, "DELIVERY_RENDER_OR_CREDENTIALS_INVALID");
+      await this.notifyError(job, "DELIVERY_RENDER_OR_CREDENTIALS_INVALID");
       this.logOutcome(
         delivery.id,
         delivery.channel,
         "failed",
         "DELIVERY_RENDER_OR_CREDENTIALS_INVALID",
       );
+    }
+  }
+
+  private async notifyError(job: ClaimedOfferDelivery, code: string): Promise<void> {
+    if (!this.notifications || !job.offer) return;
+    const guest = job.offer.snapshot.guestSnapshot;
+    const guestName = typeof guest === "object" && guest && "name" in guest ? String(guest.name) : "Guest";
+    try {
+      await this.notifications.notify({
+        type: "error",
+        hotelId: job.delivery.hotelId,
+        inquiryId: job.delivery.inquiryId ?? job.offer.inquiryId,
+        guestName,
+        message: `Delivery failed (${code}).`,
+      });
+    } catch {
+      // Delivery state is authoritative even when a secondary notification fails.
     }
   }
 

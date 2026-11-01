@@ -14,10 +14,12 @@ import { registerHotelRoutes } from "./http/routes/hotels.js";
 import { registerInventoryRoutes } from "./http/routes/inventory.js";
 import { registerMediaRoutes } from "./http/routes/media.js";
 import { registerPlatformWhatsAppAdminRoutes } from "./http/routes/platform-whatsapp-admin.js";
+import { registerNotificationRoutes } from "./http/routes/notifications.js";
 import { AppError } from "./lib/errors.js";
 import { GoogleProvider } from "./providers/google.js";
 import { MicrosoftProvider } from "./providers/microsoft.js";
 import { SmtpProvider } from "./providers/smtp.js";
+import { ExpoPushProvider, SmtpNotificationMailer } from "./providers/notifications.js";
 import type { ProviderFetch } from "./providers/http.js";
 import {
   RemoteSocialTokenVerifier,
@@ -33,6 +35,7 @@ import { MailConnectionService } from "./services/mail-connections.js";
 import { HotelService } from "./services/hotels.js";
 import { InventoryService } from "./services/inventory.js";
 import { PlatformWhatsAppAdminService } from "./services/platform-whatsapp-admin.js";
+import { NotificationService } from "./services/notifications.js";
 
 type AppOptions = {
   env: Pick<AppEnv, "AUTH_SECRET" | "SESSION_TTL_DAYS" | "corsOrigins"> &
@@ -41,7 +44,9 @@ type AppOptions = {
         AppEnv,
         "NODE_ENV" | "PUBLIC_BASE_URL" | "GOOGLE_CLIENT_ID" | "GOOGLE_CLIENT_SECRET" | "GOOGLE_REDIRECT_URI" |
         "GOOGLE_AUTH_CLIENT_IDS" | "APPLE_AUTH_CLIENT_IDS" | "WAHA_BASE_URL" | "WAHA_API_KEY" |
-        "MICROSOFT_CLIENT_ID" | "MICROSOFT_CLIENT_SECRET" | "MICROSOFT_REDIRECT_URI" | "platformAdminEmails"
+        "MICROSOFT_CLIENT_ID" | "MICROSOFT_CLIENT_SECRET" | "MICROSOFT_REDIRECT_URI" | "platformAdminEmails" |
+        "EXPO_ACCESS_TOKEN" | "NOTIFICATION_SMTP_HOST" | "NOTIFICATION_SMTP_PORT" |
+        "NOTIFICATION_SMTP_USERNAME" | "NOTIFICATION_SMTP_PASSWORD" | "NOTIFICATION_FROM_EMAIL" | "NOTIFICATION_FROM_NAME"
       >
     >;
   repositories: Repositories;
@@ -90,10 +95,23 @@ export async function createApp(options: AppOptions): Promise<FastifyInstance> {
   );
   const hotelService = new HotelService(options.repositories.hotels);
   const inventoryService = new InventoryService(options.repositories.inventory);
+  const notificationService = new NotificationService(
+    options.repositories.notifications,
+    new ExpoPushProvider(options.providerFetch ?? fetch, options.env.EXPO_ACCESS_TOKEN),
+    new SmtpNotificationMailer({
+      host: options.env.NOTIFICATION_SMTP_HOST,
+      port: options.env.NOTIFICATION_SMTP_PORT,
+      username: options.env.NOTIFICATION_SMTP_USERNAME,
+      password: options.env.NOTIFICATION_SMTP_PASSWORD,
+      fromEmail: options.env.NOTIFICATION_FROM_EMAIL,
+      fromName: options.env.NOTIFICATION_FROM_NAME,
+    }),
+  );
   const automationService = new AutomationService(
     options.repositories.automation,
     options.env.AUTH_SECRET,
     options.env.PUBLIC_BASE_URL ?? "http://localhost:4000",
+    notificationService,
   );
   const channelService = new ChannelService(
     options.repositories.channels,
@@ -145,6 +163,7 @@ export async function createApp(options: AppOptions): Promise<FastifyInstance> {
   await registerChannelRoutes(app, authService, channelService);
   await registerMailConnectionRoutes(app, authService, mailService);
   await registerPlatformWhatsAppAdminRoutes(app, authService, platformWhatsAppAdminService);
+  await registerNotificationRoutes(app, authService, notificationService);
   await registerHotelRoutes(app, authService, hotelService);
   await registerInventoryRoutes(app, authService, inventoryService);
   await registerMediaRoutes(app, authService, options.env.PUBLIC_BASE_URL);

@@ -9,7 +9,9 @@ import {
   hotelMembers,
   hotels,
   inquiries,
+  notificationPreferences,
   offerVersions,
+  pushDevices,
   ratePeriods,
   rooms,
   users,
@@ -34,6 +36,8 @@ import type {
   InquiryRecord,
   MessageSettings,
   MessageSettingsUpdate,
+  NotificationPreferences,
+  NotificationRepository,
   OfferRecord,
   PlatformAdminRepository,
   RatePeriodCreate,
@@ -43,6 +47,7 @@ import type {
   RoomCreate,
   RoomProfile,
   RoomUpdate,
+  PushDeviceRecord,
   SystemRepository,
   SocialProvider,
   UserRecord,
@@ -125,6 +130,14 @@ function mapMessageSettings(row: typeof hotelMessageSettings.$inferSelect): Mess
 }
 
 function mapConnection(row: typeof connections.$inferSelect): ConnectionRecord {
+  return { ...row };
+}
+
+function mapNotificationPreferences(row: typeof notificationPreferences.$inferSelect): NotificationPreferences {
+  return { ...row };
+}
+
+function mapPushDevice(row: typeof pushDevices.$inferSelect): PushDeviceRecord {
   return { ...row };
 }
 
@@ -1173,6 +1186,96 @@ class PostgresDeliveryWorkerRepository implements DeliveryWorkerRepository {
   }
 }
 
+class PostgresNotificationRepository implements NotificationRepository {
+  constructor(private readonly db: Database) {}
+
+  async findPreferencesForUser(userId: string) {
+    const [user] = await this.db
+      .select({ id: users.id, email: users.email, displayName: users.displayName })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+    if (!user) return null;
+    const [preferenceRows, deviceRows] = await Promise.all([
+      this.db.select().from(notificationPreferences).where(eq(notificationPreferences.userId, userId)).limit(1),
+      this.db.select().from(pushDevices).where(and(eq(pushDevices.userId, userId), eq(pushDevices.active, true))).orderBy(desc(pushDevices.lastRegisteredAt)),
+    ]);
+    return {
+      user,
+      preferences: preferenceRows[0] ? mapNotificationPreferences(preferenceRows[0]) : null,
+      devices: deviceRows.map(mapPushDevice),
+    };
+  }
+
+  async upsertPreferencesForUser(
+    userId: string,
+    input: Pick<NotificationPreferences, "pushAllRequests" | "emailIncomingRequests" | "emailAddress">,
+  ) {
+    const rows = await this.db
+      .insert(notificationPreferences)
+      .values({ userId, ...input })
+      .onConflictDoUpdate({
+        target: notificationPreferences.userId,
+        set: { ...input, updatedAt: new Date() },
+      })
+      .returning();
+    return rows[0] ? mapNotificationPreferences(rows[0]) : null;
+  }
+
+  async registerPushDeviceForUser(
+    userId: string,
+    input: { expoPushToken: string; platform: string; deviceName: string | null },
+  ) {
+    const now = new Date();
+    const rows = await this.db
+      .insert(pushDevices)
+      .values({ userId, ...input, active: true, lastRegisteredAt: now })
+      .onConflictDoUpdate({
+        target: pushDevices.expoPushToken,
+        set: { userId, platform: input.platform, deviceName: input.deviceName, active: true, lastRegisteredAt: now, updatedAt: now },
+      })
+      .returning();
+    return rows[0] ? mapPushDevice(rows[0]) : null;
+  }
+
+  async deactivatePushDeviceForUser(userId: string, expoPushToken: string): Promise<boolean> {
+    const rows = await this.db
+      .update(pushDevices)
+      .set({ active: false, updatedAt: new Date() })
+      .where(and(eq(pushDevices.userId, userId), eq(pushDevices.expoPushToken, expoPushToken)))
+      .returning({ id: pushDevices.id });
+    return rows.length === 1;
+  }
+
+  async deactivatePushDeviceByToken(expoPushToken: string): Promise<void> {
+    await this.db
+      .update(pushDevices)
+      .set({ active: false, updatedAt: new Date() })
+      .where(eq(pushDevices.expoPushToken, expoPushToken));
+  }
+
+  async listTargetsForHotel(hotelId: string) {
+    const memberRows = await this.db
+      .select({ id: users.id, email: users.email, displayName: users.displayName })
+      .from(hotelMembers)
+      .innerJoin(users, eq(users.id, hotelMembers.userId))
+      .where(eq(hotelMembers.hotelId, hotelId));
+    if (memberRows.length === 0) return [];
+    const userIds = memberRows.map(({ id }) => id);
+    const [preferenceRows, deviceRows] = await Promise.all([
+      this.db.select().from(notificationPreferences).where(inArray(notificationPreferences.userId, userIds)),
+      this.db.select().from(pushDevices).where(and(inArray(pushDevices.userId, userIds), eq(pushDevices.active, true))),
+    ]);
+    return memberRows.map((user) => ({
+      user,
+      preferences: preferenceRows.find(({ userId }) => userId === user.id)
+        ? mapNotificationPreferences(preferenceRows.find(({ userId }) => userId === user.id)!)
+        : null,
+      devices: deviceRows.filter(({ userId }) => userId === user.id).map(mapPushDevice),
+    }));
+  }
+}
+
 function throwRateOverlap(error: unknown): never {
   if (typeof error === "object" && error !== null && "code" in error && error.code === "23P01") {
     const conflict = new Error("Rate period overlap.");
@@ -1204,6 +1307,7 @@ export function createPostgresRepositories(db: Database): Repositories {
     channels: new PostgresChannelRepository(db),
     platformAdmin: new PostgresPlatformAdminRepository(db),
     deliveryWorker: new PostgresDeliveryWorkerRepository(db),
+    notifications: new PostgresNotificationRepository(db),
     system: new PostgresSystemRepository(db),
   };
 }

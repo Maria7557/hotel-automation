@@ -205,3 +205,13 @@ export type PlatformWhatsAppSnapshot = {
   counts: { total: number; connected: number; connecting: number; attention: number; disconnected: number };
   sessions: PlatformWhatsAppSession[];
 };
+
+export type NotificationSettings = {
+  pushPaymentsAndErrors: true;
+  pushAllRequests: boolean;
+  pushDeviceRegistered: boolean;
+  pushDeviceCount: number;
+  emailIncomingRequests: boolean;
+  emailAddress: string;
+  emailDeliveryAvailable: boolean;
+};

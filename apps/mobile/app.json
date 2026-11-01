@@ -7,7 +7,7 @@
     "userInterfaceStyle": "light",
     "backgroundColor": "#F8F9FB",
     "primaryColor": "#1769FF",
-    "plugins": ["expo-secure-store", "expo-apple-authentication"],
+    "plugins": ["expo-secure-store", "expo-apple-authentication", "expo-notifications"],
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.hotel.staff",

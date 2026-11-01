@@ -71,6 +71,13 @@
       "when": 1793535162489,
       "tag": "0009_fancy_whizzer",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1793543647202,
+      "tag": "0010_sad_firestar",
+      "breakpoints": true
     }
   ]
 }

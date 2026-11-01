@@ -14,6 +14,7 @@ import type {
   InquiryRecord,
   OfferRecord,
 } from "../repositories/types.js";
+import type { NotificationEvent, NotificationService } from "./notifications.js";
 
 export type PublicInquiryInput = {
   guest: { name: string; email: string | null; phone: string | null; language: string };
@@ -36,6 +37,7 @@ export class AutomationService {
     private readonly repository: AutomationRepository,
     private readonly authSecret: string,
     private readonly publicBaseUrl: string,
+    private readonly notifications?: NotificationService,
   ) {}
 
   async intake(publicKey: string, origin: string | undefined, idempotencyKey: string, input: PublicInquiryInput) {
@@ -81,6 +83,17 @@ export class AutomationService {
           source: { ...inquiry.source, automationIssues: result.issues },
         },
       });
+      if (!bundle.replayed) {
+        await this.safeNotify({
+          type: "inquiry",
+          hotelId: hotel.id,
+          inquiryId: bundle.inquiry.id,
+          guestName: bundle.inquiry.guestName,
+          checkIn: bundle.inquiry.checkIn,
+          checkOut: bundle.inquiry.checkOut,
+          attentionReason: bundle.inquiry.attentionReason,
+        });
+      }
       return this.intakeResponse(bundle);
     }
 
@@ -132,6 +145,17 @@ export class AutomationService {
       offer,
       deliveries,
     });
+    if (!bundle.replayed) {
+      await this.safeNotify({
+        type: "inquiry",
+        hotelId: hotel.id,
+        inquiryId: bundle.inquiry.id,
+        guestName: bundle.inquiry.guestName,
+        checkIn: bundle.inquiry.checkIn,
+        checkOut: bundle.inquiry.checkOut,
+        attentionReason: null,
+      });
+    }
     return { ...this.intakeResponse(bundle), ...(bundle.replayed ? {} : { proposalUrl }) };
   }
 
@@ -193,7 +217,22 @@ export class AutomationService {
     const offer = await this.repository.acceptOfferByTokenHash(hash, now, selectedOptionIndex);
     if (!offer) throw errors.offerNotFound();
     this.ensurePublicOfferAvailable(offer, now, true);
+    if (current.state !== "accepted" && offer.state === "accepted") {
+      const guestSnapshot = offer.snapshot.guestSnapshot;
+      const guestName = typeof guestSnapshot === "object" && guestSnapshot && "name" in guestSnapshot
+        ? String(guestSnapshot.name)
+        : "Guest";
+      await this.safeNotify({ type: "payment", hotelId: offer.hotelId, inquiryId: offer.inquiryId, guestName });
+    }
     return this.publicOffer(offer);
+  }
+
+  private async safeNotify(event: NotificationEvent): Promise<void> {
+    try {
+      await this.notifications?.notify(event);
+    } catch {
+      // Notifications must never prevent a guest request or acceptance from completing.
+    }
   }
 
   async markPaymentLinkSent(userId: string, inquiryId: string) {

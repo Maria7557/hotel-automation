@@ -7,13 +7,27 @@ import { GoogleProvider } from "./providers/google.js";
 import { WahaProvider } from "./providers/waha.js";
 import { MicrosoftProvider } from "./providers/microsoft.js";
 import { SmtpProvider } from "./providers/smtp.js";
+import { ExpoPushProvider, SmtpNotificationMailer } from "./providers/notifications.js";
 import { createPostgresRepositories } from "./repositories/postgres.js";
 import { DeliveryWorker, DeliveryWorkerLoop } from "./services/delivery-worker.js";
+import { NotificationService } from "./services/notifications.js";
 
 const env = loadEnv();
 const { client, db } = createDatabase(env.DATABASE_URL);
 const repositories = createPostgresRepositories(db);
 const app = await createApp({ env, repositories, logger: true });
+const notificationService = new NotificationService(
+  repositories.notifications,
+  new ExpoPushProvider(fetch, env.EXPO_ACCESS_TOKEN),
+  new SmtpNotificationMailer({
+    host: env.NOTIFICATION_SMTP_HOST,
+    port: env.NOTIFICATION_SMTP_PORT,
+    username: env.NOTIFICATION_SMTP_USERNAME,
+    password: env.NOTIFICATION_SMTP_PASSWORD,
+    fromEmail: env.NOTIFICATION_FROM_EMAIL,
+    fromName: env.NOTIFICATION_FROM_NAME,
+  }),
+);
 const worker = new DeliveryWorker(
   repositories.deliveryWorker,
   repositories.channels,
@@ -38,6 +52,7 @@ const worker = new DeliveryWorker(
   },
   new MicrosoftProvider(fetch),
   new SmtpProvider(),
+  notificationService,
 );
 const workerLoop = env.DELIVERY_WORKER_ENABLED
   ? new DeliveryWorkerLoop(worker, env.DELIVERY_WORKER_INTERVAL_MS, 10, app.log)

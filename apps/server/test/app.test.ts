@@ -170,6 +170,37 @@ describe("server API", () => {
     expect(otherRead.json().error.code).toBe("HOTEL_NOT_FOUND");
   });
 
+  it("stores notification preferences and registers a phone per user", async () => {
+    const accessToken = await registeredToken(app, "alerts@example.com");
+    const initial = await app.inject({ method: "GET", url: "/v1/notifications/settings", headers: auth(accessToken) });
+    expect(initial.statusCode).toBe(200);
+    expect(initial.json().data.settings).toMatchObject({
+      pushPaymentsAndErrors: true,
+      pushAllRequests: false,
+      pushDeviceRegistered: false,
+      emailIncomingRequests: false,
+      emailAddress: "alerts@example.com",
+    });
+
+    const updated = await app.inject({
+      method: "PUT",
+      url: "/v1/notifications/settings",
+      headers: auth(accessToken),
+      payload: { pushAllRequests: true, emailIncomingRequests: true, emailAddress: "desk@example.com" },
+    });
+    expect(updated.statusCode).toBe(200);
+    expect(updated.json().data.settings).toMatchObject({ pushAllRequests: true, emailIncomingRequests: true, emailAddress: "desk@example.com" });
+
+    const registered = await app.inject({
+      method: "POST",
+      url: "/v1/notifications/devices",
+      headers: auth(accessToken),
+      payload: { expoPushToken: "ExponentPushToken[test-device_123]", platform: "ios", deviceName: "Front desk iPhone" },
+    });
+    expect(registered.statusCode).toBe(201);
+    expect(registered.json().data.settings).toMatchObject({ pushDeviceRegistered: true, pushDeviceCount: 1 });
+  });
+
   it("soft deletes a hotel only after exact name confirmation", async () => {
     const accessToken = await registeredToken(app, "owner@example.com");
     await app.inject({

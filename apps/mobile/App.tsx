@@ -21,6 +21,7 @@ import { MessageSettingsScreen } from "@/screens/MessageSettingsScreen";
 import { ConnectionsScreen } from "@/screens/ConnectionsScreen";
 import { SiteIntegrationScreen } from "@/screens/SiteIntegrationScreen";
 import { SupportScreen } from "@/screens/SupportScreen";
+import { NotificationSettingsScreen } from "@/screens/NotificationSettingsScreen";
 
 type Tab = "requests" | "settings" | "support";
 type AppState =
@@ -45,6 +46,7 @@ export default function App() {
   const [messagesOpen, setMessagesOpen] = useState(false);
   const [connectionsOpen, setConnectionsOpen] = useState(false);
   const [siteIntegrationOpen, setSiteIntegrationOpen] = useState(false);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -120,6 +122,7 @@ export default function App() {
     setMessagesOpen(false);
     setConnectionsOpen(false);
     setSiteIntegrationOpen(false);
+    setNotificationsOpen(false);
     setTab(nextTab);
   };
 
@@ -184,6 +187,8 @@ export default function App() {
                         : current);
                   }}
                 />
+              ) : notificationsOpen ? (
+                <NotificationSettingsScreen onBack={() => setNotificationsOpen(false)} demo={appState.status === "demo"} />
               ) : tab === "requests" ? (
                 <RequestsScreen
                   profile={profile}
@@ -207,6 +212,7 @@ export default function App() {
                   onOpenMessages={() => setMessagesOpen(true)}
                   onOpenConnections={() => setConnectionsOpen(true)}
                   onOpenSiteIntegration={() => setSiteIntegrationOpen(true)}
+                  onOpenNotifications={() => setNotificationsOpen(true)}
                   onOpenSupport={() => setTab("support")}
                 />
               )}

@@ -125,6 +125,36 @@ export const hotelMembers = pgTable(
   ],
 );
 
+export const notificationPreferences = pgTable("notification_preferences", {
+  userId: uuid("user_id")
+    .primaryKey()
+    .references(() => users.id, { onDelete: "cascade" }),
+  pushAllRequests: boolean("push_all_requests").notNull().default(false),
+  emailIncomingRequests: boolean("email_incoming_requests").notNull().default(false),
+  emailAddress: varchar("email_address", { length: 320 }),
+  ...timestamps,
+});
+
+export const pushDevices = pgTable(
+  "push_devices",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    expoPushToken: varchar("expo_push_token", { length: 255 }).notNull(),
+    platform: varchar("platform", { length: 20 }).notNull(),
+    deviceName: varchar("device_name", { length: 120 }),
+    active: boolean("active").notNull().default(true),
+    lastRegisteredAt: timestamp("last_registered_at", { withTimezone: true }).notNull().defaultNow(),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("push_devices_token_unique").on(table.expoPushToken),
+    index("push_devices_user_idx").on(table.userId),
+  ],
+);
+
 export const rooms = pgTable(
   "rooms",
   {

@@ -12,6 +12,7 @@ import type {
   MessagePreview,
   MessageSettings,
   MessageSettingsInput,
+  NotificationSettings,
   PlatformWhatsAppSession,
   PlatformWhatsAppSnapshot,
   RatePeriod,
@@ -477,6 +478,32 @@ export const apiClient = {
       token,
     );
     return response.data.connection;
+  },
+
+  async getNotificationSettings(): Promise<NotificationSettings> {
+    const token = await requireToken();
+    const response = await apiRequest<{ data: { settings: NotificationSettings } }>("/v1/notifications/settings", {}, token);
+    return response.data.settings;
+  },
+
+  async updateNotificationSettings(input: { pushAllRequests: boolean; emailIncomingRequests: boolean; emailAddress: string | null }): Promise<NotificationSettings> {
+    const token = await requireToken();
+    const response = await apiRequest<{ data: { settings: NotificationSettings } }>(
+      "/v1/notifications/settings",
+      { method: "PUT", body: JSON.stringify(input) },
+      token,
+    );
+    return response.data.settings;
+  },
+
+  async registerPushDevice(input: { expoPushToken: string; platform: "ios" | "android"; deviceName: string | null }): Promise<NotificationSettings> {
+    const token = await requireToken();
+    const response = await apiRequest<{ data: { settings: NotificationSettings } }>(
+      "/v1/notifications/devices",
+      { method: "POST", body: JSON.stringify(input) },
+      token,
+    );
+    return response.data.settings;
   },
 
   async getPlatformAdminAccess(): Promise<boolean> {

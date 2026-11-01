@@ -20,8 +20,11 @@ import type {
   InquiryRecord,
   MessageSettings,
   MessageSettingsUpdate,
+  NotificationPreferences,
+  NotificationRepository,
   OfferRecord,
   PlatformAdminRepository,
+  PushDeviceRecord,
   RatePeriodCreate,
   RatePeriodProfile,
   RatePeriodUpdate,
@@ -405,6 +408,90 @@ class MemorySystemRepository implements SystemRepository {
   }
 }
 
+class MemoryNotificationRepository implements NotificationRepository {
+  readonly preferences = new Map<string, NotificationPreferences>();
+  readonly devices = new Map<string, PushDeviceRecord>();
+
+  constructor(
+    private readonly auth: MemoryAuthRepository,
+    private readonly hotels: MemoryHotelRepository,
+  ) {}
+
+  async findPreferencesForUser(userId: string) {
+    const user = this.auth.users.get(userId);
+    if (!user) return null;
+    return {
+      user: { id: user.id, email: user.email, displayName: user.displayName },
+      preferences: this.preferences.get(userId) ?? null,
+      devices: [...this.devices.values()].filter((device) => device.userId === userId && device.active),
+    };
+  }
+
+  async upsertPreferencesForUser(
+    userId: string,
+    input: Pick<NotificationPreferences, "pushAllRequests" | "emailIncomingRequests" | "emailAddress">,
+  ) {
+    if (!this.auth.users.has(userId)) return null;
+    const now = new Date();
+    const current = this.preferences.get(userId);
+    const preference: NotificationPreferences = {
+      userId,
+      ...input,
+      createdAt: current?.createdAt ?? now,
+      updatedAt: now,
+    };
+    this.preferences.set(userId, preference);
+    return preference;
+  }
+
+  async registerPushDeviceForUser(
+    userId: string,
+    input: { expoPushToken: string; platform: string; deviceName: string | null },
+  ) {
+    if (!this.auth.users.has(userId)) return null;
+    const now = new Date();
+    const existing = [...this.devices.values()].find(({ expoPushToken }) => expoPushToken === input.expoPushToken);
+    const device: PushDeviceRecord = {
+      id: existing?.id ?? randomUUID(),
+      userId,
+      ...input,
+      active: true,
+      lastRegisteredAt: now,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+    };
+    this.devices.set(device.id, device);
+    return device;
+  }
+
+  async deactivatePushDeviceForUser(userId: string, expoPushToken: string) {
+    const device = [...this.devices.values()].find((item) => item.userId === userId && item.expoPushToken === expoPushToken);
+    if (!device) return false;
+    this.devices.set(device.id, { ...device, active: false, updatedAt: new Date() });
+    return true;
+  }
+
+  async deactivatePushDeviceByToken(expoPushToken: string) {
+    const device = [...this.devices.values()].find((item) => item.expoPushToken === expoPushToken);
+    if (device) this.devices.set(device.id, { ...device, active: false, updatedAt: new Date() });
+  }
+
+  async listTargetsForHotel(hotelId: string) {
+    const userIds = [...this.hotels.memberships.entries()]
+      .filter(([, memberHotelId]) => memberHotelId === hotelId)
+      .map(([userId]) => userId);
+    return userIds.flatMap((userId) => {
+      const user = this.auth.users.get(userId);
+      if (!user) return [];
+      return [{
+        user: { id: user.id, email: user.email, displayName: user.displayName },
+        preferences: this.preferences.get(userId) ?? null,
+        devices: [...this.devices.values()].filter((device) => device.userId === userId && device.active),
+      }];
+    });
+  }
+}
+
 class MemoryChannelRepository implements ChannelRepository {
   readonly settings = new Map<string, MessageSettings>();
   readonly connections = new Map<string, ConnectionRecord>();
@@ -717,22 +804,25 @@ export type MemoryRepositories = Repositories & {
   channels: MemoryChannelRepository;
   platformAdmin: MemoryPlatformAdminRepository;
   deliveryWorker: MemoryDeliveryWorkerRepository;
+  notifications: MemoryNotificationRepository;
   system: MemorySystemRepository;
 };
 
 export function createMemoryRepositories(): MemoryRepositories {
+  const auth = new MemoryAuthRepository();
   const hotels = new MemoryHotelRepository();
   const inventory = new MemoryInventoryRepository(hotels);
   const automation = new MemoryAutomationRepository(hotels, inventory);
   const channels = new MemoryChannelRepository(hotels, automation);
   return {
-    auth: new MemoryAuthRepository(),
+    auth,
     hotels,
     inventory,
     automation,
     channels,
     platformAdmin: new MemoryPlatformAdminRepository(hotels, automation, channels),
     deliveryWorker: new MemoryDeliveryWorkerRepository(hotels, automation, channels),
+    notifications: new MemoryNotificationRepository(auth, hotels),
     system: new MemorySystemRepository(),
   };
 }

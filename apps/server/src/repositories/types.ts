@@ -251,6 +251,42 @@ export interface SystemRepository {
   checkDatabase(): Promise<boolean>;
 }
 
+export type NotificationPreferences = {
+  userId: string;
+  pushAllRequests: boolean;
+  emailIncomingRequests: boolean;
+  emailAddress: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+export type PushDeviceRecord = {
+  id: string;
+  userId: string;
+  expoPushToken: string;
+  platform: string;
+  deviceName: string | null;
+  active: boolean;
+  lastRegisteredAt: Date;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+export type NotificationTarget = {
+  user: PublicUser;
+  preferences: NotificationPreferences | null;
+  devices: PushDeviceRecord[];
+};
+
+export interface NotificationRepository {
+  findPreferencesForUser(userId: string): Promise<{ user: PublicUser; preferences: NotificationPreferences | null; devices: PushDeviceRecord[] } | null>;
+  upsertPreferencesForUser(userId: string, input: Pick<NotificationPreferences, "pushAllRequests" | "emailIncomingRequests" | "emailAddress">): Promise<NotificationPreferences | null>;
+  registerPushDeviceForUser(userId: string, input: { expoPushToken: string; platform: string; deviceName: string | null }): Promise<PushDeviceRecord | null>;
+  deactivatePushDeviceForUser(userId: string, expoPushToken: string): Promise<boolean>;
+  deactivatePushDeviceByToken(expoPushToken: string): Promise<void>;
+  listTargetsForHotel(hotelId: string): Promise<NotificationTarget[]>;
+}
+
 export type MessageSettings = {
   hotelId: string;
   emailSubjectTemplate: string;
@@ -371,5 +407,6 @@ export type Repositories = {
   channels: ChannelRepository;
   platformAdmin: PlatformAdminRepository;
   deliveryWorker: DeliveryWorkerRepository;
+  notifications: NotificationRepository;
   system: SystemRepository;
 };

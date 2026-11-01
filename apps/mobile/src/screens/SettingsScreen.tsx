@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import {
   BedDouble,
+  Bell,
   Building2,
   Check,
   ChevronRight,
@@ -30,6 +31,7 @@ export function SettingsScreen({
   onOpenMessages,
   onOpenConnections,
   onOpenSiteIntegration,
+  onOpenNotifications,
   onOpenSupport,
 }: {
   profile: HotelProfile;
@@ -42,6 +44,7 @@ export function SettingsScreen({
   onOpenMessages: () => void;
   onOpenConnections: () => void;
   onOpenSiteIntegration: () => void;
+  onOpenNotifications: () => void;
   onOpenSupport: () => void;
 }) {
   const notReady = (title: string) => Alert.alert(title, "This section will be connected to the API in the next iteration.");
@@ -93,14 +96,13 @@ export function SettingsScreen({
     >
       <View style={styles.titleBlock}>
         <Text style={uiStyles.h1}>Settings</Text>
-        <Text style={uiStyles.body}>Automation and platform preferences</Text>
       </View>
 
       {demo ? <InlineState tone="warning">Demo mode: changes are not saved to the server</InlineState> : null}
 
       <View style={styles.section}>
         <View style={styles.sectionHeading}>
-          <View><SectionTitle>Automation setup</SectionTitle><Text style={styles.sectionHint}>Everything required to receive and answer enquiries</Text></View>
+          <SectionTitle>Automation setup</SectionTitle>
           {setupLoading ? <ActivityIndicator color={theme.colors.action} /> : <Text style={styles.progressCount}>{completedSteps}/{setupSteps.length}</Text>}
         </View>
         <View style={styles.progressTrack}><View style={[styles.progressFill, { width: setupLoading ? "0%" : setupProgress }]} /></View>
@@ -112,7 +114,8 @@ export function SettingsScreen({
       <View style={styles.section}>
         <SectionTitle>Automation settings</SectionTitle>
         <View style={styles.menuCard}>
-          <SettingRow icon={FileText} title="Offer messages" subtitle="Email, WhatsApp, preview and test" onPress={onOpenMessages} last />
+          <SettingRow icon={FileText} title="Offer messages" subtitle="Email, WhatsApp, preview and test" onPress={onOpenMessages} />
+          <SettingRow icon={Bell} title="Notifications" subtitle="Phone and email alerts" onPress={onOpenNotifications} last />
         </View>
       </View>
 
@@ -207,7 +210,6 @@ const styles = StyleSheet.create({
   titleBlock: { gap: theme.spacing[1], marginBottom: theme.spacing[6] },
   section: { gap: theme.spacing[3], marginTop: theme.spacing[6] },
   sectionHeading: { minHeight: 42, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: theme.spacing[3] },
-  sectionHint: { ...theme.typography.caption, color: theme.colors.textMuted, marginTop: 3 },
   progressCount: { ...theme.typography.bodySmallMedium, color: theme.colors.action },
   progressTrack: { height: 7, overflow: "hidden", borderRadius: theme.radii.pill, backgroundColor: theme.colors.border },
   progressFill: { height: "100%", borderRadius: theme.radii.pill, backgroundColor: theme.colors.action },
