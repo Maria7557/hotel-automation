@@ -76,7 +76,10 @@ describe("provider adapters", () => {
         return json({ name: "hotel-1", status: "SCAN_QR_CODE", me: null });
       }
       if (url.endsWith("/api/hotel-1/auth/qr")) {
-        return json({ mimetype: "image/png", data: "cXItYnl0ZXM=" });
+        return new Response(Buffer.from("qr-bytes"), {
+          status: 200,
+          headers: { "Content-Type": "image/png" },
+        });
       }
       throw new Error(`Unexpected provider URL: ${url}`);
     });

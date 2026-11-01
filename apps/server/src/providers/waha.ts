@@ -81,19 +81,38 @@ export class WahaProvider {
   }
 
   async qrCode(config: WahaConfig): Promise<string> {
-    const result = await providerJson(
-      this.fetchClient,
-      `${config.baseUrl}/api/${encodeURIComponent(config.sessionName)}/auth/qr`,
-      { method: "GET", headers: headers(config.apiKey) },
-      "WAHA_QR",
-    );
-    if (!result.response.ok) {
+    let response: Response;
+    try {
+      response = await this.fetchClient(
+        `${config.baseUrl}/api/${encodeURIComponent(config.sessionName)}/auth/qr`,
+        { method: "GET", headers: headers(config.apiKey), signal: AbortSignal.timeout(10_000) },
+      );
+    } catch (error) {
+      if (error instanceof Error && ["TimeoutError", "AbortError"].includes(error.name)) {
+        throw new ProviderError("WAHA_QR_TIMEOUT", true);
+      }
+      throw new ProviderError("WAHA_QR_NETWORK_ERROR", true, true);
+    }
+    if (!response.ok) {
       throw new ProviderError(
-        `WAHA_QR_HTTP_${result.response.status}`,
-        result.response.status === 429 || result.response.status >= 500,
+        `WAHA_QR_HTTP_${response.status}`,
+        response.status === 429 || response.status >= 500,
       );
     }
-    const body = asRecord(result.body);
+    const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+    if (contentType.startsWith("image/png") || contentType.startsWith("image/jpeg")) {
+      const data = Buffer.from(await response.arrayBuffer()).toString("base64");
+      if (!data) throw new ProviderError("WAHA_QR_RESPONSE_INVALID", false);
+      const mimetype = contentType.startsWith("image/jpeg") ? "image/jpeg" : "image/png";
+      return `data:${mimetype};base64,${data}`;
+    }
+    let parsed: unknown = null;
+    try {
+      parsed = await response.json();
+    } catch {
+      // WAHA editions return either an image body or JSON containing base64 data.
+    }
+    const body = asRecord(parsed);
     if (!body || typeof body.data !== "string" || body.data.length === 0) {
       throw new ProviderError("WAHA_QR_RESPONSE_INVALID", false);
     }
