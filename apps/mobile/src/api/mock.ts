@@ -1,5 +1,7 @@
 import type { DashboardSnapshot, HotelProfile, HotelRequest } from "./types";
 
+const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
+
 export const mockProfile: HotelProfile = {
   name: "Casa Aurelia",
   city: "Florence, Italy",
@@ -28,10 +30,10 @@ const primaryRequests: HotelRequest[] = [
       totalLabel: "€ 640",
       totalCents: 64_000,
       currency: "EUR",
-      receivedAt: "12:10",
+      receivedAt: minutesAgo(3),
       status: "payment",
-      statusLabel: "Payment pending",
-      nextAction: "Send payment link",
+      statusLabel: "To confirm",
+      nextAction: "Review availability",
       email: { status: "sent", recipient: "anna@example.com", processedAt: "2026-10-31T12:11:00.000Z" },
       whatsapp: { status: "sent", recipient: "+393331234567", processedAt: "2026-10-31T12:11:10.000Z" },
     },
@@ -44,7 +46,7 @@ const primaryRequests: HotelRequest[] = [
       totalLabel: "€ 570",
       totalCents: 57_000,
       currency: "EUR",
-      receivedAt: "11:42",
+      receivedAt: minutesAgo(5),
       status: "attention",
       statusLabel: "Delivery issue",
       nextAction: "Retry WhatsApp",
@@ -61,18 +63,18 @@ const primaryRequests: HotelRequest[] = [
       totalLabel: "€ 1.050",
       totalCents: 105_000,
       currency: "EUR",
-      receivedAt: "10:18",
+      receivedAt: minutesAgo(20),
       status: "payment",
-      statusLabel: "Payment pending",
-      nextAction: "Send payment link",
+      statusLabel: "To confirm",
+      nextAction: "Review availability",
       email: { status: "sent", recipient: "sofia@example.com", processedAt: "2026-10-31T10:19:00.000Z" },
       whatsapp: { status: "sent", recipient: "+491701234567", processedAt: "2026-10-31T10:19:08.000Z" },
     },
 ];
 
 const demoNames = ["Emma Wilson", "Noah Martin", "Olivia Brown", "Liam Garcia", "Mia Taylor", "Ethan Davis", "Ava Moore", "Leo Anderson"];
-const generatedRequests: HotelRequest[] = Array.from({ length: 22 }, (_, index) => {
-  const status: HotelRequest["status"] = index % 9 === 0 ? "attention" : index % 5 === 0 ? "payment" : index % 3 === 0 ? "new" : "waiting";
+const generatedRequests: HotelRequest[] = Array.from({ length: 283 }, (_, index) => {
+  const status: HotelRequest["status"] = index < 22 ? "payment" : index < 25 ? "attention" : index < 97 ? "waiting" : "new";
   const totalCents = 28_000 + (index % 7) * 9_500;
   const failed = status === "attention";
   return {
@@ -84,10 +86,10 @@ const generatedRequests: HotelRequest[] = Array.from({ length: 22 }, (_, index) 
     totalLabel: new Intl.NumberFormat("en-GB", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(totalCents / 100),
     totalCents,
     currency: "EUR",
-    receivedAt: `${String(10 - Math.floor(index / 12)).padStart(2, "0")}:${String(55 - (index * 3) % 55).padStart(2, "0")}`,
+    receivedAt: minutesAgo(28 + (index % 180) * 4),
     status,
-    statusLabel: status === "payment" ? "Payment pending" : status === "attention" ? "Delivery issue" : status === "new" ? "New request" : "Waiting for guest",
-    ...(status === "payment" ? { nextAction: "Send payment link" } : failed ? { nextAction: "Review delivery" } : {}),
+    statusLabel: status === "payment" ? "To confirm" : status === "attention" ? "Delivery issue" : status === "new" ? "New request" : "Waiting for guest",
+    ...(status === "payment" ? { nextAction: "Review availability" } : failed ? { nextAction: "Review delivery" } : {}),
     ...(failed ? { attentionReason: "EMAIL_DELIVERY_FAILED" } : {}),
     email: { status: failed ? "failed" : "sent", recipient: `guest${index + 1}@example.com`, lastErrorCode: failed ? "GMAIL_ACCESS_REVOKED" : null },
     whatsapp: { status: index % 4 === 0 ? "unused" : "sent", recipient: `+39333000${String(index).padStart(4, "0")}` },

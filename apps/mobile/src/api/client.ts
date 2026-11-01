@@ -562,23 +562,17 @@ function mapDashboard(input: ApiDashboard): DashboardSnapshot {
             ? "waiting"
             : "new";
       const statusLabel = workflow === "requires_confirmation"
-        ? "Payment pending"
+        ? "To confirm"
         : workflow === "needs_attention"
-          ? "Needs attention"
+          ? (inquiry.channelStates.email === "failed" || inquiry.channelStates.whatsapp === "failed" ? "Delivery issue" : "Review needed")
           : workflow === "offer_sent"
             ? "Waiting for guest"
             : "New request";
       const nextAction = workflow === "requires_confirmation"
-        ? "Send payment link"
+        ? "Review availability"
         : workflow === "needs_attention"
           ? "Review rates and request"
           : undefined;
-      const received = new Intl.DateTimeFormat("en-GB", {
-        day: "2-digit",
-        month: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-      }).format(new Date(inquiry.createdAt));
       return {
         id: inquiry.id,
         guestName: inquiry.guestName,
@@ -590,7 +584,7 @@ function mapDashboard(input: ApiDashboard): DashboardSnapshot {
         totalLabel: inquiry.offerSummary
           ? new Intl.NumberFormat("en-GB", { style: "currency", currency: inquiry.offerSummary.currency }).format(inquiry.offerSummary.totalCents / 100)
           : "—",
-        receivedAt: received,
+        receivedAt: inquiry.createdAt,
         status,
         statusLabel,
         ...(nextAction ? { nextAction } : {}),
