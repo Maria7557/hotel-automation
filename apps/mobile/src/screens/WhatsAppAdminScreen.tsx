@@ -29,7 +29,7 @@ import { Button, InlineState, uiStyles } from "@/components/ui";
 
 type Filter = "all" | PlatformWhatsAppSession["health"];
 
-export function WhatsAppAdminScreen({ onBack }: { onBack: () => void }) {
+export function WhatsAppAdminScreen({ onBack }: { onBack?: () => void }) {
   const [snapshot, setSnapshot] = useState<PlatformWhatsAppSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -95,9 +95,13 @@ export function WhatsAppAdminScreen({ onBack }: { onBack: () => void }) {
   return (
     <View style={uiStyles.screen}>
       <View style={styles.topBar}>
-        <Pressable accessibilityRole="button" accessibilityLabel="Back" onPress={onBack} style={styles.backButton}>
-          <ChevronLeft size={24} color={theme.colors.text} />
-        </Pressable>
+        {onBack ? (
+          <Pressable accessibilityRole="button" accessibilityLabel="Back" onPress={onBack} style={styles.backButton}>
+            <ChevronLeft size={24} color={theme.colors.text} />
+          </Pressable>
+        ) : (
+          <View style={[styles.backButton, styles.supportMark]}><MessageCircle size={21} color={theme.colors.action} /></View>
+        )}
         <View style={{ flex: 1 }}>
           <Text style={uiStyles.h2}>WhatsApp support</Text>
           <Text style={uiStyles.caption}>All hotel phones · live WAHA status</Text>
@@ -241,6 +245,7 @@ function cappingLabel(session: PlatformWhatsAppSession): string {
 const styles = StyleSheet.create({
   topBar: { minHeight: 76, flexDirection: "row", alignItems: "center", gap: theme.spacing[3], paddingHorizontal: theme.controls.contentInset, borderBottomWidth: 1, borderBottomColor: theme.colors.border, backgroundColor: theme.colors.surface },
   backButton: { width: 44, height: 44, borderRadius: theme.radii.md, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: theme.colors.border },
+  supportMark: { backgroundColor: theme.colors.actionTint, borderColor: theme.colors.actionTint },
   center: { flex: 1, alignItems: "center", justifyContent: "center", gap: theme.spacing[3] },
   content: { paddingHorizontal: theme.controls.contentInset, paddingTop: theme.spacing[4], paddingBottom: theme.spacing[10], gap: theme.spacing[2] },
   headerContent: { gap: theme.spacing[3], marginBottom: theme.spacing[3] },

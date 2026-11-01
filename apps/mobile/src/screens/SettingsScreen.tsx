@@ -1,4 +1,3 @@
-import { useEffect, useState } from "react";
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import {
   BedDouble,
@@ -11,11 +10,9 @@ import {
   Mail,
   MessageCircle,
   Palette,
-  ShieldCheck,
   Users,
 } from "lucide-react-native";
 import { theme } from "@hotel/design";
-import { apiClient } from "@/api/client";
 import type { HotelProfile } from "@/api/types";
 import { InlineState, SectionTitle, uiStyles } from "@/components/ui";
 
@@ -30,7 +27,6 @@ export function SettingsScreen({
   onOpenMessages,
   onOpenConnections,
   onOpenSiteIntegration,
-  onOpenWhatsappAdmin,
 }: {
   profile: HotelProfile;
   demo: boolean;
@@ -42,17 +38,7 @@ export function SettingsScreen({
   onOpenMessages: () => void;
   onOpenConnections: () => void;
   onOpenSiteIntegration: () => void;
-  onOpenWhatsappAdmin: () => void;
 }) {
-  const [platformAdmin, setPlatformAdmin] = useState(false);
-  useEffect(() => {
-    let active = true;
-    if (demo) return () => { active = false; };
-    void apiClient.getPlatformAdminAccess()
-      .then((enabled) => { if (active) setPlatformAdmin(enabled); })
-      .catch(() => { if (active) setPlatformAdmin(false); });
-    return () => { active = false; };
-  }, [demo]);
   const notReady = (title: string) => Alert.alert(title, "This section will be connected to the API in the next iteration.");
 
   return (
@@ -108,15 +94,6 @@ export function SettingsScreen({
           <SettingRow icon={CircleHelp} title="Help" subtitle="How to process your first request" onPress={() => notReady("Help")} last />
         </View>
       </View>
-
-      {platformAdmin ? (
-        <View style={styles.section}>
-          <SectionTitle>Platform administration</SectionTitle>
-          <View style={styles.menuCard}>
-            <SettingRow icon={ShieldCheck} title="WhatsApp support" subtitle="All connected hotel phones and WAHA health" badge="Admin" onPress={onOpenWhatsappAdmin} last />
-          </View>
-        </View>
-      ) : null}
 
       <Pressable
         accessibilityRole="button"

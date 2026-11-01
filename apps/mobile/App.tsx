@@ -5,7 +5,7 @@ import { Inter_400Regular } from "@expo-google-fonts/inter/400Regular";
 import { Inter_500Medium } from "@expo-google-fonts/inter/500Medium";
 import { Inter_600SemiBold } from "@expo-google-fonts/inter/600SemiBold";
 import { Inter_700Bold } from "@expo-google-fonts/inter/700Bold";
-import { ClipboardList, Settings } from "lucide-react-native";
+import { ClipboardList, Headphones, Settings, type LucideIcon } from "lucide-react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { theme } from "@hotel/design";
@@ -22,7 +22,7 @@ import { ConnectionsScreen } from "@/screens/ConnectionsScreen";
 import { SiteIntegrationScreen } from "@/screens/SiteIntegrationScreen";
 import { WhatsAppAdminScreen } from "@/screens/WhatsAppAdminScreen";
 
-type Tab = "requests" | "settings";
+type Tab = "requests" | "settings" | "support";
 type AppState =
   | { status: "booting" }
   | { status: "signedOut"; error: string | null }
@@ -37,6 +37,7 @@ export default function App() {
     Inter_700Bold,
   });
   const [appState, setAppState] = useState<AppState>({ status: "booting" });
+  const [platformAdmin, setPlatformAdmin] = useState(false);
   const [tab, setTab] = useState<Tab>("requests");
   const [logoutLoading, setLogoutLoading] = useState(false);
   const [logoutError, setLogoutError] = useState<string | null>(null);
@@ -45,7 +46,6 @@ export default function App() {
   const [messagesOpen, setMessagesOpen] = useState(false);
   const [connectionsOpen, setConnectionsOpen] = useState(false);
   const [siteIntegrationOpen, setSiteIntegrationOpen] = useState(false);
-  const [whatsappAdminOpen, setWhatsappAdminOpen] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -54,9 +54,13 @@ export default function App() {
         const user = await apiClient.getSession();
         if (!active) return;
         if (!user) {
+          setPlatformAdmin(false);
           setAppState({ status: "signedOut", error: null });
           return;
         }
+        void apiClient.getPlatformAdminAccess()
+          .then((enabled) => { if (active) setPlatformAdmin(enabled); })
+          .catch(() => { if (active) setPlatformAdmin(false); });
         try {
           const profile = await apiClient.getHotel();
           if (active) setAppState({ status: "authenticated", user, profile });
@@ -68,7 +72,10 @@ export default function App() {
           throw error;
         }
       } catch (error) {
-        if (active) setAppState({ status: "signedOut", error: authErrorMessage(error) });
+        if (active) {
+          setPlatformAdmin(false);
+          setAppState({ status: "signedOut", error: authErrorMessage(error) });
+        }
       }
     };
     void restore();
@@ -78,15 +85,21 @@ export default function App() {
   const handleLogout = async () => {
     if (appState.status === "demo") {
       setAppState({ status: "signedOut", error: null });
+      setPlatformAdmin(false);
+      setTab("requests");
       return;
     }
     setLogoutLoading(true);
     setLogoutError(null);
     try {
       await apiClient.logout();
+      setPlatformAdmin(false);
+      setTab("requests");
       setAppState({ status: "signedOut", error: null });
     } catch (error) {
       setLogoutError(`${authErrorMessage(error)} The local session was cleared.`);
+      setPlatformAdmin(false);
+      setTab("requests");
       setAppState({ status: "signedOut", error: `${authErrorMessage(error)} The local session was cleared.` });
     } finally {
       setLogoutLoading(false);
@@ -131,8 +144,15 @@ export default function App() {
             <AuthFlow
               initialUser={appState.status === "authenticated" ? appState.user : undefined}
               onSocialAuth={handleSocialAuth}
-              onAuthenticated={(user, nextProfile) => setAppState({ status: "authenticated", user, profile: nextProfile })}
-              onDemo={(demoProfile) => setAppState({ status: "demo", profile: demoProfile })}
+              onAuthenticated={(user, nextProfile) => {
+                setAppState({ status: "authenticated", user, profile: nextProfile });
+                void apiClient.getPlatformAdminAccess().then(setPlatformAdmin).catch(() => setPlatformAdmin(false));
+              }}
+              onDemo={(demoProfile) => {
+                setPlatformAdmin(false);
+                setTab("requests");
+                setAppState({ status: "demo", profile: demoProfile });
+              }}
             />
           </View>
         ) : profile && profileOpen ? (
@@ -164,13 +184,13 @@ export default function App() {
                   : current);
             }}
           />
-        ) : profile && whatsappAdminOpen ? (
-          <WhatsAppAdminScreen onBack={() => setWhatsappAdminOpen(false)} />
         ) : profile ? (
           <View style={styles.shell}>
             <View style={styles.route}>
               {tab === "requests" ? (
                 <RequestsScreen hotelName={profile.name} demo={appState.status === "demo"} />
+              ) : tab === "support" && platformAdmin ? (
+                <WhatsAppAdminScreen />
               ) : (
                 <SettingsScreen
                   profile={profile}
@@ -183,7 +203,6 @@ export default function App() {
                   onOpenMessages={() => setMessagesOpen(true)}
                   onOpenConnections={() => setConnectionsOpen(true)}
                   onOpenSiteIntegration={() => setSiteIntegrationOpen(true)}
-                  onOpenWhatsappAdmin={() => setWhatsappAdminOpen(true)}
                 />
               )}
             </View>
@@ -191,6 +210,7 @@ export default function App() {
               <View style={styles.nav} accessibilityRole="tablist">
                 <NavItem label="Requests" icon={ClipboardList} selected={tab === "requests"} onPress={() => setTab("requests")} />
                 <NavItem label="Settings" icon={Settings} selected={tab === "settings"} onPress={() => setTab("settings")} />
+                {platformAdmin ? <NavItem label="Support" icon={Headphones} selected={tab === "support"} onPress={() => setTab("support")} /> : null}
               </View>
             </SafeAreaView>
           </View>
@@ -200,7 +220,7 @@ export default function App() {
   );
 }
 
-function NavItem({ label, icon: Icon, selected, onPress }: { label: string; icon: typeof ClipboardList; selected: boolean; onPress: () => void }) {
+function NavItem({ label, icon: Icon, selected, onPress }: { label: string; icon: LucideIcon; selected: boolean; onPress: () => void }) {
   return (
     <Pressable
       accessibilityRole="tab"
