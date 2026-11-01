@@ -86,7 +86,7 @@ describe("public offer page", () => {
     expect(html).not.toContain("Anna/accept");
   });
 
-  it.each<OfferPageState>(["expired", "accepted", "revoked"])(
+  it.each<OfferPageState>(["expired", "revoked"])(
     "renders the %s state without an actionable form",
     (state) => {
       const html = renderPublicOfferPage(offerSnapshot(), {
@@ -99,14 +99,19 @@ describe("public offer page", () => {
     },
   );
 
-  it("keeps the guest's selected option visible after acceptance", () => {
+  it("shows a clear final confirmation after acceptance", () => {
     const html = renderPublicOfferPage(offerSnapshot(), {
       state: "accepted",
       acceptActionPath: "/o/opaque-token/accept",
       selectedOptionIndex: 1,
     });
-    expect(html).toContain('name="option" value="1" checked disabled');
-    expect(html).toContain('name="option" value="0" disabled');
+    expect(html).toContain("Request sent");
+    expect(html).toContain('class="confirmation"');
+    expect(html).toContain("Thank you, Anna.");
+    expect(html).toContain("Usually within 15 minutes");
+    expect(html).toContain("Confirmation and payment link");
+    expect(html).toContain("You can close this page.");
+    expect(html).not.toContain('class="option-card"');
   });
 
   it("sets crawler, referrer and content security policies", () => {

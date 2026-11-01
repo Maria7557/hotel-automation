@@ -305,7 +305,9 @@ describe("public intake and proposal automation", () => {
     const acceptedPage = await app.inject({ method: "GET", url: `/proposal/${rawToken}` });
     expect(acceptedPage.statusCode).toBe(200);
     expect(acceptedPage.body).not.toContain("<form");
-    expect(acceptedPage.body).toContain('class="status accepted"');
+    expect(acceptedPage.body).toContain('class="confirmation"');
+    expect(acceptedPage.body).toContain("Request sent");
+    expect(acceptedPage.body).toContain("Confirmation and payment link");
 
     const noGetAccept = await app.inject({ method: "GET", url: `/v1/public/offers/${rawToken}/accept` });
     expect(noGetAccept.statusCode).toBe(404);
