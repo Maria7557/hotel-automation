@@ -564,7 +564,7 @@ function mapDashboard(input: ApiDashboard): DashboardSnapshot {
       const statusLabel = workflow === "requires_confirmation"
         ? "To confirm"
         : workflow === "needs_attention"
-          ? (inquiry.channelStates.email === "failed" || inquiry.channelStates.whatsapp === "failed" ? "Delivery issue" : "Review needed")
+          ? (inquiry.channelStates.email === "failed" || inquiry.channelStates.whatsapp === "failed" ? "Not delivered" : "Review needed")
           : workflow === "offer_sent"
             ? "Waiting for guest"
             : "New request";

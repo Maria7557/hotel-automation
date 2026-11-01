@@ -130,13 +130,11 @@ function DashboardHeader(props: {
     </View>
 
     {viewMode === "actions" ? <>
-      <View style={styles.titleBlock}><Text style={styles.pageTitle}>Needs your attention</Text><Text style={styles.pageSubtitle}>Only requests that require a decision or a fix.</Text></View>
       <View style={styles.actionMetrics}>
-        <ActionMetric selected={actionFilter === "payment"} tone="action" icon={CheckCircle2} count={dashboard.paymentPendingCount} label="Confirm & send" hint="Guest accepted" onPress={() => setActionFilter("payment")} />
-        <ActionMetric selected={actionFilter === "attention"} tone="danger" icon={AlertTriangle} count={issueCount} label="Issues" hint="Delivery or setup" onPress={() => setActionFilter("attention")} />
+        <ActionMetric selected={actionFilter === "payment"} tone="action" icon={CheckCircle2} count={dashboard.paymentPendingCount} label="Waiting payment link" onPress={() => setActionFilter("payment")} />
+        <ActionMetric selected={actionFilter === "attention"} tone="danger" icon={AlertTriangle} count={issueCount} label="Not delivered" onPress={() => setActionFilter("attention")} />
       </View>
       {alerts.length && actionFilter === "attention" ? <InlineState tone="danger"><AlertTriangle size={15} color={theme.colors.danger} /> {alerts.join(" · ")}</InlineState> : null}
-      <View style={styles.listHeading}><Text style={styles.listTitle}>{actionFilter === "payment" ? "Confirm availability" : "Resolve issues"}</Text><Text style={styles.shownCount}>{shownCount}</Text></View>
     </> : <>
       <View style={styles.titleBlock}><Text style={styles.pageTitle}>All incoming</Text><Text style={styles.pageSubtitle}>{dashboard.totalCount} requests received today.</Text></View>
       <View style={styles.searchField}>
@@ -149,7 +147,7 @@ function DashboardHeader(props: {
         <FilterChip selected={allFilter === "payment"} label="To confirm" onPress={() => setAllFilter("payment")} />
         <FilterChip selected={allFilter === "new"} label="New" onPress={() => setAllFilter("new")} />
         <FilterChip selected={allFilter === "waiting"} label="Waiting" onPress={() => setAllFilter("waiting")} />
-        <FilterChip selected={allFilter === "attention"} label="Issues" onPress={() => setAllFilter("attention")} />
+        <FilterChip selected={allFilter === "attention"} label="Not delivered" onPress={() => setAllFilter("attention")} />
       </View>
       <View style={styles.listHeading}><Text style={styles.listTitle}>Requests</Text><Text style={styles.shownCount}>{shownCount} shown</Text></View>
     </>}
@@ -163,12 +161,12 @@ function ModeButton({ selected, label, count, onPress }: { selected: boolean; la
   </Pressable>;
 }
 
-function ActionMetric({ selected, tone, icon: Icon, count, label, hint, onPress }: { selected: boolean; tone: "action" | "danger"; icon: typeof CheckCircle2; count: number; label: string; hint: string; onPress: () => void }) {
+function ActionMetric({ selected, tone, icon: Icon, count, label, onPress }: { selected: boolean; tone: "action" | "danger"; icon: typeof CheckCircle2; count: number; label: string; onPress: () => void }) {
   const color = tone === "danger" ? theme.colors.danger : theme.colors.action;
   const tint = tone === "danger" ? theme.colors.dangerTint : theme.colors.actionTint;
   return <Pressable onPress={onPress} style={({ pressed }) => [styles.actionMetric, selected && { borderColor: color, backgroundColor: tint }, pressed && styles.pressed]}>
     <View style={styles.metricTop}><Icon size={20} color={color} /><Text style={[styles.metricCount, { color }]}>{count}</Text></View>
-    <Text style={styles.metricLabel}>{label}</Text><Text style={styles.metricHint}>{hint}</Text>
+    <Text style={styles.metricLabel}>{label}</Text>
   </Pressable>;
 }
 
@@ -181,7 +179,6 @@ function ActionRequestCard({ request, nowMs, expanded, onToggle }: { request: Ho
       <View style={styles.actionEyebrow}>
         {issue ? <AlertTriangle size={16} color={accent} /> : <Clock3 size={16} color={accent} />}
         <Text style={[styles.waitingText, { color: accent }]}>{waitingLabel(request.receivedAt, nowMs)}</Text>
-        <Text style={styles.actionReason}>{issue ? "Needs a fix" : "Guest accepted the offer"}</Text>
       </View>
       <View style={styles.actionNameRow}><Text numberOfLines={1} style={styles.actionGuest}>{request.guestName}</Text><Text style={[styles.actionPrice, { color: accent }]}>{request.totalLabel}</Text></View>
       <DetailLine icon={CalendarDays} text={request.stayLabel} />
@@ -277,13 +274,13 @@ const styles = StyleSheet.create({
   modeLabel: { ...theme.typography.bodySmallMedium, color: theme.colors.textMuted }, modeLabelSelected: { color: theme.colors.text },
   modeCount: { minWidth: 25, height: 25, borderRadius: theme.radii.pill, paddingHorizontal: 7, alignItems: "center", justifyContent: "center", backgroundColor: theme.colors.border }, modeCountSelected: { backgroundColor: theme.colors.action }, modeCountText: { ...theme.typography.captionMedium, color: theme.colors.textSecondary }, modeCountTextSelected: { color: theme.colors.onAction },
   titleBlock: { marginTop: theme.spacing[6], marginBottom: theme.spacing[4], gap: 3 }, pageTitle: { ...theme.typography.h2, color: theme.colors.text }, pageSubtitle: { ...theme.typography.bodySmall, color: theme.colors.textMuted },
-  actionMetrics: { flexDirection: "row", gap: theme.spacing[3], marginBottom: theme.spacing[3] },
-  actionMetric: { flex: 1, minHeight: 116, padding: theme.spacing[3], borderRadius: theme.radii.lg, backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border }, metricTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: theme.spacing[3] }, metricCount: { ...theme.typography.h2 }, metricLabel: { ...theme.typography.bodySmallMedium, color: theme.colors.text }, metricHint: { ...theme.typography.caption, color: theme.colors.textMuted, marginTop: 2 },
+  actionMetrics: { flexDirection: "row", gap: theme.spacing[3], marginTop: theme.spacing[5], marginBottom: theme.spacing[3] },
+  actionMetric: { flex: 1, minHeight: 92, padding: theme.spacing[3], borderRadius: theme.radii.lg, backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border }, metricTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: theme.spacing[2] }, metricCount: { ...theme.typography.h2 }, metricLabel: { ...theme.typography.bodySmallMedium, color: theme.colors.text },
   listHeading: { marginTop: theme.spacing[5], marginBottom: theme.spacing[3], flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, listTitle: { ...theme.typography.h3, color: theme.colors.text }, shownCount: { ...theme.typography.captionMedium, color: theme.colors.textMuted },
   searchField: { minHeight: 52, flexDirection: "row", alignItems: "center", gap: theme.spacing[2], paddingHorizontal: theme.spacing[3], borderWidth: 1, borderColor: theme.colors.border, borderRadius: theme.radii.md, backgroundColor: theme.colors.surface }, searchInput: { flex: 1, ...theme.typography.bodySmall, color: theme.colors.text, paddingVertical: theme.spacing[2] }, clearSearch: { width: 32, height: 32, borderRadius: theme.radii.pill, alignItems: "center", justifyContent: "center", backgroundColor: theme.colors.surfaceMuted },
   filters: { flexDirection: "row", gap: 6, marginTop: theme.spacing[3], flexWrap: "wrap" }, filter: { minHeight: 36, justifyContent: "center", borderRadius: theme.radii.pill, backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, paddingHorizontal: theme.spacing[3] }, filterSelected: { backgroundColor: theme.colors.action, borderColor: theme.colors.action }, filterText: { ...theme.typography.captionMedium, color: theme.colors.textSecondary }, filterTextSelected: { color: theme.colors.onAction }, pressed: { opacity: 0.7 },
   actionCard: { flexDirection: "row", overflow: "hidden", borderRadius: theme.radii.xl, backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, shadowColor: "#000", shadowOpacity: 0.06, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 2 }, actionRail: { width: 5 }, actionCardBody: { flex: 1, padding: theme.spacing[4], gap: theme.spacing[2] },
-  actionEyebrow: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: theme.spacing[1] }, waitingText: { ...theme.typography.captionMedium }, actionReason: { ...theme.typography.caption, color: theme.colors.textMuted, marginLeft: "auto", flexShrink: 1, textAlign: "right" },
+  actionEyebrow: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: theme.spacing[1] }, waitingText: { ...theme.typography.captionMedium },
   actionNameRow: { flexDirection: "row", alignItems: "baseline", gap: theme.spacing[3], marginBottom: theme.spacing[1] }, actionGuest: { ...theme.typography.h3, color: theme.colors.text, flex: 1 }, actionPrice: { ...theme.typography.h3 },
   detailLine: { minHeight: 25, flexDirection: "row", alignItems: "center", gap: theme.spacing[2] }, detailText: { ...theme.typography.bodySmall, color: theme.colors.textSecondary, flex: 1 },
   reviewButton: { minHeight: 48, marginTop: theme.spacing[2], borderRadius: theme.radii.md, paddingHorizontal: theme.spacing[4], flexDirection: "row", alignItems: "center", justifyContent: "center", gap: theme.spacing[2] }, reviewButtonText: { ...theme.typography.button, color: theme.colors.onAction },
