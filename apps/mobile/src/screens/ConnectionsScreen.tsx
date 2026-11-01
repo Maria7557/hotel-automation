@@ -76,9 +76,7 @@ export function ConnectionsScreen({ onBack, demo }: { onBack: () => void; demo: 
     try {
       setConnections(demo ? demoConnections : await apiClient.getConnections());
     } catch (nextError) {
-      setError(provider === "microsoft" && nextError instanceof ApiError && nextError.code === "CONFIG_REQUIRED"
-        ? "Microsoft connection is temporarily unavailable."
-        : authErrorMessage(nextError));
+      setError(authErrorMessage(nextError));
     } finally {
       setLoading(false);
     }
@@ -140,7 +138,9 @@ export function ConnectionsScreen({ onBack, demo }: { onBack: () => void; demo: 
       }
       await Linking.openURL(authorization.authorizationUrl);
     } catch (nextError) {
-      setError(authErrorMessage(nextError));
+      setError(provider === "microsoft" && nextError instanceof ApiError && nextError.code === "CONFIG_REQUIRED"
+        ? "Microsoft connection is temporarily unavailable."
+        : authErrorMessage(nextError));
     } finally {
       setBusyKind(null);
     }
