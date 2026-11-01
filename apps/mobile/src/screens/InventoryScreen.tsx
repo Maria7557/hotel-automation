@@ -23,6 +23,7 @@ import {
   Edit3,
   ImageIcon,
   ImagePlus,
+  Minus,
   Plus,
   Star,
   Trash2,
@@ -51,6 +52,8 @@ type RoomPhotoDraft = {
   base64?: string;
   mimeType?: "image/jpeg" | "image/png";
 };
+
+type BedCounts = Record<BedType, number>;
 
 export function InventoryScreen({ onBack }: { onBack: () => void }) {
   const [view, setView] = useState<InventoryView>("list");
@@ -188,8 +191,7 @@ function RoomForm({ room, onBack, onSaved }: { room: Room | null; onBack: () => 
   const [maxAdults, setMaxAdults] = useState(String(room?.maxAdults ?? 2));
   const [maxChildren, setMaxChildren] = useState(String(room?.maxChildren ?? 0));
   const [maxGuests, setMaxGuests] = useState(String(room?.maxGuests ?? 2));
-  const [bedType, setBedType] = useState<BedType>(room?.beds[0]?.type ?? "double");
-  const [bedCount, setBedCount] = useState(String(room?.beds[0]?.count ?? 1));
+  const [bedCounts, setBedCounts] = useState<BedCounts>(() => initialBedCounts(room));
   const [amenities, setAmenities] = useState<string[]>(room?.amenities ?? ["Wi-Fi", "Air conditioning"]);
   const [photos, setPhotos] = useState<RoomPhotoDraft[]>(() =>
     (room?.photoUrls ?? []).map((url, index) => ({ id: `saved-${index}-${url}`, uri: url, uploadedUrl: url })),
@@ -202,9 +204,12 @@ function RoomForm({ room, onBack, onSaved }: { room: Room | null; onBack: () => 
   const adults = parseInteger(maxAdults);
   const children = parseInteger(maxChildren);
   const guests = parseInteger(maxGuests);
-  const beds = parseInteger(bedCount);
+  const beds = bedOptions
+    .map(({ value }) => ({ type: value, count: bedCounts[value] }))
+    .filter((bed) => bed.count > 0);
+  const bedCount = beds.reduce((total, bed) => total + bed.count, 0);
   const capacityValid = adults !== null && adults > 0 && children !== null && children >= 0 && guests !== null && guests >= adults && guests <= adults + children;
-  const valid = name.trim().length > 0 && capacityValid && beds !== null && beds > 0 && photos.length <= 30;
+  const valid = name.trim().length > 0 && capacityValid && bedCount > 0 && photos.length <= 30;
 
   const pickPhotos = async () => {
     setError(null);
@@ -267,7 +272,7 @@ function RoomForm({ room, onBack, onSaved }: { room: Room | null; onBack: () => 
   const save = async () => {
     setSubmitted(true);
     setError(null);
-    if (!valid || adults === null || children === null || guests === null || beds === null) return;
+    if (!valid || adults === null || children === null || guests === null) return;
     setSaving(true);
     try {
       const uploadedPhotos: RoomPhotoDraft[] = [];
@@ -290,7 +295,7 @@ function RoomForm({ room, onBack, onSaved }: { room: Room | null; onBack: () => 
         maxAdults: adults,
         maxChildren: children,
         maxGuests: guests,
-        beds: [{ type: bedType, count: beds }],
+        beds,
         amenities,
         photoUrls: uploadedPhotos.map((photo) => photo.uploadedUrl).filter((url): url is string => Boolean(url)),
         active: room?.active ?? true,
@@ -331,12 +336,13 @@ function RoomForm({ room, onBack, onSaved }: { room: Room | null; onBack: () => 
         </View>
         <View style={styles.formSection}>
           <SectionTitle>Beds</SectionTitle>
-          <ChoiceRow
-            options={bedOptions}
-            selected={bedType}
-            onSelect={(value) => setBedType(value as BedType)}
+          <Text style={styles.sectionHelper}>Add every sleeping arrangement available in this room.</Text>
+          <BedPicker
+            counts={bedCounts}
+            disabled={saving}
+            onChange={setBedCounts}
           />
-          <Field label="Number of beds" keyboardType="number-pad" value={bedCount} onChangeText={setBedCount} editable={!saving} error={submitted && (!beds || beds < 1) ? "Add at least one bed" : undefined} />
+          {submitted && bedCount < 1 ? <Text style={styles.validationSummary}>Add at least one bed.</Text> : null}
         </View>
         <View style={styles.formSection}>
           <SectionTitle>Amenities</SectionTitle>
@@ -379,6 +385,61 @@ function RoomForm({ room, onBack, onSaved }: { room: Room | null; onBack: () => 
         <Button onPress={() => void save()} loading={saving} icon={Check}>{room ? "Save changes" : "Create room"}</Button>
       </ScrollView>
     </KeyboardAvoidingView>
+  );
+}
+
+function BedPicker({
+  counts,
+  disabled,
+  onChange,
+}: {
+  counts: BedCounts;
+  disabled: boolean;
+  onChange: (next: BedCounts) => void;
+}) {
+  const update = (type: BedType, difference: number) => {
+    const nextCount = Math.max(0, Math.min(10, counts[type] + difference));
+    if (nextCount === counts[type]) return;
+    onChange({ ...counts, [type]: nextCount });
+  };
+
+  return (
+    <View style={styles.bedPickerGrid}>
+      {bedOptions.map((option) => {
+        const count = counts[option.value];
+        return (
+          <View key={option.value} style={[styles.bedPickerRow, count > 0 && styles.bedPickerRowSelected]}>
+            <View style={styles.bedPickerCopy}>
+              <Text style={styles.bedPickerLabel}>{option.label}</Text>
+              {count > 0 ? <Text style={styles.bedPickerSelectedText}>{count} selected</Text> : null}
+            </View>
+            <View style={styles.stepper}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Remove one ${option.label.toLowerCase()}`}
+                accessibilityState={{ disabled: disabled || count === 0 }}
+                disabled={disabled || count === 0}
+                onPress={() => update(option.value, -1)}
+                style={({ pressed }) => [styles.stepperButton, (disabled || count === 0) && styles.stepperButtonDisabled, pressed && styles.pressed]}
+              >
+                <Minus size={18} color={count === 0 ? theme.colors.textMuted : theme.colors.action} />
+              </Pressable>
+              <Text accessibilityLabel={`${count} ${option.label.toLowerCase()}`} style={styles.stepperValue}>{count}</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Add one ${option.label.toLowerCase()}`}
+                accessibilityState={{ disabled: disabled || count === 10 }}
+                disabled={disabled || count === 10}
+                onPress={() => update(option.value, 1)}
+                style={({ pressed }) => [styles.stepperButton, (disabled || count === 10) && styles.stepperButtonDisabled, pressed && styles.pressed]}
+              >
+                <Plus size={18} color={count === 10 ? theme.colors.textMuted : theme.colors.action} />
+              </Pressable>
+            </View>
+          </View>
+        );
+      })}
+    </View>
   );
 }
 
@@ -712,10 +773,10 @@ function LoadingState({ label, compact = false }: { label: string; compact?: boo
 }
 
 const bedOptions = [
-  { value: "single", label: "Single" }, { value: "double", label: "Double" },
-  { value: "queen", label: "Queen" }, { value: "king", label: "King" },
+  { value: "single", label: "Single bed" }, { value: "double", label: "Double bed" },
+  { value: "queen", label: "Queen bed" }, { value: "king", label: "King bed" },
   { value: "sofa_bed", label: "Sofa bed" }, { value: "bunk", label: "Bunk bed" }, { value: "crib", label: "Cot" },
-];
+] satisfies Array<{ value: BedType; label: string }>;
 
 const amenityOptions = [
   "Wi-Fi",
@@ -736,6 +797,12 @@ const amenityOptions = [
 ];
 
 function parseInteger(value: string): number | null { const parsed = Number(value); return Number.isInteger(parsed) ? parsed : null; }
+function initialBedCounts(room: Room | null): BedCounts {
+  const counts = Object.fromEntries(bedOptions.map(({ value }) => [value, 0])) as BedCounts;
+  if (!room) counts.double = 1;
+  room?.beds.forEach((bed) => { counts[bed.type] = bed.count; });
+  return counts;
+}
 function parseMoneyCents(value: string): number | null { const parsed = Number(value.replace(",", ".")); return Number.isFinite(parsed) && parsed >= 0 ? Math.round(parsed * 100) : null; }
 function isIsoDate(value: string): boolean { return /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`)); }
 function imageMimeType(asset: ImagePicker.ImagePickerAsset): "image/jpeg" | "image/png" | null {
@@ -752,7 +819,17 @@ function addDaysIso(date: string, days: number): string { const next = new Date(
 function moneyInput(cents: number): string { return (cents / 100).toFixed(2).replace(/\.00$/, ""); }
 function formatCents(cents: number): string { return new Intl.NumberFormat("en-GB", { style: "currency", currency: "EUR", maximumFractionDigits: 2 }).format(cents / 100); }
 function formatDate(date: string): string { const [year, month, day] = date.split("-"); return `${day}.${month}.${year}`; }
-function bedSummary(room: Room): string { return room.beds.length ? room.beds.map((bed) => `${bed.count} ${bed.type.replace("_", " ")}`).join(", ") : "beds not specified"; }
+function bedSummary(room: Room): string {
+  if (room.beds.length === 0) return "beds not specified";
+  return room.beds.map((bed) => {
+    const label = bedOptions.find((option) => option.value === bed.type)?.label.toLowerCase() ?? "bed";
+    return `${bed.count} ${bed.count === 1 ? label : pluralizeBedLabel(label)}`;
+  }).join(" · ");
+}
+function pluralizeBedLabel(label: string): string {
+  if (label === "cot") return "cots";
+  return `${label}s`;
+}
 
 const styles = StyleSheet.create({
   screenContent: { paddingHorizontal: theme.controls.contentInset, paddingBottom: theme.spacing[10], gap: theme.spacing[4] },
@@ -806,6 +883,16 @@ const styles = StyleSheet.create({
   fieldRow: { flexDirection: "row", gap: theme.spacing[3] },
   fieldHalf: { flex: 1 },
   fieldLabel: { ...theme.typography.bodySmallMedium, color: theme.colors.text },
+  bedPickerGrid: { flexDirection: "row", flexWrap: "wrap", gap: theme.spacing[3] },
+  bedPickerRow: { width: Platform.OS === "web" ? "48%" : "100%", minWidth: 280, minHeight: 72, flexGrow: 1, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: theme.spacing[3], borderRadius: theme.radii.lg, borderWidth: 1, borderColor: theme.colors.border, backgroundColor: theme.colors.surface, paddingHorizontal: theme.spacing[3], paddingVertical: theme.spacing[2] },
+  bedPickerRowSelected: { borderColor: theme.colors.action, backgroundColor: theme.colors.actionTint },
+  bedPickerCopy: { flex: 1 },
+  bedPickerLabel: { ...theme.typography.bodySmallMedium, color: theme.colors.text },
+  bedPickerSelectedText: { ...theme.typography.caption, color: theme.colors.action, marginTop: 2 },
+  stepper: { flexDirection: "row", alignItems: "center", gap: theme.spacing[2] },
+  stepperButton: { width: 40, height: 40, borderRadius: theme.radii.pill, alignItems: "center", justifyContent: "center", backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.borderStrong },
+  stepperButtonDisabled: { opacity: 0.45 },
+  stepperValue: { ...theme.typography.bodySmallMedium, color: theme.colors.text, minWidth: 22, textAlign: "center" },
   choices: { flexDirection: "row", flexWrap: "wrap", gap: theme.spacing[2] },
   choice: { minHeight: 40, justifyContent: "center", borderRadius: theme.radii.pill, borderWidth: 1, borderColor: theme.colors.border, backgroundColor: theme.colors.surface, paddingHorizontal: theme.spacing[3] },
   choiceSelected: { backgroundColor: theme.colors.action, borderColor: theme.colors.action },
