@@ -26,6 +26,7 @@ export const errors = {
   hotelExists: () => new AppError(409, "HOTEL_EXISTS", "This account already belongs to a hotel."),
   hotelNotFound: () => new AppError(404, "HOTEL_NOT_FOUND", "Hotel profile was not found."),
   roomNotFound: () => new AppError(404, "ROOM_NOT_FOUND", "Room was not found."),
+  inquiryNotFound: () => new AppError(404, "INQUIRY_NOT_FOUND", "Request was not found or is not waiting for a payment link."),
   ratePeriodNotFound: () => new AppError(404, "RATE_PERIOD_NOT_FOUND", "Rate period was not found."),
   rateOverlap: (details?: unknown) =>
     new AppError(409, "RATE_PERIOD_OVERLAP", "This room already has a rate for part of this period.", details),

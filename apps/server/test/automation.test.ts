@@ -283,6 +283,25 @@ describe("public intake and proposal automation", () => {
       inquiries: [{ workflowState: "requires_confirmation" }],
     });
 
+    const markedSent = await app.inject({
+      method: "POST",
+      url: `/v1/inquiries/${first.json().data.inquiryId}/payment-link-sent`,
+      headers: auth(owner.token),
+    });
+    expect(markedSent.statusCode).toBe(200);
+    expect(markedSent.json().data).toMatchObject({ inquiryId: first.json().data.inquiryId });
+    expect(markedSent.json().data.paymentLinkSentAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+
+    const completedDashboard = await app.inject({
+      method: "GET",
+      url: "/v1/dashboard",
+      headers: auth(owner.token),
+    });
+    expect(completedDashboard.json().data).toMatchObject({
+      counts: { requiresConfirmation: 0 },
+      inquiries: [{ workflowState: "payment_link_sent" }],
+    });
+
     const acceptedPage = await app.inject({ method: "GET", url: `/proposal/${rawToken}` });
     expect(acceptedPage.statusCode).toBe(200);
     expect(acceptedPage.body).not.toContain("<form");

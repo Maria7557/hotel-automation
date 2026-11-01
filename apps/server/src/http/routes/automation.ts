@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { renderPublicOfferPage, type OfferSnapshot } from "@hotel/templates";
+import { z } from "zod";
 
 import { errors } from "../../lib/errors.js";
 import type { AuthService } from "../../services/auth.js";
@@ -111,6 +112,12 @@ export async function registerAutomationRoutes(
   });
 
   const authenticate = requireAuthentication(authService);
+  app.post("/v1/inquiries/:inquiryId/payment-link-sent", { preHandler: authenticate }, async (request) => {
+    if (!request.currentUser) throw errors.unauthorized();
+    const { inquiryId } = z.object({ inquiryId: z.uuid() }).parse(request.params);
+    return { data: await automationService.markPaymentLinkSent(request.currentUser.id, inquiryId) };
+  });
+
   app.get("/v1/dashboard", { preHandler: authenticate }, async (request) => {
     if (!request.currentUser) throw errors.unauthorized();
     return { data: await automationService.dashboard(request.currentUser.id) };

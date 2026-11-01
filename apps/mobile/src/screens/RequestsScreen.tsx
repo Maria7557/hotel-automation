@@ -31,6 +31,8 @@ export function RequestsScreen({ profile, demo, onOpenProfile, onOpenInventory, 
   const [allFilter, setAllFilter] = useState<AllFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [busyRequestId, setBusyRequestId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [nowMs, setNowMs] = useState(Date.now());
 
@@ -87,6 +89,28 @@ export function RequestsScreen({ profile, demo, onOpenProfile, onOpenInventory, 
     });
   }, [actionFilter, allFilter, dashboard, searchQuery, viewMode]);
 
+  const markPaymentLinkSent = async (request: HotelRequest) => {
+    setBusyRequestId(request.id);
+    setActionError(null);
+    try {
+      if (!demo) await apiClient.markPaymentLinkSent(request.id);
+      setDashboard((current) => current ? {
+        ...current,
+        paymentPendingCount: Math.max(0, current.paymentPendingCount - 1),
+        paymentPendingTotalCents: Math.max(0, current.paymentPendingTotalCents - request.totalCents),
+        requests: current.requests.map((item) => {
+          if (item.id !== request.id) return item;
+          const { nextAction: _nextAction, ...completedRequest } = item;
+          return { ...completedRequest, status: "completed", statusLabel: "Payment link sent" };
+        }),
+      } : current);
+    } catch {
+      setActionError("Could not mark the payment link as sent. Try again.");
+    } finally {
+      setBusyRequestId(null);
+    }
+  };
+
   if (loading) return <View style={[uiStyles.screen, styles.loading]} accessibilityLabel="Loading requests"><ActivityIndicator color={theme.colors.action} size="large" /><Text style={styles.loadingText}>Loading today’s worklist…</Text></View>;
   if (error || !dashboard) return <View style={[uiStyles.screen, styles.errorState]}><EmptyState title="Requests unavailable" description={error ?? "Try loading again."} /><Button onPress={() => void load()}>Try again</Button></View>;
 
@@ -118,25 +142,28 @@ export function RequestsScreen({ profile, demo, onOpenProfile, onOpenInventory, 
     data={visibleRequests}
     keyExtractor={(item) => item.id}
     renderItem={({ item }) => viewMode === "actions"
-      ? <ActionRequestCard request={item} nowMs={nowMs} expanded={expandedId === item.id} onToggle={() => setExpandedId((current) => current === item.id ? null : item.id)} />
+      ? <ActionRequestCard request={item} nowMs={nowMs} expanded={expandedId === item.id} busy={busyRequestId === item.id} onToggle={() => setExpandedId((current) => current === item.id ? null : item.id)} onPaymentLinkSent={() => void markPaymentLinkSent(item)} />
       : <AllRequestRow request={item} nowMs={nowMs} expanded={expandedId === item.id} onToggle={() => setExpandedId((current) => current === item.id ? null : item.id)} />}
     ItemSeparatorComponent={() => <View style={{ height: viewMode === "actions" ? theme.spacing[3] : 1, backgroundColor: viewMode === "actions" ? "transparent" : theme.colors.border }} />}
-    ListHeaderComponent={<DashboardHeader
-      hotelName={profile.name}
-      dashboard={dashboard}
-      connectionIssues={connectionIssues}
-      failedDeliveryCount={failedDeliveryCount}
-      actionableCount={actionableCount}
-      viewMode={viewMode}
-      setViewMode={(mode) => { setViewMode(mode); setExpandedId(null); }}
-      actionFilter={actionFilter}
-      setActionFilter={(filter) => { setActionFilter(filter); setExpandedId(null); }}
-      allFilter={allFilter}
-      setAllFilter={(filter) => { setAllFilter(filter); setExpandedId(null); }}
-      searchQuery={searchQuery}
-      setSearchQuery={setSearchQuery}
-      shownCount={visibleRequests.length}
-    />}
+    ListHeaderComponent={<>
+      <DashboardHeader
+        hotelName={profile.name}
+        dashboard={dashboard}
+        connectionIssues={connectionIssues}
+        failedDeliveryCount={failedDeliveryCount}
+        actionableCount={actionableCount}
+        viewMode={viewMode}
+        setViewMode={(mode) => { setViewMode(mode); setExpandedId(null); }}
+        actionFilter={actionFilter}
+        setActionFilter={(filter) => { setActionFilter(filter); setExpandedId(null); }}
+        allFilter={allFilter}
+        setAllFilter={(filter) => { setAllFilter(filter); setExpandedId(null); }}
+        searchQuery={searchQuery}
+        setSearchQuery={setSearchQuery}
+        shownCount={visibleRequests.length}
+      />
+      {actionError ? <InlineState tone="danger"><AlertTriangle size={15} color={theme.colors.danger} /> {actionError}</InlineState> : null}
+    </>}
     ListEmptyComponent={viewMode === "actions" ? <ActionEmptyState filter={actionFilter} /> : <EmptyState title="No matching requests" description="Try another filter or search." />}
     refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void load(true)} tintColor={theme.colors.action} />}
     initialNumToRender={14}
@@ -273,7 +300,7 @@ function ActionMetric({ selected, tone, icon: Icon, count, label, onPress }: { s
   </Pressable>;
 }
 
-function ActionRequestCard({ request, nowMs, expanded, onToggle }: { request: HotelRequest; nowMs: number; expanded: boolean; onToggle: () => void }) {
+function ActionRequestCard({ request, nowMs, expanded, busy, onToggle, onPaymentLinkSent }: { request: HotelRequest; nowMs: number; expanded: boolean; busy: boolean; onToggle: () => void; onPaymentLinkSent: () => void }) {
   const issue = request.status === "attention";
   const accent = issue ? theme.colors.danger : theme.colors.action;
   return <View style={styles.actionCard}>
@@ -288,9 +315,11 @@ function ActionRequestCard({ request, nowMs, expanded, onToggle }: { request: Ho
       <DetailLine icon={BedDouble} text={request.roomLabel} />
       <DetailLine icon={Users} text={request.guestLabel} />
       {expanded ? <RequestDetails request={request} /> : null}
-      <Pressable accessibilityRole="button" accessibilityState={{ expanded }} onPress={onToggle} style={({ pressed }) => [styles.reviewButton, { backgroundColor: accent }, pressed && styles.pressed]}>
-        <Text style={styles.reviewButtonText}>{expanded ? "Close details" : issue ? "Open issue" : "Review availability"}</Text>
-        {expanded ? <ChevronUp size={18} color={theme.colors.onAction} /> : <ArrowRight size={18} color={theme.colors.onAction} />}
+      <Pressable accessibilityRole="button" accessibilityState={{ expanded: issue ? expanded : undefined, disabled: busy }} disabled={busy} onPress={issue ? onToggle : onPaymentLinkSent} style={({ pressed }) => [styles.reviewButton, { backgroundColor: accent }, (pressed || busy) && styles.pressed]}>
+        {busy ? <ActivityIndicator color={theme.colors.onAction} /> : <>
+          <Text style={styles.reviewButtonText}>{issue ? (expanded ? "Close details" : "View details") : "Payment link sent"}</Text>
+          {issue ? (expanded ? <ChevronUp size={18} color={theme.colors.onAction} /> : <ArrowRight size={18} color={theme.colors.onAction} />) : <Check size={18} color={theme.colors.onAction} strokeWidth={3} />}
+        </>}
       </Pressable>
     </View>
   </View>;
@@ -355,6 +384,7 @@ function waitingLabel(value: string, nowMs: number): string {
 }
 function statusPresentation(status: RequestStatus) {
   if (status === "payment") return { color: theme.colors.action, tint: theme.colors.actionTint };
+  if (status === "completed") return { color: theme.colors.success, tint: theme.colors.successTint };
   if (status === "attention") return { color: theme.colors.danger, tint: theme.colors.dangerTint };
   if (status === "new") return { color: theme.colors.success, tint: theme.colors.successTint };
   return { color: theme.colors.warning, tint: theme.colors.warningTint };

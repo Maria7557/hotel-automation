@@ -1,4 +1,4 @@
-export type RequestStatus = "payment" | "attention" | "waiting" | "new";
+export type RequestStatus = "payment" | "completed" | "attention" | "waiting" | "new";
 
 export type DeliverySummary = {
   status: "sent" | "pending" | "failed" | "unused";

@@ -74,7 +74,7 @@ type ApiDashboard = {
       email: { state: ApiDeliveryState; recipient: string; lastErrorCode: string | null; processedAt: string | null } | null;
       whatsapp: { state: ApiDeliveryState; recipient: string; lastErrorCode: string | null; processedAt: string | null } | null;
     };
-    workflowState: "new" | "offer_sent" | "requires_confirmation" | "needs_attention";
+    workflowState: "new" | "offer_sent" | "requires_confirmation" | "payment_link_sent" | "needs_attention";
     attentionReason: string | null;
     createdAt: string;
   }>;
@@ -524,6 +524,10 @@ export const apiClient = {
     const response = await apiRequest<{ data: ApiDashboard }>("/v1/dashboard", {}, token);
     return mapDashboard(response.data);
   },
+  async markPaymentLinkSent(inquiryId: string): Promise<void> {
+    const token = await requireToken();
+    await apiRequest(`/v1/inquiries/${encodeURIComponent(inquiryId)}/payment-link-sent`, { method: "POST" }, token);
+  },
 };
 
 function mapDeliveryState(state: ApiDeliveryState | null): "sent" | "pending" | "failed" | "unused" {
@@ -556,6 +560,8 @@ function mapDashboard(input: ApiDashboard): DashboardSnapshot {
       const workflow = inquiry.workflowState;
       const status = workflow === "requires_confirmation"
         ? "payment"
+        : workflow === "payment_link_sent"
+          ? "completed"
         : workflow === "needs_attention"
           ? "attention"
           : workflow === "offer_sent"
@@ -563,6 +569,8 @@ function mapDashboard(input: ApiDashboard): DashboardSnapshot {
             : "new";
       const statusLabel = workflow === "requires_confirmation"
         ? "To confirm"
+        : workflow === "payment_link_sent"
+          ? "Payment link sent"
         : workflow === "needs_attention"
           ? (inquiry.channelStates.email === "failed" || inquiry.channelStates.whatsapp === "failed" ? "Not delivered" : "Review needed")
           : workflow === "offer_sent"

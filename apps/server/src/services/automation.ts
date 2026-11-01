@@ -196,6 +196,12 @@ export class AutomationService {
     return this.publicOffer(offer);
   }
 
+  async markPaymentLinkSent(userId: string, inquiryId: string) {
+    const inquiry = await this.repository.markPaymentLinkSentForUser(userId, inquiryId, new Date());
+    if (!inquiry) throw errors.inquiryNotFound();
+    return { inquiryId: inquiry.id, paymentLinkSentAt: inquiry.closedAt?.toISOString() ?? null };
+  }
+
   async dashboard(userId: string) {
     const facts = await this.repository.dashboardFactsForUser(userId);
     if (!facts) throw errors.hotelNotFound();
@@ -212,7 +218,9 @@ export class AutomationService {
         .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime());
       const emailDelivery = deliveries.find(({ channel }) => channel === "email");
       const whatsappDelivery = deliveries.find(({ channel }) => channel === "whatsapp");
-      const workflowState = latest?.acceptedAt
+      const workflowState = inquiry.closedAt
+        ? "payment_link_sent"
+        : latest?.acceptedAt
           ? "requires_confirmation"
           : inquiry.attentionReason
             ? "needs_attention"

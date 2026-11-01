@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, gte, inArray, isNull, lt, lte, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, lte, ne, sql } from "drizzle-orm";
 
 import type { Database } from "../db/client.js";
 import {
@@ -496,6 +496,25 @@ class PostgresAutomationRepository implements AutomationRepository {
       .where(and(eq(offerVersions.publicTokenHash, tokenHash), eq(offerVersions.state, "active"), gt(offerVersions.expiresAt, now)))
       .returning();
     return rows[0] ? mapOffer(rows[0]) : this.findOfferByTokenHash(tokenHash);
+  }
+
+  async markPaymentLinkSentForUser(userId: string, inquiryId: string, now: Date): Promise<InquiryRecord | null> {
+    const rows = await this.db
+      .select({ inquiry: inquiries })
+      .from(inquiries)
+      .innerJoin(hotelMembers, and(eq(hotelMembers.hotelId, inquiries.hotelId), eq(hotelMembers.userId, userId)))
+      .innerJoin(offerVersions, eq(offerVersions.id, inquiries.currentOfferId))
+      .where(and(eq(inquiries.id, inquiryId), isNotNull(offerVersions.acceptedAt)))
+      .limit(1);
+    const existing = rows[0]?.inquiry;
+    if (!existing) return null;
+    if (existing.closedAt) return mapInquiry(existing);
+    const updated = await this.db
+      .update(inquiries)
+      .set({ closedAt: now, updatedAt: now })
+      .where(and(eq(inquiries.id, inquiryId), eq(inquiries.hotelId, existing.hotelId), isNull(inquiries.closedAt)))
+      .returning();
+    return updated[0] ? mapInquiry(updated[0]) : mapInquiry({ ...existing, closedAt: now, updatedAt: now });
   }
 
   async dashboardFactsForUser(userId: string): Promise<DashboardFacts | null> {

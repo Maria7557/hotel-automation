@@ -213,6 +213,7 @@ export interface AutomationRepository {
   createInquiryBundle(input: InquiryBundleCreate): Promise<InquiryBundle>;
   findOfferByTokenHash(tokenHash: string): Promise<OfferRecord | null>;
   acceptOfferByTokenHash(tokenHash: string, now: Date, selectedOptionIndex: number): Promise<OfferRecord | null>;
+  markPaymentLinkSentForUser(userId: string, inquiryId: string, now: Date): Promise<InquiryRecord | null>;
   dashboardFactsForUser(userId: string): Promise<DashboardFacts | null>;
 }
 

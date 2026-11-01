@@ -253,6 +253,18 @@ class MemoryAutomationRepository implements AutomationRepository {
     return accepted;
   }
 
+  async markPaymentLinkSentForUser(userId: string, inquiryId: string, now: Date): Promise<InquiryRecord | null> {
+    const hotel = await this.hotels.findForUser(userId);
+    const inquiry = this.inquiries.get(inquiryId);
+    if (!hotel || !inquiry || inquiry.hotelId !== hotel.id || !inquiry.currentOfferId) return null;
+    const offer = this.offers.get(inquiry.currentOfferId);
+    if (!offer?.acceptedAt) return null;
+    if (inquiry.closedAt) return inquiry;
+    const updated = { ...inquiry, closedAt: now, updatedAt: now };
+    this.inquiries.set(inquiry.id, updated);
+    return updated;
+  }
+
   async dashboardFactsForUser(userId: string): Promise<DashboardFacts | null> {
     const hotel = await this.hotels.findForUser(userId);
     if (!hotel) return null;
