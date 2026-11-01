@@ -14,7 +14,7 @@ import {
 } from "react-native";
 import { ArrowLeft, Check, Mail, MessageCircle, RefreshCw } from "lucide-react-native";
 import { theme } from "@hotel/design";
-import { apiClient, authErrorMessage } from "@/api/client";
+import { ApiError, apiClient, authErrorMessage } from "@/api/client";
 import type { ConnectionStatus } from "@/api/types";
 import { Button, InlineState, uiStyles } from "@/components/ui";
 
@@ -76,7 +76,9 @@ export function ConnectionsScreen({ onBack, demo }: { onBack: () => void; demo: 
     try {
       setConnections(demo ? demoConnections : await apiClient.getConnections());
     } catch (nextError) {
-      setError(authErrorMessage(nextError));
+      setError(provider === "microsoft" && nextError instanceof ApiError && nextError.code === "CONFIG_REQUIRED"
+        ? "Microsoft connection is temporarily unavailable."
+        : authErrorMessage(nextError));
     } finally {
       setLoading(false);
     }
