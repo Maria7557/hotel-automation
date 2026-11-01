@@ -9,6 +9,8 @@ const baseEnv = {
   AUTH_SECRET: "test-auth-secret-that-is-at-least-32-characters",
   SESSION_TTL_DAYS: 30,
   PUBLIC_BASE_URL: "https://offers.example",
+  WAHA_BASE_URL: "https://waha.example",
+  WAHA_API_KEY: "platform-waha-secret",
   corsOrigins: ["http://localhost:8081"],
 };
 
@@ -193,10 +195,9 @@ describe("message settings and channel connections", () => {
     expect(otherSettings.json().data.settings.emailSubjectTemplate).not.toContain("OWNER");
 
     await app.inject({
-      method: "PUT",
-      url: "/v1/connections/waha",
+      method: "POST",
+      url: "/v1/connections/waha/connect",
       headers: auth(owner.token),
-      payload: { baseUrl: "https://waha.owner.example", apiKey: "owner-secret-key", sessionName: "owner" },
     });
     const otherConnections = await app.inject({
       method: "GET",
@@ -207,47 +208,43 @@ describe("message settings and channel connections", () => {
       .toMatchObject({ configured: false, state: "disconnected" });
   });
 
-  it("encrypts WAHA credentials and never returns the API key", async () => {
+  it("keeps platform WAHA credentials off the public API", async () => {
     const owner = await onboard(app, "owner@example.com", "Casa Blu");
-    const apiKey = "very-secret-waha-api-key";
     const configured = await app.inject({
-      method: "PUT",
-      url: "/v1/connections/waha",
+      method: "POST",
+      url: "/v1/connections/waha/connect",
       headers: auth(owner.token),
-      payload: { baseUrl: "https://waha.example/", apiKey, sessionName: "hotel-main" },
     });
     expect(configured.statusCode).toBe(200);
-    expect(configured.json().data.connection).toEqual({
+    expect(configured.json().data.connection).toMatchObject({
       kind: "waha",
       configured: true,
       available: true,
-      state: "disconnected",
-      lastCheckedAt: null,
+      state: "connected",
       lastErrorCode: null,
       baseUrl: "https://waha.example",
-      sessionName: "hotel-main",
     });
-    expect(configured.body).not.toContain(apiKey);
+    expect(configured.json().data.connection.sessionName).toMatch(/^hotel-/);
+    expect(configured.body).not.toContain(baseEnv.WAHA_API_KEY);
     const stored = repositories.channels.connections.get(`${owner.hotelId}:waha`);
     expect(stored?.encryptedCredentials).toMatch(/^v1\./);
-    expect(stored?.encryptedCredentials).not.toContain(apiKey);
+    expect(stored?.encryptedCredentials).not.toContain(baseEnv.WAHA_API_KEY);
 
     const status = await app.inject({
       method: "GET",
       url: "/v1/connections/waha",
       headers: auth(owner.token),
     });
-    expect(status.body).not.toContain(apiKey);
+    expect(status.body).not.toContain(baseEnv.WAHA_API_KEY);
     expect(status.json().data.connection.configured).toBe(true);
   });
 
   it("checks a WAHA session and performs a real test send only after it is connected", async () => {
     const owner = await onboard(app, "owner@example.com", "Casa Blu");
     await app.inject({
-      method: "PUT",
-      url: "/v1/connections/waha",
+      method: "POST",
+      url: "/v1/connections/waha/connect",
       headers: auth(owner.token),
-      payload: { baseUrl: "https://waha.example/", apiKey: "secret-waha-key", sessionName: "hotel-main" },
     });
 
     const checked = await app.inject({
@@ -271,12 +268,66 @@ describe("message settings and channel connections", () => {
       delivery: { state: "provider_accepted", lastErrorCode: null },
     });
     const sendCall = providerFetchMock.mock.calls.find(([url]) => String(url).endsWith("/api/sendText"));
-    expect(sendCall?.[1]?.headers).toMatchObject({ "X-Api-Key": "secret-waha-key" });
+    expect(sendCall?.[1]?.headers).toMatchObject({ "X-Api-Key": baseEnv.WAHA_API_KEY });
     expect(JSON.parse(String(sendCall?.[1]?.body))).toMatchObject({
-      session: "hotel-main",
+      session: expect.stringMatching(/^hotel-/),
       chatId: "393331234567@c.us",
     });
-    expect(JSON.stringify(sent.json())).not.toContain("secret-waha-key");
+    expect(JSON.stringify(sent.json())).not.toContain(baseEnv.WAHA_API_KEY);
+  });
+
+  it("lets a hotel connect WhatsApp without entering platform credentials", async () => {
+    await app.close();
+    repositories = createMemoryRepositories();
+    providerFetchMock = vi.fn(async (input: string | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/sessions/hotel-") && init?.method === "GET") {
+        return new Response(JSON.stringify({ message: "not found" }), {
+          status: 404,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.endsWith("/api/sessions") && init?.method === "POST") {
+        return new Response(JSON.stringify({ status: "SCAN_QR_CODE", me: null }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.includes("/auth/qr")) {
+        return new Response(JSON.stringify({ mimetype: "image/png", data: "cXItYnl0ZXM=" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      throw new Error(`Unexpected provider URL: ${url}`);
+    });
+    providerFetch = providerFetchMock as ProviderFetch;
+    app = await createApp({
+      env: {
+        ...baseEnv,
+        WAHA_BASE_URL: "https://waha.platform.example",
+        WAHA_API_KEY: "platform-waha-secret",
+      },
+      repositories,
+      providerFetch,
+      logger: false,
+    });
+    const owner = await onboard(app, "owner@example.com", "Casa Blu");
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/connections/waha/connect",
+      headers: auth(owner.token),
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().data).toMatchObject({
+      connection: { kind: "waha", configured: true, available: true, state: "connecting" },
+      qrCode: "data:image/png;base64,cXItYnl0ZXM=",
+    });
+    expect(response.body).not.toContain("platform-waha-secret");
+    const createCall = providerFetchMock.mock.calls.find(([url]) => String(url).endsWith("/api/sessions"));
+    expect(createCall?.[1]?.headers).toMatchObject({ "X-Api-Key": "platform-waha-secret" });
   });
 
   it("returns CONFIG_REQUIRED when Google OAuth environment credentials are absent", async () => {

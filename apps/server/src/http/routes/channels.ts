@@ -9,7 +9,6 @@ import {
   messageSettingsInputSchema,
   previewInputSchema,
   testSendInputSchema,
-  wahaConfigurationSchema,
 } from "../channel-schemas.js";
 
 export async function registerChannelRoutes(
@@ -54,13 +53,8 @@ export async function registerChannelRoutes(
     data: { connection: await channelService.wahaStatus(userId(request)) },
   }));
 
-  app.put("/v1/connections/waha", { preHandler: authenticate }, async (request) => ({
-    data: {
-      connection: await channelService.configureWaha(
-        userId(request),
-        wahaConfigurationSchema.parse(request.body),
-      ),
-    },
+  app.post("/v1/connections/waha/connect", { preHandler: authenticate }, async (request) => ({
+    data: await channelService.connectWaha(userId(request)),
   }));
 
   app.post("/v1/connections/waha/check", { preHandler: authenticate }, async (request) => ({

@@ -27,6 +27,8 @@ const envSchema = z.object({
   GOOGLE_REDIRECT_URI: optionalUrl,
   GOOGLE_AUTH_CLIENT_IDS: optionalString,
   APPLE_AUTH_CLIENT_IDS: optionalString,
+  WAHA_BASE_URL: optionalUrl,
+  WAHA_API_KEY: optionalString,
   DELIVERY_WORKER_ENABLED: booleanFromString,
   DELIVERY_WORKER_INTERVAL_MS: z.coerce.number().int().min(250).max(60_000).default(5_000),
   DELIVERY_WORKER_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(20).default(5),

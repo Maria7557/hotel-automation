@@ -14,6 +14,7 @@ type GoogleConfig = {
   GOOGLE_CLIENT_SECRET?: string;
   GOOGLE_REDIRECT_URI?: string;
 };
+type WahaPlatformConfig = { baseUrl?: string; apiKey?: string };
 
 export type DeliveryWorkerLogger = {
   info(fields: Record<string, unknown>, message: string): void;
@@ -32,6 +33,7 @@ export class DeliveryWorker {
     private readonly wahaProvider: WahaProvider,
     private readonly maxAttempts = 5,
     private readonly logger: DeliveryWorkerLogger = silentLogger,
+    private readonly wahaPlatform: WahaPlatformConfig = {},
   ) {}
 
   async processNext(now = new Date()): Promise<boolean> {
@@ -111,7 +113,7 @@ export class DeliveryWorker {
       } else {
         if (rendered.channel !== "whatsapp") throw new Error("WhatsApp render mismatch.");
         const sent = await this.wahaProvider.sendText(
-          wahaConfig(job.connection, this.authSecret),
+          wahaConfig(job.connection, this.authSecret, this.wahaPlatform),
           delivery.recipient,
           rendered.text,
         );
@@ -324,13 +326,19 @@ export function retryDelayMs(attemptCount: number): number {
 function wahaConfig(
   connection: NonNullable<ClaimedOfferDelivery["connection"]>,
   authSecret: string,
+  platform: WahaPlatformConfig = {},
 ): WahaConfig {
   const { baseUrl, sessionName } = connection.metadata;
   if (
-    !connection.encryptedCredentials ||
     typeof baseUrl !== "string" ||
     typeof sessionName !== "string"
   ) {
+    throw new ProviderError("WAHA_CREDENTIALS_INVALID", false);
+  }
+  if (platform.baseUrl && platform.apiKey) {
+    return { baseUrl: platform.baseUrl, sessionName, apiKey: platform.apiKey };
+  }
+  if (!connection.encryptedCredentials) {
     throw new ProviderError("WAHA_CREDENTIALS_INVALID", false);
   }
   try {

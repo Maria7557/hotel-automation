@@ -78,7 +78,7 @@ npm exec --workspace @hotel/server -- drizzle-kit check
 ## Подключения
 
 - Google: задайте `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` и точный `GOOGLE_REDIRECT_URI`, затем запустите OAuth из приложения. Используется только scope отправки Gmail.
-- WAHA: URL сервера, session name и API key вводятся в приложении; ключ хранится на сервере в зашифрованном виде. Перед тестом приложение проверяет состояние session.
+- WAHA: оператор платформы задаёт `WAHA_BASE_URL` и `WAHA_API_KEY` на сервере один раз. Отель нажимает `Connect WhatsApp`, сканирует QR-код и не видит технические параметры шлюза.
 - В локальной среде без реальных подключений test-send возвращает явно обозначенный fake-результат и не утверждает, что сообщение доставлено.
 
 Подробности worker и его гарантий: [apps/server/docs/delivery-worker.md](apps/server/docs/delivery-worker.md).

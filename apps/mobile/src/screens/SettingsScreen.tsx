@@ -80,8 +80,8 @@ export function SettingsScreen({
       <View style={styles.section}>
         <SectionTitle>Connections</SectionTitle>
         <View style={styles.menuCard}>
-          <SettingRow icon={Mail} title="Google Mail" subtitle="OAuth and connection status" badge="Open" onPress={onOpenConnections} />
-          <SettingRow icon={MessageCircle} title="WhatsApp · WAHA" subtitle="Gateway, session and status" badge="Open" onPress={onOpenConnections} last />
+          <SettingRow icon={Mail} title="Mail" subtitle="Connect your hotel email" badge="Open" onPress={onOpenConnections} />
+          <SettingRow icon={MessageCircle} title="WhatsApp" subtitle="Connect your hotel number" badge="Open" onPress={onOpenConnections} last />
         </View>
         <InlineState tone="warning">Send a test to your own email and WhatsApp before enabling automation</InlineState>
       </View>

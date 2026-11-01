@@ -33,7 +33,7 @@ type AppOptions = {
       Pick<
         AppEnv,
         "PUBLIC_BASE_URL" | "GOOGLE_CLIENT_ID" | "GOOGLE_CLIENT_SECRET" | "GOOGLE_REDIRECT_URI" |
-        "GOOGLE_AUTH_CLIENT_IDS" | "APPLE_AUTH_CLIENT_IDS"
+        "GOOGLE_AUTH_CLIENT_IDS" | "APPLE_AUTH_CLIENT_IDS" | "WAHA_BASE_URL" | "WAHA_API_KEY"
       >
     >;
   repositories: Repositories;
@@ -100,6 +100,10 @@ export async function createApp(options: AppOptions): Promise<FastifyInstance> {
     },
     new GoogleProvider(options.providerFetch ?? fetch),
     new WahaProvider(options.providerFetch ?? fetch),
+    {
+      ...(options.env.WAHA_BASE_URL ? { baseUrl: options.env.WAHA_BASE_URL } : {}),
+      ...(options.env.WAHA_API_KEY ? { apiKey: options.env.WAHA_API_KEY } : {}),
+    },
   );
 
   app.get("/health", async (_request, reply) => {

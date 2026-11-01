@@ -8,7 +8,6 @@ import {
   allowedMessageVariables,
   type previewInputSchema,
   type testSendInputSchema,
-  type wahaConfigurationSchema,
 } from "../http/channel-schemas.js";
 import { errors } from "../lib/errors.js";
 import {
@@ -40,9 +39,8 @@ export const defaultMessageSettings: MessageSettingsUpdate = {
 
 type PreviewInput = z.infer<typeof previewInputSchema>;
 type TestSendInput = z.infer<typeof testSendInputSchema>;
-type WahaInput = z.infer<typeof wahaConfigurationSchema>;
-
 type OAuthConfig = Pick<AppEnv, "GOOGLE_CLIENT_ID" | "GOOGLE_CLIENT_SECRET" | "GOOGLE_REDIRECT_URI">;
+type WahaPlatformConfig = { baseUrl?: string; apiKey?: string };
 
 export class ChannelService {
   constructor(
@@ -53,6 +51,7 @@ export class ChannelService {
     private readonly google: Partial<OAuthConfig>,
     private readonly googleProvider: GoogleProvider,
     private readonly wahaProvider: WahaProvider,
+    private readonly waha: WahaPlatformConfig = {},
   ) {}
 
   async getMessageSettings(userId: string) {
@@ -180,23 +179,45 @@ export class ChannelService {
     return this.publicConnection("waha", await this.repository.findConnectionForUser(userId, "waha"));
   }
 
-  async configureWaha(userId: string, input: WahaInput) {
-    await this.requireHotel(userId);
+  async connectWaha(userId: string) {
+    const hotel = await this.requireHotel(userId);
+    const platform = this.requireWahaPlatformConfig();
+    const sessionName = `hotel-${hotel.id.replace(/[^A-Za-z0-9_-]/g, "")}`.slice(0, 80);
+    const config: WahaConfig = { ...platform, sessionName };
+    const prepared = await this.wahaProvider.prepareSession(config);
     const encryptedCredentials = sealPrivateValue(
-      JSON.stringify({ apiKey: input.apiKey }),
+      JSON.stringify({ apiKey: platform.apiKey }),
       this.authSecret,
     );
-    const connection = await this.repository.configureWahaForUser({
+    const configured = await this.repository.configureWahaForUser({
       userId,
       encryptedCredentials,
       metadata: {
-        baseUrl: new URL(input.baseUrl).toString().replace(/\/$/, ""),
-        sessionName: input.sessionName,
+        baseUrl: platform.baseUrl,
+        sessionName,
+        sessionStatus: prepared.status,
         configuredAt: new Date().toISOString(),
       },
     });
-    if (!connection) throw errors.hotelNotFound();
-    return this.publicConnection("waha", connection);
+    if (!configured) throw errors.hotelNotFound();
+
+    const now = new Date();
+    const updated = await this.repository.updateConnectionForHotel({
+      hotelId: hotel.id,
+      kind: "waha",
+      state: prepared.working ? "connected" : "connecting",
+      encryptedCredentials,
+      metadata: configured.metadata,
+      lastCheckedAt: now,
+      lastErrorCode: null,
+    });
+    if (!updated) throw errors.hotelNotFound();
+
+    let qrCode: string | null = null;
+    if (!prepared.working && prepared.status !== "STARTING") {
+      qrCode = await this.wahaProvider.qrCode(config);
+    }
+    return { connection: this.publicConnection("waha", updated), qrCode };
   }
 
   async checkWaha(userId: string) {
@@ -339,7 +360,9 @@ export class ChannelService {
     return {
       kind,
       configured: connection?.encryptedCredentials !== null && connection?.encryptedCredentials !== undefined,
-      available: kind === "waha" || this.googleConfigured(),
+      available: kind === "waha"
+        ? Boolean(connection?.encryptedCredentials) || this.wahaConfigured()
+        : this.googleConfigured(),
       state: connection?.state ?? "disconnected",
       lastCheckedAt: connection?.lastCheckedAt?.toISOString() ?? null,
       lastErrorCode: connection?.lastErrorCode ?? null,
@@ -458,6 +481,15 @@ export class ChannelService {
       clientSecret: this.google.GOOGLE_CLIENT_SECRET!,
       redirectUri: this.google.GOOGLE_REDIRECT_URI!,
     };
+  }
+
+  private wahaConfigured(): boolean {
+    return Boolean(this.waha.baseUrl && this.waha.apiKey);
+  }
+
+  private requireWahaPlatformConfig(): { baseUrl: string; apiKey: string } {
+    if (!this.wahaConfigured()) throw errors.configRequired("waha");
+    return { baseUrl: this.waha.baseUrl!, apiKey: this.waha.apiKey! };
   }
 }
 

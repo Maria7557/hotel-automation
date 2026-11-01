@@ -25,6 +25,10 @@ const worker = new DeliveryWorker(
   new WahaProvider(fetch),
   env.DELIVERY_WORKER_MAX_ATTEMPTS,
   app.log,
+  {
+    ...(env.WAHA_BASE_URL ? { baseUrl: env.WAHA_BASE_URL } : {}),
+    ...(env.WAHA_API_KEY ? { apiKey: env.WAHA_API_KEY } : {}),
+  },
 );
 const workerLoop = env.DELIVERY_WORKER_ENABLED
   ? new DeliveryWorkerLoop(worker, env.DELIVERY_WORKER_INTERVAL_MS, 10, app.log)

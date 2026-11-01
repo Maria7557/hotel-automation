@@ -65,6 +65,32 @@ describe("provider adapters", () => {
     expect(mock.mock.calls[1]?.[1]?.headers).toMatchObject({ "X-Api-Key": "api-secret" });
     expect(toWahaChatId("+39 333-123-4567")).toBe("393331234567@c.us");
   });
+
+  it("creates a WAHA session and returns a data URL for its QR code", async () => {
+    const mock = vi.fn(async (input: string | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/sessions/hotel-1") && init?.method === "GET") {
+        return json({ message: "not found" }, 404);
+      }
+      if (url.endsWith("/api/sessions") && init?.method === "POST") {
+        return json({ name: "hotel-1", status: "SCAN_QR_CODE", me: null });
+      }
+      if (url.endsWith("/api/hotel-1/auth/qr")) {
+        return json({ mimetype: "image/png", data: "cXItYnl0ZXM=" });
+      }
+      throw new Error(`Unexpected provider URL: ${url}`);
+    });
+    const provider = new WahaProvider(mock as ProviderFetch);
+    const config = { baseUrl: "https://waha.example", apiKey: "platform-secret", sessionName: "hotel-1" };
+
+    expect(await provider.prepareSession(config)).toEqual({ status: "SCAN_QR_CODE", working: false });
+    expect(await provider.qrCode(config)).toBe("data:image/png;base64,cXItYnl0ZXM=");
+    expect(mock.mock.calls[1]?.[1]?.headers).toMatchObject({ "X-Api-Key": "platform-secret" });
+    expect(JSON.parse(String(mock.mock.calls[1]?.[1]?.body))).toMatchObject({
+      name: "hotel-1",
+      start: true,
+    });
+  });
 });
 
 function json(body: unknown, status = 200): Response {

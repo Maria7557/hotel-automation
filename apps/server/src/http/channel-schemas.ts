@@ -67,18 +67,6 @@ export const testSendInputSchema = z.discriminatedUnion("channel", [
   }),
 ]);
 
-export const wahaConfigurationSchema = z.object({
-  baseUrl: z
-    .url()
-    .max(2_048)
-    .refine((value) => {
-      const url = new URL(value);
-      return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password && !url.search && !url.hash;
-    }, "Use an HTTP(S) base URL without credentials, query or hash."),
-  apiKey: z.string().min(8).max(512),
-  sessionName: z.string().trim().regex(/^[A-Za-z0-9_-]{1,80}$/).default("default"),
-});
-
 export const googleCallbackQuerySchema = z.object({
   state: z.string().min(20).max(2_048),
   code: z.string().min(1).max(4_096),

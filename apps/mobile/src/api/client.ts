@@ -425,14 +425,16 @@ export const apiClient = {
     return response.data.connections;
   },
 
-  async configureWaha(input: { baseUrl: string; apiKey: string; sessionName: string }): Promise<ConnectionStatus> {
+  async connectWaha(): Promise<{ connection: ConnectionStatus; qrCode: string | null }> {
     const token = await requireToken();
-    const response = await apiRequest<{ data: { connection: ConnectionStatus } }>(
-      "/v1/connections/waha",
-      { method: "PUT", body: JSON.stringify(input) },
+    const response = await apiRequest<{
+      data: { connection: ConnectionStatus; qrCode: string | null };
+    }>(
+      "/v1/connections/waha/connect",
+      { method: "POST" },
       token,
     );
-    return response.data.connection;
+    return response.data;
   },
 
   async checkWaha(): Promise<ConnectionStatus> {
@@ -571,7 +573,7 @@ export function authErrorMessage(error: unknown): string {
     INVALID_RATE_RANGE: "Check the rate period dates.",
     INVALID_RATE_OCCUPANCY: "Included guests cannot exceed this room's capacity.",
     ROOM_CAPACITY_EXCEEDED: "The number of guests exceeds the room capacity.",
-    CONFIG_REQUIRED: "This connection is not configured on the server yet. Add the provider settings and try again.",
+    CONFIG_REQUIRED: "This connection is temporarily unavailable. Please try again later.",
     SOCIAL_AUTH_NOT_CONFIGURED: error.message,
     SOCIAL_AUTH_UNAVAILABLE: error.message,
     SOCIAL_AUTH_FAILED: error.message,
