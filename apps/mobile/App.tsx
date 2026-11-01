@@ -123,6 +123,14 @@ export default function App() {
   if (!fontsLoaded) return <View style={styles.loadingCanvas} />;
 
   const profile = appState.status === "authenticated" ? appState.profile : appState.status === "demo" ? appState.profile : null;
+  const openTab = (nextTab: Tab) => {
+    setProfileOpen(false);
+    setInventoryOpen(false);
+    setMessagesOpen(false);
+    setConnectionsOpen(false);
+    setSiteIntegrationOpen(false);
+    setTab(nextTab);
+  };
 
   return (
     <SafeAreaProvider>
@@ -155,39 +163,39 @@ export default function App() {
               }}
             />
           </View>
-        ) : profile && profileOpen ? (
-          <HotelProfileScreen
-            onBack={() => setProfileOpen(false)}
-            initialProfile={profile}
-            demo={appState.status === "demo"}
-            onSaved={(nextProfile) => {
-              setAppState((current) => current.status === "authenticated" ? { ...current, profile: nextProfile } : current.status === "demo" ? { ...current, profile: nextProfile } : current);
-              setProfileOpen(false);
-            }}
-          />
-        ) : profile && inventoryOpen ? (
-          <InventoryScreen onBack={() => setInventoryOpen(false)} />
-        ) : profile && messagesOpen ? (
-          <MessageSettingsScreen onBack={() => setMessagesOpen(false)} demo={appState.status === "demo"} />
-        ) : profile && connectionsOpen ? (
-          <ConnectionsScreen onBack={() => setConnectionsOpen(false)} demo={appState.status === "demo"} />
-        ) : profile && siteIntegrationOpen ? (
-          <SiteIntegrationScreen
-            initialProfile={profile}
-            demo={appState.status === "demo"}
-            onBack={() => setSiteIntegrationOpen(false)}
-            onSaved={(settings) => {
-              setAppState((current) => current.status === "authenticated"
-                ? { ...current, profile: current.profile ? { ...current.profile, ...settings } : null }
-                : current.status === "demo"
-                  ? { ...current, profile: { ...current.profile, ...settings } }
-                  : current);
-            }}
-          />
         ) : profile ? (
           <View style={styles.shell}>
             <View style={styles.route}>
-              {tab === "requests" ? (
+              {profileOpen ? (
+                <HotelProfileScreen
+                  onBack={() => setProfileOpen(false)}
+                  initialProfile={profile}
+                  demo={appState.status === "demo"}
+                  onSaved={(nextProfile) => {
+                    setAppState((current) => current.status === "authenticated" ? { ...current, profile: nextProfile } : current.status === "demo" ? { ...current, profile: nextProfile } : current);
+                    setProfileOpen(false);
+                  }}
+                />
+              ) : inventoryOpen ? (
+                <InventoryScreen onBack={() => setInventoryOpen(false)} />
+              ) : messagesOpen ? (
+                <MessageSettingsScreen onBack={() => setMessagesOpen(false)} demo={appState.status === "demo"} />
+              ) : connectionsOpen ? (
+                <ConnectionsScreen onBack={() => setConnectionsOpen(false)} demo={appState.status === "demo"} />
+              ) : siteIntegrationOpen ? (
+                <SiteIntegrationScreen
+                  initialProfile={profile}
+                  demo={appState.status === "demo"}
+                  onBack={() => setSiteIntegrationOpen(false)}
+                  onSaved={(settings) => {
+                    setAppState((current) => current.status === "authenticated"
+                      ? { ...current, profile: current.profile ? { ...current.profile, ...settings } : null }
+                      : current.status === "demo"
+                        ? { ...current, profile: { ...current.profile, ...settings } }
+                        : current);
+                  }}
+                />
+              ) : tab === "requests" ? (
                 <RequestsScreen hotelName={profile.name} demo={appState.status === "demo"} />
               ) : tab === "support" && platformAdmin ? (
                 <WhatsAppAdminScreen />
@@ -208,9 +216,9 @@ export default function App() {
             </View>
             <SafeAreaView edges={["bottom"]} style={styles.navSafeArea}>
               <View style={styles.nav} accessibilityRole="tablist">
-                <NavItem label="Requests" icon={ClipboardList} selected={tab === "requests"} onPress={() => setTab("requests")} />
-                <NavItem label="Settings" icon={Settings} selected={tab === "settings"} onPress={() => setTab("settings")} />
-                {platformAdmin ? <NavItem label="Support" icon={Headphones} selected={tab === "support"} onPress={() => setTab("support")} /> : null}
+                <NavItem label="Requests" icon={ClipboardList} selected={tab === "requests"} onPress={() => openTab("requests")} />
+                <NavItem label="Settings" icon={Settings} selected={tab === "settings"} onPress={() => openTab("settings")} />
+                {platformAdmin ? <NavItem label="Support" icon={Headphones} selected={tab === "support"} onPress={() => openTab("support")} /> : null}
               </View>
             </SafeAreaView>
           </View>
