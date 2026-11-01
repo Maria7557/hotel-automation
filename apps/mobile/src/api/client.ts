@@ -23,6 +23,7 @@ import type {
 
 const apiUrl = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, "");
 const sessionTokenKey = "hotel.session.token";
+const webCookieSession = "web-cookie-session";
 let volatileWebToken: string | null = null;
 
 type ApiErrorPayload = {
@@ -106,7 +107,8 @@ async function readToken(): Promise<string | null> {
 
 async function saveToken(token: string): Promise<void> {
   if (Platform.OS === "web") {
-    volatileWebToken = token;
+    // The real web token is stored only in the server-issued HttpOnly cookie.
+    volatileWebToken = webCookieSession;
     return;
   }
   await SecureStore.setItemAsync(sessionTokenKey, token, {
@@ -131,11 +133,15 @@ async function apiRequest<T>(
   const headers = new Headers(options.headers);
   headers.set("Accept", "application/json");
   if (options.body) headers.set("Content-Type", "application/json");
-  if (token) headers.set("Authorization", `Bearer ${token}`);
+  if (token && token !== webCookieSession) headers.set("Authorization", `Bearer ${token}`);
 
   let response: Response;
   try {
-    response = await fetch(`${baseUrl}${path}`, { ...options, headers });
+    response = await fetch(`${baseUrl}${path}`, {
+      ...options,
+      headers,
+      ...(Platform.OS === "web" ? { credentials: "include" as const } : {}),
+    });
   } catch {
     throw new ApiError("NETWORK_ERROR", "Could not reach the server. Check your connection and try again.");
   }
@@ -209,16 +215,20 @@ export const apiClient = {
 
   async getSession(): Promise<SessionUser | null> {
     const token = await readToken();
-    if (!token) return null;
+    if (!token && Platform.OS !== "web") return null;
     try {
       const response = await apiRequest<{ data: { user: SessionUser } }>(
         "/v1/auth/session",
         {},
         token,
       );
+      if (Platform.OS === "web") volatileWebToken = webCookieSession;
       return response.data.user;
     } catch (error) {
-      if (error instanceof ApiError && error.status === 401) await clearToken();
+      if (error instanceof ApiError && error.status === 401) {
+        await clearToken();
+        if (Platform.OS === "web") return null;
+      }
       throw error;
     }
   },

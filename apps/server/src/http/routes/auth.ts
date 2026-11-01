@@ -1,25 +1,32 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply } from "fastify";
 
 import { errors } from "../../lib/errors.js";
 import type { AuthService } from "../../services/auth.js";
-import { bearerToken, requireAuthentication } from "../authenticate.js";
+import { requireAuthentication, sessionCookieName } from "../authenticate.js";
 import { loginSchema, registerSchema, socialLoginSchema } from "../schemas.js";
 
-export async function registerAuthRoutes(app: FastifyInstance, authService: AuthService): Promise<void> {
+export async function registerAuthRoutes(
+  app: FastifyInstance,
+  authService: AuthService,
+  options: { secure: boolean },
+): Promise<void> {
   const authenticate = requireAuthentication(authService);
 
   app.post("/v1/auth/register", async (request, reply) => {
     const result = await authService.register(registerSchema.parse(request.body));
+    setSessionCookie(reply, result, options.secure);
     return reply.code(201).send({ data: serializeAuthResult(result) });
   });
 
-  app.post("/v1/auth/login", async (request) => {
+  app.post("/v1/auth/login", async (request, reply) => {
     const result = await authService.login(loginSchema.parse(request.body));
+    setSessionCookie(reply, result, options.secure);
     return { data: serializeAuthResult(result) };
   });
 
-  app.post("/v1/auth/social", async (request) => {
+  app.post("/v1/auth/social", async (request, reply) => {
     const result = await authService.socialLogin(socialLoginSchema.parse(request.body));
+    setSessionCookie(reply, result, options.secure);
     return { data: serializeAuthResult(result) };
   });
 
@@ -29,9 +36,33 @@ export async function registerAuthRoutes(app: FastifyInstance, authService: Auth
   });
 
   app.post("/v1/auth/logout", { preHandler: authenticate }, async (request, reply) => {
-    await authService.logout(request.accessToken ?? bearerToken(request));
+    if (!request.accessToken) throw errors.unauthorized();
+    await authService.logout(request.accessToken);
+    reply.clearCookie(sessionCookieName, sessionCookieOptions(options.secure));
     return reply.code(204).send();
   });
+}
+
+function setSessionCookie(
+  reply: FastifyReply,
+  result: Awaited<ReturnType<AuthService["login"]>>,
+  secure: boolean,
+) {
+  const maxAge = Math.max(0, Math.floor((result.expiresAt.getTime() - Date.now()) / 1_000));
+  reply.setCookie(sessionCookieName, result.accessToken, {
+    ...sessionCookieOptions(secure),
+    expires: result.expiresAt,
+    maxAge,
+  });
+}
+
+function sessionCookieOptions(secure: boolean) {
+  return {
+    path: "/",
+    httpOnly: true,
+    sameSite: "lax" as const,
+    secure,
+  };
 }
 
 function serializeAuthResult(result: Awaited<ReturnType<AuthService["login"]>>) {

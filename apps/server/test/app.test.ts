@@ -41,12 +41,19 @@ describe("server API", () => {
     expect(registrationBody.data.user.email).toBe("owner@example.com");
     expect(registrationBody.data.accessToken).toMatch(/^[A-Za-z0-9_-]+$/);
     expect([...repositories.auth.sessions.keys()][0]).not.toBe(registrationBody.data.accessToken);
+    const setCookie = registration.headers["set-cookie"];
+    expect(setCookie).toContain("hotel_session=");
+    expect(setCookie).toContain("HttpOnly");
+    expect(setCookie).toContain("SameSite=Lax");
+    expect(setCookie).toContain("Max-Age=");
+    const cookieHeader = Array.isArray(setCookie) ? setCookie[0] : setCookie;
+    const cookie = cookieHeader?.split(";", 1)[0];
+    expect(cookie).toBeTruthy();
 
-    const accessToken = registrationBody.data.accessToken as string;
     const session = await app.inject({
       method: "GET",
       url: "/v1/auth/session",
-      headers: { authorization: `Bearer ${accessToken}` },
+      headers: { cookie },
     });
     expect(session.statusCode).toBe(200);
     expect(session.json().data.user.email).toBe("owner@example.com");
@@ -54,14 +61,15 @@ describe("server API", () => {
     const logout = await app.inject({
       method: "POST",
       url: "/v1/auth/logout",
-      headers: { authorization: `Bearer ${accessToken}` },
+      headers: { cookie },
     });
     expect(logout.statusCode).toBe(204);
+    expect(logout.headers["set-cookie"]).toContain("hotel_session=;");
 
     const endedSession = await app.inject({
       method: "GET",
       url: "/v1/auth/session",
-      headers: { authorization: `Bearer ${accessToken}` },
+      headers: { cookie },
     });
     expect(endedSession.statusCode).toBe(401);
   });

@@ -1,4 +1,5 @@
 import cors from "@fastify/cors";
+import cookie from "@fastify/cookie";
 import formbody from "@fastify/formbody";
 import Fastify, { type FastifyInstance } from "fastify";
 import { ZodError } from "zod";
@@ -32,7 +33,7 @@ type AppOptions = {
     Partial<
       Pick<
         AppEnv,
-        "PUBLIC_BASE_URL" | "GOOGLE_CLIENT_ID" | "GOOGLE_CLIENT_SECRET" | "GOOGLE_REDIRECT_URI" |
+        "NODE_ENV" | "PUBLIC_BASE_URL" | "GOOGLE_CLIENT_ID" | "GOOGLE_CLIENT_SECRET" | "GOOGLE_REDIRECT_URI" |
         "GOOGLE_AUTH_CLIENT_IDS" | "APPLE_AUTH_CLIENT_IDS" | "WAHA_BASE_URL" | "WAHA_API_KEY"
       >
     >;
@@ -64,8 +65,10 @@ export async function createApp(options: AppOptions): Promise<FastifyInstance> {
 
   await app.register(cors, {
     origin: options.env.corsOrigins,
+    credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   });
+  await app.register(cookie);
   await app.register(formbody);
 
   const authService = new AuthService(
@@ -115,7 +118,9 @@ export async function createApp(options: AppOptions): Promise<FastifyInstance> {
     });
   });
 
-  await registerAuthRoutes(app, authService);
+  await registerAuthRoutes(app, authService, {
+    secure: options.env.NODE_ENV === "production" || options.env.PUBLIC_BASE_URL?.startsWith("https://") === true,
+  });
   await registerChannelRoutes(app, authService, channelService);
   await registerHotelRoutes(app, authService, hotelService);
   await registerInventoryRoutes(app, authService, inventoryService);
