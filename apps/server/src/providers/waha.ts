@@ -1,6 +1,21 @@
 import { asRecord, type ProviderFetch, ProviderError, providerJson } from "./http.js";
 
 export type WahaConfig = { baseUrl: string; apiKey: string; sessionName: string };
+export type WahaPlatformConfig = Omit<WahaConfig, "sessionName">;
+export type WahaSessionSummary = {
+  name: string;
+  status: string;
+  working: boolean;
+  phoneNumber: string | null;
+  pushName: string | null;
+  engine: string | null;
+  messageCapping: {
+    status: string;
+    totalQuota: number | null;
+    usedQuota: number | null;
+    cycleEnd: number | null;
+  } | null;
+};
 
 export class WahaProvider {
   constructor(private readonly fetchClient: ProviderFetch) {}
@@ -99,6 +114,39 @@ export class WahaProvider {
     return sessionState(result.body, "WAHA_STATUS_RESPONSE_INVALID");
   }
 
+  async listSessions(config: WahaPlatformConfig): Promise<WahaSessionSummary[]> {
+    const result = await providerJson(
+      this.fetchClient,
+      `${config.baseUrl}/api/sessions?all=true`,
+      { method: "GET", headers: headers(config.apiKey) },
+      "WAHA_SESSION_LIST",
+    );
+    if (!result.response.ok) {
+      throw new ProviderError(
+        `WAHA_SESSION_LIST_HTTP_${result.response.status}`,
+        result.response.status === 429 || result.response.status >= 500,
+      );
+    }
+    if (!Array.isArray(result.body)) throw new ProviderError("WAHA_SESSION_LIST_RESPONSE_INVALID", false);
+    return result.body.map((session) => sessionSummary(session));
+  }
+
+  async restartSession(config: WahaConfig): Promise<WahaSessionSummary> {
+    const result = await providerJson(
+      this.fetchClient,
+      `${config.baseUrl}/api/sessions/${encodeURIComponent(config.sessionName)}/restart`,
+      { method: "POST", headers: headers(config.apiKey), body: "{}" },
+      "WAHA_SESSION_RESTART",
+    );
+    if (!result.response.ok) {
+      throw new ProviderError(
+        `WAHA_SESSION_RESTART_HTTP_${result.response.status}`,
+        result.response.status === 429 || result.response.status >= 500,
+      );
+    }
+    return sessionSummary(result.body);
+  }
+
   async sendText(config: WahaConfig, phone: string, text: string) {
     const chatId = toWahaChatId(phone);
     const result = await providerJson(
@@ -116,6 +164,34 @@ export class WahaProvider {
     }
     return { providerMessageId: messageId(result.body), chatId };
   }
+}
+
+function sessionSummary(value: unknown): WahaSessionSummary {
+  const body = asRecord(value);
+  if (!body || typeof body.name !== "string" || typeof body.status !== "string") {
+    throw new ProviderError("WAHA_SESSION_RESPONSE_INVALID", false);
+  }
+  const me = asRecord(body.me);
+  const rawId = typeof me?.id === "string" ? me.id : null;
+  const capping = asRecord(me?.messageCapping);
+  return {
+    name: body.name,
+    status: body.status,
+    working: body.status === "WORKING" && me !== null,
+    phoneNumber: rawId ? rawId.split("@")[0]?.replace(/\D/g, "") || null : null,
+    pushName: typeof me?.pushName === "string" ? me.pushName : null,
+    engine: typeof body.engine === "string" ? body.engine : null,
+    messageCapping: capping && typeof capping.cappingStatus === "string" ? {
+      status: capping.cappingStatus,
+      totalQuota: numberOrNull(capping.totalQuota),
+      usedQuota: numberOrNull(capping.usedQuota),
+      cycleEnd: numberOrNull(capping.cycleEnd),
+    } : null,
+  };
+}
+
+function numberOrNull(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function sessionState(value: unknown, errorCode: string): { status: string; working: boolean } {

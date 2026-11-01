@@ -34,6 +34,7 @@ import type {
   MessageSettings,
   MessageSettingsUpdate,
   OfferRecord,
+  PlatformAdminRepository,
   RatePeriodCreate,
   RatePeriodProfile,
   RatePeriodUpdate,
@@ -44,6 +45,7 @@ import type {
   SystemRepository,
   SocialProvider,
   UserRecord,
+  WhatsAppSupportRecord,
 } from "./types.js";
 
 function requireRow<T>(rows: T[], operation: string): T {
@@ -971,6 +973,80 @@ class PostgresChannelRepository implements ChannelRepository {
   }
 }
 
+class PostgresPlatformAdminRepository implements PlatformAdminRepository {
+  constructor(private readonly db: Database) {}
+
+  async listWhatsAppSupportRecords(): Promise<WhatsAppSupportRecord[]> {
+    const [hotelRows, connectionRows, successRows, failureRows] = await Promise.all([
+      this.db.select().from(hotels).where(isNull(hotels.deletedAt)).orderBy(asc(hotels.name)),
+      this.db.select().from(connections).where(eq(connections.kind, "waha")),
+      this.db
+        .selectDistinctOn([deliveries.hotelId], {
+          hotelId: deliveries.hotelId,
+          processedAt: deliveries.processedAt,
+          updatedAt: deliveries.updatedAt,
+        })
+        .from(deliveries)
+        .where(and(eq(deliveries.channel, "whatsapp"), inArray(deliveries.state, ["provider_accepted", "delivered"])))
+        .orderBy(deliveries.hotelId, desc(deliveries.updatedAt)),
+      this.db
+        .selectDistinctOn([deliveries.hotelId], {
+          hotelId: deliveries.hotelId,
+          processedAt: deliveries.processedAt,
+          updatedAt: deliveries.updatedAt,
+          lastErrorCode: deliveries.lastErrorCode,
+        })
+        .from(deliveries)
+        .where(and(eq(deliveries.channel, "whatsapp"), inArray(deliveries.state, ["failed", "unknown"])))
+        .orderBy(deliveries.hotelId, desc(deliveries.updatedAt)),
+    ]);
+    const connectionByHotel = new Map(connectionRows.map((row) => [row.hotelId, mapConnection(row)]));
+    const successByHotel = new Map(successRows.map((row) => [row.hotelId, row.processedAt ?? row.updatedAt]));
+    const failureByHotel = new Map(failureRows.map((row) => [row.hotelId, row]));
+    return hotelRows.map((row) => {
+      const failure = failureByHotel.get(row.id);
+      return {
+        hotel: {
+          id: row.id,
+          name: row.name,
+          city: row.city,
+          email: row.email,
+          phone: row.phone,
+        },
+        connection: connectionByHotel.get(row.id) ?? null,
+        lastSuccessfulMessageAt: successByHotel.get(row.id) ?? null,
+        lastFailedMessageAt: failure ? (failure.processedAt ?? failure.updatedAt) : null,
+        lastDeliveryErrorCode: failure?.lastErrorCode ?? null,
+      };
+    });
+  }
+
+  async findWhatsAppSupportRecord(hotelId: string): Promise<WhatsAppSupportRecord | null> {
+    return (await this.listWhatsAppSupportRecords()).find((record) => record.hotel.id === hotelId) ?? null;
+  }
+
+  async updateWhatsAppConnection(input: {
+    hotelId: string;
+    state: ConnectionRecord["state"];
+    metadata: Record<string, unknown>;
+    lastCheckedAt: Date;
+    lastErrorCode: string | null;
+  }): Promise<ConnectionRecord | null> {
+    const [row] = await this.db
+      .update(connections)
+      .set({
+        state: input.state,
+        metadata: input.metadata,
+        lastCheckedAt: input.lastCheckedAt,
+        lastErrorCode: input.lastErrorCode,
+        updatedAt: input.lastCheckedAt,
+      })
+      .where(and(eq(connections.hotelId, input.hotelId), eq(connections.kind, "waha")))
+      .returning();
+    return row ? mapConnection(row) : null;
+  }
+}
+
 class PostgresDeliveryWorkerRepository implements DeliveryWorkerRepository {
   constructor(private readonly db: Database) {}
 
@@ -1101,6 +1177,7 @@ export function createPostgresRepositories(db: Database): Repositories {
     inventory: new PostgresInventoryRepository(db),
     automation: new PostgresAutomationRepository(db),
     channels: new PostgresChannelRepository(db),
+    platformAdmin: new PostgresPlatformAdminRepository(db),
     deliveryWorker: new PostgresDeliveryWorkerRepository(db),
     system: new PostgresSystemRepository(db),
   };

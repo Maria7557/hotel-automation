@@ -12,6 +12,7 @@ export class AppError extends Error {
 
 export const errors = {
   unauthorized: () => new AppError(401, "UNAUTHORIZED", "Authentication is required."),
+  forbidden: () => new AppError(403, "FORBIDDEN", "This account does not have access to this area."),
   invalidCredentials: () => new AppError(401, "INVALID_CREDENTIALS", "Email or password is incorrect."),
   socialTokenInvalid: () =>
     new AppError(401, "SOCIAL_TOKEN_INVALID", "The identity token is invalid or expired."),

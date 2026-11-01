@@ -12,6 +12,8 @@ import type {
   MessagePreview,
   MessageSettings,
   MessageSettingsInput,
+  PlatformWhatsAppSession,
+  PlatformWhatsAppSnapshot,
   RatePeriod,
   RatePeriodInput,
   RatePreview,
@@ -455,6 +457,32 @@ export const apiClient = {
       token,
     );
     return response.data.connection;
+  },
+
+  async getPlatformAdminAccess(): Promise<boolean> {
+    const token = await requireToken();
+    const response = await apiRequest<{ data: { enabled: boolean } }>("/v1/platform-admin/access", {}, token);
+    return response.data.enabled;
+  },
+
+  async getPlatformWhatsAppSessions(): Promise<PlatformWhatsAppSnapshot> {
+    const token = await requireToken();
+    const response = await apiRequest<{ data: PlatformWhatsAppSnapshot }>(
+      "/v1/platform-admin/whatsapp/sessions",
+      {},
+      token,
+    );
+    return response.data;
+  },
+
+  async restartPlatformWhatsAppSession(hotelId: string): Promise<PlatformWhatsAppSession> {
+    const token = await requireToken();
+    const response = await apiRequest<{ data: { session: PlatformWhatsAppSession } }>(
+      `/v1/platform-admin/whatsapp/hotels/${encodeURIComponent(hotelId)}/restart`,
+      { method: "POST" },
+      token,
+    );
+    return response.data.session;
   },
 
   async startGoogleOAuth(): Promise<{ authorizationUrl: string; expiresAt: string }> {

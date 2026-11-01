@@ -1,0 +1,21 @@
+services:
+  waha:
+    image: devlikeapro/waha:latest
+    container_name: hotel-waha
+    restart: unless-stopped
+    shm_size: "512mb"
+    ports:
+      - "127.0.0.1:3000:3000/tcp"
+    volumes:
+      - "./sessions:/app/.sessions"
+      - "./media:/app/.media"
+    env_file:
+      - .env
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8

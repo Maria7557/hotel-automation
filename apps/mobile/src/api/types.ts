@@ -170,3 +170,29 @@ export type ConnectionStatus = {
   baseUrl?: string | null;
   sessionName?: string | null;
 };
+
+export type PlatformWhatsAppSession = {
+  hotelId: string;
+  hotelName: string;
+  city: string;
+  contactEmail: string | null;
+  contactPhone: string | null;
+  configured: boolean;
+  health: "connected" | "connecting" | "attention" | "disconnected";
+  providerStatus: string;
+  phoneNumber: string | null;
+  pushName: string | null;
+  engine: string | null;
+  messageCapping: { status: string; totalQuota: number | null; usedQuota: number | null; cycleEnd: number | null } | null;
+  sessionName: string | null;
+  lastCheckedAt: string | null;
+  lastSuccessfulMessageAt: string | null;
+  lastFailedMessageAt: string | null;
+  lastErrorCode: string | null;
+};
+
+export type PlatformWhatsAppSnapshot = {
+  provider: { configured: boolean; reachable: boolean; errorCode: string | null };
+  counts: { total: number; connected: number; connecting: number; attention: number; disconnected: number };
+  sessions: PlatformWhatsAppSession[];
+};

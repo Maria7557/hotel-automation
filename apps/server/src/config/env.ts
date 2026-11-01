@@ -32,12 +32,13 @@ const envSchema = z.object({
   APPLE_AUTH_CLIENT_IDS: optionalString,
   WAHA_BASE_URL: optionalUrl,
   WAHA_API_KEY: optionalString,
+  PLATFORM_ADMIN_EMAILS: z.string().default(""),
   DELIVERY_WORKER_ENABLED: booleanFromString,
   DELIVERY_WORKER_INTERVAL_MS: z.coerce.number().int().min(250).max(60_000).default(5_000),
   DELIVERY_WORKER_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(20).default(5),
 });
 
-export type AppEnv = z.infer<typeof envSchema> & { corsOrigins: string[] };
+export type AppEnv = z.infer<typeof envSchema> & { corsOrigins: string[]; platformAdminEmails: string[] };
 
 export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
   const parsed = envSchema.parse(source);
@@ -46,6 +47,9 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
     ...parsed,
     corsOrigins: parsed.CORS_ORIGINS.split(",")
       .map((origin) => origin.trim())
+      .filter(Boolean),
+    platformAdminEmails: parsed.PLATFORM_ADMIN_EMAILS.split(",")
+      .map((email) => email.trim().toLowerCase())
       .filter(Boolean),
   };
 }

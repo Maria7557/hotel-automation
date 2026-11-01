@@ -21,6 +21,7 @@ import type {
   MessageSettings,
   MessageSettingsUpdate,
   OfferRecord,
+  PlatformAdminRepository,
   RatePeriodCreate,
   RatePeriodProfile,
   RatePeriodUpdate,
@@ -31,6 +32,7 @@ import type {
   SocialProvider,
   SystemRepository,
   UserRecord,
+  WhatsAppSupportRecord,
 } from "../../src/repositories/types.js";
 
 class MemoryAuthRepository implements AuthRepository {
@@ -571,6 +573,58 @@ class MemoryChannelRepository implements ChannelRepository {
   }
 }
 
+class MemoryPlatformAdminRepository implements PlatformAdminRepository {
+  constructor(
+    private readonly hotels: MemoryHotelRepository,
+    private readonly automation: MemoryAutomationRepository,
+    private readonly channels: MemoryChannelRepository,
+  ) {}
+
+  async listWhatsAppSupportRecords(): Promise<WhatsAppSupportRecord[]> {
+    return [...this.hotels.hotels.values()]
+      .sort((left, right) => left.name.localeCompare(right.name))
+      .map((hotel) => {
+        const deliveries = [...this.automation.deliveries.values()]
+          .filter((delivery) => delivery.hotelId === hotel.id && delivery.channel === "whatsapp")
+          .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime());
+        const success = deliveries.find(({ state }) => state === "provider_accepted" || state === "delivered");
+        const failure = deliveries.find(({ state }) => state === "failed" || state === "unknown");
+        return {
+          hotel: { id: hotel.id, name: hotel.name, city: hotel.city, email: hotel.email, phone: hotel.phone },
+          connection: this.channels.connections.get(`${hotel.id}:waha`) ?? null,
+          lastSuccessfulMessageAt: success ? (success.processedAt ?? success.updatedAt) : null,
+          lastFailedMessageAt: failure ? (failure.processedAt ?? failure.updatedAt) : null,
+          lastDeliveryErrorCode: failure?.lastErrorCode ?? null,
+        };
+      });
+  }
+
+  async findWhatsAppSupportRecord(hotelId: string): Promise<WhatsAppSupportRecord | null> {
+    return (await this.listWhatsAppSupportRecords()).find((record) => record.hotel.id === hotelId) ?? null;
+  }
+
+  async updateWhatsAppConnection(input: {
+    hotelId: string;
+    state: ConnectionRecord["state"];
+    metadata: Record<string, unknown>;
+    lastCheckedAt: Date;
+    lastErrorCode: string | null;
+  }): Promise<ConnectionRecord | null> {
+    const current = this.channels.connections.get(`${input.hotelId}:waha`);
+    if (!current) return null;
+    const updated = {
+      ...current,
+      state: input.state,
+      metadata: input.metadata,
+      lastCheckedAt: input.lastCheckedAt,
+      lastErrorCode: input.lastErrorCode,
+      updatedAt: input.lastCheckedAt,
+    };
+    this.channels.connections.set(`${input.hotelId}:waha`, updated);
+    return updated;
+  }
+}
+
 class MemoryDeliveryWorkerRepository implements DeliveryWorkerRepository {
   constructor(
     private readonly hotels: MemoryHotelRepository,
@@ -642,6 +696,7 @@ export type MemoryRepositories = Repositories & {
   inventory: MemoryInventoryRepository;
   automation: MemoryAutomationRepository;
   channels: MemoryChannelRepository;
+  platformAdmin: MemoryPlatformAdminRepository;
   deliveryWorker: MemoryDeliveryWorkerRepository;
   system: MemorySystemRepository;
 };
@@ -657,6 +712,7 @@ export function createMemoryRepositories(): MemoryRepositories {
     inventory,
     automation,
     channels,
+    platformAdmin: new MemoryPlatformAdminRepository(hotels, automation, channels),
     deliveryWorker: new MemoryDeliveryWorkerRepository(hotels, automation, channels),
     system: new MemorySystemRepository(),
   };

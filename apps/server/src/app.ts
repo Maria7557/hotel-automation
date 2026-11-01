@@ -13,6 +13,7 @@ import { registerEmbedRoutes } from "./http/routes/embed.js";
 import { registerHotelRoutes } from "./http/routes/hotels.js";
 import { registerInventoryRoutes } from "./http/routes/inventory.js";
 import { registerMediaRoutes } from "./http/routes/media.js";
+import { registerPlatformWhatsAppAdminRoutes } from "./http/routes/platform-whatsapp-admin.js";
 import { AppError } from "./lib/errors.js";
 import { GoogleProvider } from "./providers/google.js";
 import { MicrosoftProvider } from "./providers/microsoft.js";
@@ -31,6 +32,7 @@ import { ChannelService } from "./services/channels.js";
 import { MailConnectionService } from "./services/mail-connections.js";
 import { HotelService } from "./services/hotels.js";
 import { InventoryService } from "./services/inventory.js";
+import { PlatformWhatsAppAdminService } from "./services/platform-whatsapp-admin.js";
 
 type AppOptions = {
   env: Pick<AppEnv, "AUTH_SECRET" | "SESSION_TTL_DAYS" | "corsOrigins"> &
@@ -39,7 +41,7 @@ type AppOptions = {
         AppEnv,
         "NODE_ENV" | "PUBLIC_BASE_URL" | "GOOGLE_CLIENT_ID" | "GOOGLE_CLIENT_SECRET" | "GOOGLE_REDIRECT_URI" |
         "GOOGLE_AUTH_CLIENT_IDS" | "APPLE_AUTH_CLIENT_IDS" | "WAHA_BASE_URL" | "WAHA_API_KEY" |
-        "MICROSOFT_CLIENT_ID" | "MICROSOFT_CLIENT_SECRET" | "MICROSOFT_REDIRECT_URI"
+        "MICROSOFT_CLIENT_ID" | "MICROSOFT_CLIENT_SECRET" | "MICROSOFT_REDIRECT_URI" | "platformAdminEmails"
       >
     >;
   repositories: Repositories;
@@ -118,6 +120,15 @@ export async function createApp(options: AppOptions): Promise<FastifyInstance> {
     options.repositories.channels, options.repositories.hotels, options.env.AUTH_SECRET, options.env,
     new GoogleProvider(options.providerFetch ?? fetch), new MicrosoftProvider(options.providerFetch ?? fetch), new SmtpProvider(),
   );
+  const platformWhatsAppAdminService = new PlatformWhatsAppAdminService(
+    options.repositories.platformAdmin,
+    new WahaProvider(options.providerFetch ?? fetch),
+    {
+      ...(options.env.WAHA_BASE_URL ? { baseUrl: options.env.WAHA_BASE_URL } : {}),
+      ...(options.env.WAHA_API_KEY ? { apiKey: options.env.WAHA_API_KEY } : {}),
+    },
+    options.env.platformAdminEmails ?? [],
+  );
 
   app.get("/health", async (_request, reply) => {
     const database = await options.repositories.system.checkDatabase();
@@ -133,6 +144,7 @@ export async function createApp(options: AppOptions): Promise<FastifyInstance> {
   });
   await registerChannelRoutes(app, authService, channelService);
   await registerMailConnectionRoutes(app, authService, mailService);
+  await registerPlatformWhatsAppAdminRoutes(app, authService, platformWhatsAppAdminService);
   await registerHotelRoutes(app, authService, hotelService);
   await registerInventoryRoutes(app, authService, inventoryService);
   await registerMediaRoutes(app, authService, options.env.PUBLIC_BASE_URL);

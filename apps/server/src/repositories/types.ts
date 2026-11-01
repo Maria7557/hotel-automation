@@ -319,6 +319,26 @@ export interface ChannelRepository {
   ): Promise<DeliveryRecord | null>;
 }
 
+export type WhatsAppSupportRecord = {
+  hotel: Pick<HotelProfile, "id" | "name" | "city" | "email" | "phone">;
+  connection: ConnectionRecord | null;
+  lastSuccessfulMessageAt: Date | null;
+  lastFailedMessageAt: Date | null;
+  lastDeliveryErrorCode: string | null;
+};
+
+export interface PlatformAdminRepository {
+  listWhatsAppSupportRecords(): Promise<WhatsAppSupportRecord[]>;
+  findWhatsAppSupportRecord(hotelId: string): Promise<WhatsAppSupportRecord | null>;
+  updateWhatsAppConnection(input: {
+    hotelId: string;
+    state: ConnectionRecord["state"];
+    metadata: Record<string, unknown>;
+    lastCheckedAt: Date;
+    lastErrorCode: string | null;
+  }): Promise<ConnectionRecord | null>;
+}
+
 export type ClaimedOfferDelivery = {
   delivery: DeliveryRecord;
   offer: OfferRecord | null;
@@ -348,6 +368,7 @@ export type Repositories = {
   inventory: InventoryRepository;
   automation: AutomationRepository;
   channels: ChannelRepository;
+  platformAdmin: PlatformAdminRepository;
   deliveryWorker: DeliveryWorkerRepository;
   system: SystemRepository;
 };

@@ -20,6 +20,7 @@ import { HotelProfileScreen } from "@/screens/HotelProfileScreen";
 import { MessageSettingsScreen } from "@/screens/MessageSettingsScreen";
 import { ConnectionsScreen } from "@/screens/ConnectionsScreen";
 import { SiteIntegrationScreen } from "@/screens/SiteIntegrationScreen";
+import { WhatsAppAdminScreen } from "@/screens/WhatsAppAdminScreen";
 
 type Tab = "requests" | "settings";
 type AppState =
@@ -44,6 +45,7 @@ export default function App() {
   const [messagesOpen, setMessagesOpen] = useState(false);
   const [connectionsOpen, setConnectionsOpen] = useState(false);
   const [siteIntegrationOpen, setSiteIntegrationOpen] = useState(false);
+  const [whatsappAdminOpen, setWhatsappAdminOpen] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -162,6 +164,8 @@ export default function App() {
                   : current);
             }}
           />
+        ) : profile && whatsappAdminOpen ? (
+          <WhatsAppAdminScreen onBack={() => setWhatsappAdminOpen(false)} />
         ) : profile ? (
           <View style={styles.shell}>
             <View style={styles.route}>
@@ -179,6 +183,7 @@ export default function App() {
                   onOpenMessages={() => setMessagesOpen(true)}
                   onOpenConnections={() => setConnectionsOpen(true)}
                   onOpenSiteIntegration={() => setSiteIntegrationOpen(true)}
+                  onOpenWhatsappAdmin={() => setWhatsappAdminOpen(true)}
                 />
               )}
             </View>

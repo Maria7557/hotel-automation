@@ -10,4 +10,6 @@ apps/mobile/.expo/
 apps/mobile/android/
 apps/mobile/ios/
 apps/server/uploads/
+deploy/waha/sessions/
+deploy/waha/media/
 
