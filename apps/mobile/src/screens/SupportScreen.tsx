@@ -114,7 +114,7 @@ export function SupportScreen() {
             <Text style={styles.heroTitle}>We reply in about 5 minutes</Text>
             <Text style={styles.heroText}>Our support team can help with setup, connections, messages and incoming requests.</Text>
           </View>
-          <View style={styles.onlinePill}><View style={styles.onlineDot} /><Text style={styles.onlineText}>Support online</Text></View>
+          <View style={styles.onlinePill}><Clock3 size={15} color={theme.colors.action} /><Text style={styles.onlineText}>Average reply · 5 min</Text></View>
         </View>
 
         <View>
@@ -192,8 +192,7 @@ const styles = StyleSheet.create({
   heroTitle: { ...theme.typography.h2, color: theme.colors.text },
   heroText: { ...theme.typography.bodySmall, color: theme.colors.textSecondary, maxWidth: 620 },
   onlinePill: { flexDirection: "row", alignItems: "center", gap: theme.spacing[2], backgroundColor: theme.colors.surface, borderRadius: theme.radii.pill, paddingHorizontal: theme.spacing[3], paddingVertical: theme.spacing[2] },
-  onlineDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: theme.colors.success },
-  onlineText: { ...theme.typography.captionMedium, color: theme.colors.success },
+  onlineText: { ...theme.typography.captionMedium, color: theme.colors.action },
   sectionTitle: { ...theme.typography.h3, color: theme.colors.text },
   sectionCaption: { ...theme.typography.bodySmall, color: theme.colors.textSecondary, marginTop: theme.spacing[1] },
   grid: { flexDirection: "row", flexWrap: "wrap", gap: theme.spacing[3] },
