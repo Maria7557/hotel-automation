@@ -184,7 +184,14 @@ export class ChannelService {
     const platform = this.requireWahaPlatformConfig();
     const sessionName = `hotel-${hotel.id.replace(/[^A-Za-z0-9_-]/g, "")}`.slice(0, 80);
     const config: WahaConfig = { ...platform, sessionName };
-    const prepared = await this.wahaProvider.prepareSession(config);
+    let prepared = await this.wahaProvider.prepareSession(config);
+    if (!prepared.working && prepared.status === "STARTING") {
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        await wait(500);
+        prepared = await this.wahaProvider.sessionStatus(config);
+        if (prepared.working || prepared.status !== "STARTING") break;
+      }
+    }
     const encryptedCredentials = sealPrivateValue(
       JSON.stringify({ apiKey: platform.apiKey }),
       this.authSecret,
@@ -292,6 +299,10 @@ export class ChannelService {
         state: "connected",
         encryptedCredentials: sealPrivateValue(JSON.stringify(credentials), this.authSecret),
         metadata: {
+          ...connection.metadata,
+          oauthNonceHash: undefined,
+          oauthExpiresAt: undefined,
+          authorizationReceivedAt: undefined,
           connectedAt: now.toISOString(),
           scope: credentials.scope,
         },
@@ -504,6 +515,10 @@ export class ChannelService {
     if (!this.wahaConfigured()) throw errors.configRequired("waha");
     return { baseUrl: this.waha.baseUrl!, apiKey: this.waha.apiKey! };
   }
+}
+
+function wait(milliseconds: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
 }
 
 function providerFailure(error: unknown, fallback: string): ProviderError {

@@ -47,6 +47,24 @@ export class MailConnectionService {
     if (!record) throw errors.hotelNotFound(); return publicMail(record);
   }
 
+  async disconnect(userId: string) {
+    const hotel = await this.hotels.findForUser(userId); if (!hotel) throw errors.hotelNotFound();
+    const records = await this.repository.listConnectionsForUser(userId); if (!records) throw errors.hotelNotFound();
+    const now = new Date();
+    for (const record of records.filter(({ kind }) => ["google", "microsoft", "smtp"].includes(kind))) {
+      await this.repository.updateConnectionForHotel({
+        hotelId: hotel.id,
+        kind: record.kind,
+        state: "disconnected",
+        encryptedCredentials: null,
+        metadata: { ...record.metadata, senderEmail: null, disconnectedAt: now.toISOString() },
+        lastCheckedAt: now,
+        lastErrorCode: null,
+      });
+    }
+    return { kind: "mail" as const, provider: null, configured: false, available: true, state: "disconnected", senderEmail: null, lastCheckedAt: now.toISOString(), lastErrorCode: null };
+  }
+
   private oauthConfig(provider: "google" | "microsoft") {
     const clientId = provider === "google" ? this.config.GOOGLE_CLIENT_ID : this.config.MICROSOFT_CLIENT_ID;
     const clientSecret = provider === "google" ? this.config.GOOGLE_CLIENT_SECRET : this.config.MICROSOFT_CLIENT_SECRET;

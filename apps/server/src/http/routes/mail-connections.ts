@@ -36,4 +36,5 @@ export async function registerMailConnectionRoutes(app: FastifyInstance, auth: A
   app.get("/v1/connections/mail/google/oauth/callback", { logLevel: "silent", preHandler: limit }, oauthCallback("google"));
   app.get("/v1/connections/mail/microsoft/oauth/callback", { logLevel: "silent", preHandler: limit }, oauthCallback("microsoft"));
   app.post("/v1/connections/mail/smtp", { preHandler: protectedConnect }, async (r) => ({ data: { connection: await mail.connectSmtp(uid(r), smtpConnectSchema.parse(r.body)) } }));
+  app.delete("/v1/connections/mail", { preHandler: protectedConnect }, async (r) => ({ data: { connection: await mail.disconnect(uid(r)) } }));
 }

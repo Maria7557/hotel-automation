@@ -437,6 +437,16 @@ export const apiClient = {
     return response.data.connections;
   },
 
+  async disconnectMail(): Promise<ConnectionStatus> {
+    const token = await requireToken();
+    const response = await apiRequest<{ data: { connection: ConnectionStatus } }>(
+      "/v1/connections/mail",
+      { method: "DELETE" },
+      token,
+    );
+    return response.data.connection;
+  },
+
   async connectWaha(): Promise<{ connection: ConnectionStatus; qrCode: string | null }> {
     const token = await requireToken();
     const response = await apiRequest<{

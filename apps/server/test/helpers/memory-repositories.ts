@@ -511,7 +511,12 @@ class MemoryChannelRepository implements ChannelRepository {
     return this.saveConnection(input.hotelId, "google", {
       state: "connecting",
       encryptedCredentials: current.encryptedCredentials,
-      metadata: { authorizationReceivedAt: input.now.toISOString() },
+      metadata: {
+        ...current.metadata,
+        oauthNonceHash: undefined,
+        oauthExpiresAt: undefined,
+        authorizationReceivedAt: input.now.toISOString(),
+      },
       lastCheckedAt: input.now,
       lastErrorCode: "TOKEN_EXCHANGE_PENDING",
     });
@@ -521,7 +526,7 @@ class MemoryChannelRepository implements ChannelRepository {
     hotelId: string;
     kind: ConnectionKind;
     state: ConnectionRecord["state"];
-    encryptedCredentials?: string;
+    encryptedCredentials?: string | null;
     metadata?: Record<string, unknown>;
     lastCheckedAt: Date;
     lastErrorCode: string | null;
@@ -530,7 +535,9 @@ class MemoryChannelRepository implements ChannelRepository {
     if (!current) return null;
     return this.saveConnection(input.hotelId, input.kind, {
       state: input.state,
-      encryptedCredentials: input.encryptedCredentials ?? current.encryptedCredentials,
+      encryptedCredentials: input.encryptedCredentials === undefined
+        ? current.encryptedCredentials
+        : input.encryptedCredentials,
       metadata: input.metadata ?? current.metadata,
       lastCheckedAt: input.lastCheckedAt,
       lastErrorCode: input.lastErrorCode,

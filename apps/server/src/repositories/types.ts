@@ -308,7 +308,7 @@ export interface ChannelRepository {
     hotelId: string;
     kind: ConnectionKind;
     state: ConnectionRecord["state"];
-    encryptedCredentials?: string;
+    encryptedCredentials?: string | null;
     metadata?: Record<string, unknown>;
     lastCheckedAt: Date;
     lastErrorCode: string | null;

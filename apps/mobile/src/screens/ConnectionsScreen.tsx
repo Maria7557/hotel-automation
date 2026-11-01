@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   AppState,
   Image,
   Linking,
@@ -113,6 +114,40 @@ export function ConnectionsScreen({ onBack, demo }: { onBack: () => void; demo: 
     setMailOpen(true);
   };
 
+  const editMail = () => {
+    setError(null);
+    setNotice(null);
+    setEmail(mail.senderEmail ?? "");
+    setProvider(null);
+    setMailOpen(true);
+  };
+
+  const disconnectMail = () => {
+    const confirm = async () => {
+      setBusyKind("mail");
+      setError(null);
+      try {
+        replaceConnection(await apiClient.disconnectMail());
+        setMailOpen(false);
+        setEmail("");
+        setProvider(null);
+        setNotice("Mail is disconnected.");
+      } catch (nextError) {
+        setError(authErrorMessage(nextError));
+      } finally {
+        setBusyKind(null);
+      }
+    };
+    if (Platform.OS === "web") {
+      if (typeof window !== "undefined" && window.confirm("Disconnect this mail account?")) void confirm();
+      return;
+    }
+    Alert.alert("Disconnect mail?", "Hotel messages will stop sending from this address.", [
+      { text: "Cancel", style: "cancel" },
+      { text: "Disconnect", style: "destructive", onPress: () => void confirm() },
+    ]);
+  };
+
   const detectMail = async () => {
     if (!email.includes("@")) { setError("Check the email address."); return; }
     setBusyKind("mail"); setError(null);
@@ -136,6 +171,7 @@ export function ConnectionsScreen({ onBack, demo }: { onBack: () => void; demo: 
       if (!(await Linking.canOpenURL(authorization.authorizationUrl))) {
         throw new Error("Cannot open authorization URL");
       }
+      setMailOpen(false);
       await Linking.openURL(authorization.authorizationUrl);
     } catch (nextError) {
       setError(provider === "microsoft" && nextError instanceof ApiError && nextError.code === "CONFIG_REQUIRED"
@@ -164,6 +200,10 @@ export function ConnectionsScreen({ onBack, demo }: { onBack: () => void; demo: 
       setQrCode(result.qrCode);
       if (result.connection.state === "connected") {
         setNotice("WhatsApp is connected.");
+      } else if (result.qrCode) {
+        setNotice("Scan the QR code with the hotel's WhatsApp phone.");
+      } else {
+        setNotice("WhatsApp is still preparing. Tap Connect again in a few seconds.");
       }
     } catch (nextError) {
       setError(authErrorMessage(nextError));
@@ -207,9 +247,12 @@ export function ConnectionsScreen({ onBack, demo }: { onBack: () => void; demo: 
             <ConnectionRow
               connection={mail}
               title="Mail"
+              subtitle={mail.senderEmail ?? undefined}
               icon={Mail}
               busy={busyKind === "mail"}
               onPress={() => void connectMail()}
+              onEdit={editMail}
+              onDisconnect={disconnectMail}
             />
             <ConnectionRow
               connection={waha}
@@ -238,7 +281,7 @@ export function ConnectionsScreen({ onBack, demo }: { onBack: () => void; demo: 
           </View>
         ) : null}
         {mailOpen ? <View style={styles.mailCard}>
-          <Text style={styles.qrTitle}>Connect mail</Text>
+          <Text style={styles.qrTitle}>{mail.state === "connected" ? "Change mail" : "Connect mail"}</Text>
           <Text style={styles.qrText}>Enter the address used to send hotel messages.</Text>
           <TextInput autoCapitalize="none" keyboardType="email-address" placeholder="booking@hotel.it" value={email} onChangeText={(v) => { setEmail(v); setProvider(null); }} style={styles.input} />
           {!provider ? <Button loading={busyKind === "mail"} onPress={() => void detectMail()}>Continue</Button> : <>
@@ -267,12 +310,18 @@ function ConnectionRow({
   icon: Icon,
   busy,
   onPress,
+  subtitle,
+  onEdit,
+  onDisconnect,
 }: {
   connection: ConnectionStatus;
   title: string;
   icon: typeof Mail;
   busy: boolean;
   onPress: () => void;
+  subtitle?: string | undefined;
+  onEdit?: () => void;
+  onDisconnect?: () => void;
 }) {
   const connected = connection.state === "connected";
   const needsReconnect = connection.configured && (
@@ -287,14 +336,24 @@ function ConnectionRow({
       </View>
       <View style={styles.connectionCopy}>
         <Text style={styles.connectionTitle}>{title}</Text>
-        <Text style={[styles.connectionStatus, connected && styles.connectedText]}>
-          {connected ? "Connected" : needsReconnect ? "Connection lost" : "Not connected"}
+        <Text numberOfLines={1} style={[styles.connectionStatus, connected && styles.connectedText]}>
+          {connected ? (subtitle ?? "Connected") : needsReconnect ? "Connection lost" : "Not connected"}
         </Text>
       </View>
       {connected ? (
-        <View style={styles.connectedBadge}>
-          <Check size={17} color={theme.colors.success} />
-          <Text style={styles.connectedBadgeText}>Connected</Text>
+        <View style={styles.connectedActions}>
+          <View style={styles.connectedBadge}>
+            <Check size={17} color={theme.colors.success} />
+            <Text style={styles.connectedBadgeText}>Connected</Text>
+          </View>
+          {onEdit && onDisconnect ? <View style={styles.rowActions}>
+            <Pressable disabled={busy} onPress={onEdit} style={({ pressed }) => [styles.textAction, pressed && styles.pressed, busy && styles.disabled]}>
+              <Text style={styles.textActionLabel}>Change</Text>
+            </Pressable>
+            <Pressable disabled={busy} onPress={onDisconnect} style={({ pressed }) => [styles.textAction, pressed && styles.pressed, busy && styles.disabled]}>
+              <Text style={styles.disconnectLabel}>Disconnect</Text>
+            </Pressable>
+          </View> : null}
         </View>
       ) : (
         <Pressable
@@ -393,6 +452,11 @@ const styles = StyleSheet.create({
   connectButtonText: { ...theme.typography.bodySmallMedium, color: theme.colors.action },
   connectedBadge: { flexDirection: "row", alignItems: "center", gap: theme.spacing[1] },
   connectedBadgeText: { ...theme.typography.captionMedium, color: theme.colors.success },
+  connectedActions: { alignItems: "flex-end", gap: theme.spacing[2] },
+  rowActions: { flexDirection: "row", alignItems: "center", gap: theme.spacing[2] },
+  textAction: { minHeight: 28, justifyContent: "center" },
+  textActionLabel: { ...theme.typography.captionMedium, color: theme.colors.action },
+  disconnectLabel: { ...theme.typography.captionMedium, color: theme.colors.danger },
   qrCard: {
     alignItems: "center",
     gap: theme.spacing[3],

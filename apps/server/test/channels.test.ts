@@ -330,6 +330,44 @@ describe("message settings and channel connections", () => {
     expect(createCall?.[1]?.headers).toMatchObject({ "X-Api-Key": "platform-waha-secret" });
   });
 
+  it("waits for a starting WhatsApp session and returns its QR code", async () => {
+    await app.close();
+    repositories = createMemoryRepositories();
+    let statusChecks = 0;
+    providerFetchMock = vi.fn(async (input: string | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/sessions/hotel-") && init?.method === "GET") {
+        statusChecks += 1;
+        return new Response(JSON.stringify({
+          status: statusChecks === 1 ? "STARTING" : "SCAN_QR_CODE",
+          me: null,
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.includes("/auth/qr")) {
+        return new Response(JSON.stringify({ mimetype: "image/png", data: "cXItYnl0ZXM=" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      throw new Error(`Unexpected provider URL: ${url}`);
+    });
+    app = await createApp({ env: baseEnv, repositories, providerFetch: providerFetchMock as ProviderFetch, logger: false });
+    const owner = await onboard(app, "starting@example.com", "Casa QR");
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/connections/waha/connect",
+      headers: auth(owner.token),
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().data).toMatchObject({
+      connection: { state: "connecting" },
+      qrCode: "data:image/png;base64,cXItYnl0ZXM=",
+    });
+    expect(statusChecks).toBe(2);
+  });
+
   it("returns CONFIG_REQUIRED when Google OAuth environment credentials are absent", async () => {
     const owner = await onboard(app, "owner@example.com", "Casa Blu");
     const response = await app.inject({
@@ -420,6 +458,33 @@ describe("Google OAuth state architecture", () => {
     expect(replay.statusCode).toBe(409);
     expect(replay.headers["content-type"]).toContain("text/html");
     expect(replay.body).toContain("Connection unsuccessful");
+  });
+
+  it("keeps the selected sender address visible and can disconnect mail", async () => {
+    const owner = await onboard(app, "owner@example.com", "Casa Blu");
+    const start = await app.inject({
+      method: "POST",
+      url: "/v1/connections/mail/google/oauth/start",
+      headers: auth(owner.token),
+      payload: { email: "booking@casablu.example" },
+    });
+    expect(start.statusCode).toBe(200);
+    const authorizationUrl = new URL(start.json().data.authorizationUrl);
+    const state = authorizationUrl.searchParams.get("state");
+    const callback = await app.inject({
+      method: "GET",
+      url: `/v1/connections/google/oauth/callback?state=${encodeURIComponent(state!)}&code=one-time-code`,
+    });
+    expect(callback.statusCode).toBe(200);
+
+    const connected = await app.inject({ method: "GET", url: "/v1/connections", headers: auth(owner.token) });
+    expect(connected.json().data.connections.find(({ kind }: { kind: string }) => kind === "mail"))
+      .toMatchObject({ configured: true, state: "connected", senderEmail: "booking@casablu.example" });
+
+    const disconnected = await app.inject({ method: "DELETE", url: "/v1/connections/mail", headers: auth(owner.token) });
+    expect(disconnected.statusCode).toBe(200);
+    expect(disconnected.json().data.connection).toMatchObject({ configured: false, state: "disconnected", senderEmail: null });
+    expect(repositories.channels.connections.get(`${owner.hotelId}:google`)?.encryptedCredentials).toBeNull();
   });
 
   it("uses Gmail for test-send after a successful OAuth connection", async () => {

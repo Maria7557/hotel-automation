@@ -19,6 +19,7 @@ import type {
   AuthRepository,
   ChannelRepository,
   ClaimedOfferDelivery,
+  ConnectionKind,
   ConnectionRecord,
   DeliveryWorkerRepository,
   DashboardFacts,
@@ -909,11 +910,16 @@ class PostgresChannelRepository implements ChannelRepository {
     ) {
       return null;
     }
+    const {
+      oauthNonceHash: _oauthNonceHash,
+      oauthExpiresAt: _oauthExpiresAt,
+      ...metadata
+    } = current.metadata;
     const rows = await this.db
       .update(connections)
       .set({
         state: "connecting",
-        metadata: { authorizationReceivedAt: input.now.toISOString() },
+        metadata: { ...metadata, authorizationReceivedAt: input.now.toISOString() },
         lastCheckedAt: input.now,
         lastErrorCode: "TOKEN_EXCHANGE_PENDING",
         updatedAt: input.now,
@@ -930,9 +936,9 @@ class PostgresChannelRepository implements ChannelRepository {
 
   async updateConnectionForHotel(input: {
     hotelId: string;
-    kind: "google" | "waha";
+    kind: ConnectionKind;
     state: ConnectionRecord["state"];
-    encryptedCredentials?: string;
+    encryptedCredentials?: string | null;
     metadata?: Record<string, unknown>;
     lastCheckedAt: Date;
     lastErrorCode: string | null;
