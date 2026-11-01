@@ -185,7 +185,14 @@ export default function App() {
                   }}
                 />
               ) : tab === "requests" ? (
-                <RequestsScreen hotelName={profile.name} demo={appState.status === "demo"} />
+                <RequestsScreen
+                  profile={profile}
+                  demo={appState.status === "demo"}
+                  onOpenProfile={() => setProfileOpen(true)}
+                  onOpenInventory={() => setInventoryOpen(true)}
+                  onOpenConnections={() => setConnectionsOpen(true)}
+                  onOpenSiteIntegration={() => setSiteIntegrationOpen(true)}
+                />
               ) : tab === "support" ? (
                 <SupportScreen />
               ) : (
