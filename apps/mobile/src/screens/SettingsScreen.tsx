@@ -121,7 +121,7 @@ export function SettingsScreen({
         <View style={styles.menuCard}>
           <SettingRow icon={Globe2} title="Language and currency" subtitle={`${profile.locale} · ${profile.currency}`} onPress={() => notReady("Language and currency")} />
           <SettingRow icon={Users} title="Team members" subtitle="Invitations will be added later" onPress={() => notReady("Team members")} />
-          <SettingRow icon={CircleHelp} title="Support" subtitle="Contact support · usually replies in 5 minutes" onPress={onOpenSupport} last />
+          <SettingRow icon={CircleHelp} title="Support" subtitle="WhatsApp · Telegram · Email · Phone" onPress={onOpenSupport} last />
         </View>
       </View>
 
