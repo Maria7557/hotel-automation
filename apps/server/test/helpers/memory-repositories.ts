@@ -107,6 +107,18 @@ class MemoryAuthRepository implements AuthRepository {
     return user ? { id: user.id, email: user.email, displayName: user.displayName } : null;
   }
 
+  async refreshSessionExpiry(input: {
+    tokenHash: string;
+    now: Date;
+    renewBefore: Date;
+    expiresAt: Date;
+  }): Promise<void> {
+    const session = this.sessions.get(input.tokenHash);
+    if (session && session.expiresAt > input.now && session.expiresAt < input.renewBefore) {
+      this.sessions.set(input.tokenHash, { ...session, expiresAt: input.expiresAt });
+    }
+  }
+
   async deleteSession(tokenHash: string): Promise<void> {
     this.sessions.delete(tokenHash);
   }

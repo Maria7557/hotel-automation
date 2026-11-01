@@ -108,11 +108,20 @@ export class AuthService {
   }
 
   async authenticate(accessToken: string): Promise<PublicUser> {
+    const now = new Date();
+    const tokenHash = digestSessionToken(accessToken, this.secret);
     const user = await this.repository.findUserBySessionHash(
-      digestSessionToken(accessToken, this.secret),
-      new Date(),
+      tokenHash,
+      now,
     );
     if (!user) throw errors.unauthorized();
+    const dayMs = 24 * 60 * 60 * 1_000;
+    await this.repository.refreshSessionExpiry({
+      tokenHash,
+      now,
+      renewBefore: new Date(now.getTime() + Math.max(0, this.sessionTtlDays - 1) * dayMs),
+      expiresAt: new Date(now.getTime() + this.sessionTtlDays * dayMs),
+    });
     return user;
   }
 

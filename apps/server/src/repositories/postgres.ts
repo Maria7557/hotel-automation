@@ -262,6 +262,22 @@ class PostgresAuthRepository implements AuthRepository {
     return row ?? null;
   }
 
+  async refreshSessionExpiry(input: {
+    tokenHash: string;
+    now: Date;
+    renewBefore: Date;
+    expiresAt: Date;
+  }): Promise<void> {
+    await this.db
+      .update(authSessions)
+      .set({ expiresAt: input.expiresAt })
+      .where(and(
+        eq(authSessions.tokenHash, input.tokenHash),
+        gt(authSessions.expiresAt, input.now),
+        lt(authSessions.expiresAt, input.renewBefore),
+      ));
+  }
+
   async deleteSession(tokenHash: string): Promise<void> {
     await this.db.delete(authSessions).where(eq(authSessions.tokenHash, tokenHash));
   }

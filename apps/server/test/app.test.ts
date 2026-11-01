@@ -49,6 +49,11 @@ describe("server API", () => {
     const cookieHeader = Array.isArray(setCookie) ? setCookie[0] : setCookie;
     const cookie = cookieHeader?.split(";", 1)[0];
     expect(cookie).toBeTruthy();
+    const [sessionHash, storedSession] = [...repositories.auth.sessions.entries()][0]!;
+    repositories.auth.sessions.set(sessionHash, {
+      ...storedSession,
+      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1_000),
+    });
 
     const session = await app.inject({
       method: "GET",
@@ -57,6 +62,9 @@ describe("server API", () => {
     });
     expect(session.statusCode).toBe(200);
     expect(session.json().data.user.email).toBe("owner@example.com");
+    expect(repositories.auth.sessions.get(sessionHash)!.expiresAt.getTime()).toBeGreaterThan(
+      Date.now() + 29 * 24 * 60 * 60 * 1_000,
+    );
 
     const logout = await app.inject({
       method: "POST",

@@ -48,10 +48,10 @@ function setSessionCookie(
   result: Awaited<ReturnType<AuthService["login"]>>,
   secure: boolean,
 ) {
-  const maxAge = Math.max(0, Math.floor((result.expiresAt.getTime() - Date.now()) / 1_000));
+  const maxAge = 365 * 24 * 60 * 60;
   reply.setCookie(sessionCookieName, result.accessToken, {
     ...sessionCookieOptions(secure),
-    expires: result.expiresAt,
+    expires: new Date(Date.now() + maxAge * 1_000),
     maxAge,
   });
 }

@@ -106,6 +106,12 @@ export interface AuthRepository {
   }): Promise<UserRecord>;
   createSession(input: { userId: string; tokenHash: string; expiresAt: Date }): Promise<void>;
   findUserBySessionHash(tokenHash: string, now: Date): Promise<PublicUser | null>;
+  refreshSessionExpiry(input: {
+    tokenHash: string;
+    now: Date;
+    renewBefore: Date;
+    expiresAt: Date;
+  }): Promise<void>;
   deleteSession(tokenHash: string): Promise<void>;
 }
 
