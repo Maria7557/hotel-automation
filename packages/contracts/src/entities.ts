@@ -84,6 +84,8 @@ export const ratePeriodSchema = z
     includedChildren: z.number().int().nonnegative().default(0),
     extraAdultCents: nonNegativeCentsSchema.default(0),
     extraChildCents: nonNegativeCentsSchema.default(0),
+    breakfastAdultCents: nonNegativeCentsSchema.default(0),
+    breakfastChildCents: nonNegativeCentsSchema.default(0),
     maxChildAge: z.number().int().min(0).max(17).default(17),
     minNights: z.number().int().positive().default(1),
     active: z.boolean().default(true),
@@ -144,6 +146,7 @@ export const offerNightSchema = z.object({
   baseCents: nonNegativeCentsSchema,
   extraAdultCents: nonNegativeCentsSchema,
   extraChildCents: nonNegativeCentsSchema,
+  breakfastCents: nonNegativeCentsSchema.default(0),
   totalCents: nonNegativeCentsSchema,
 });
 

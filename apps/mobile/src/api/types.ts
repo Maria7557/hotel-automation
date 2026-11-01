@@ -109,6 +109,8 @@ export type RatePeriod = {
   includedChildren: number;
   extraAdultCents: number;
   extraChildCents: number;
+  breakfastAdultCents: number;
+  breakfastChildCents: number;
   maxChildAge: number;
   minNights: number;
   active: boolean;
@@ -122,7 +124,7 @@ export type RatePreview =
       price: {
         currency: "EUR";
         totalCents: number;
-        nights: Array<{ date: string; totalCents: number; baseCents: number }>;
+        nights: Array<{ date: string; totalCents: number; baseCents: number; extraAdultCents: number; extraChildCents: number; breakfastCents: number }>;
       };
     }
   | { ok: false; issues: Array<{ type: string; date?: string }> };

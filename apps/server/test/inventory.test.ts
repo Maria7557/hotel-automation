@@ -116,6 +116,13 @@ describe("inventory API", () => {
     const adjacent = await createRate(app, token, roomId, ratePayload("2026-02-01", "2026-02-28", 12_000));
     expect(adjacent.statusCode).toBe(201);
 
+    const invalidOccupancy = await createRate(app, token, roomId, {
+      ...ratePayload("2026-03-01", "2026-03-31", 12_000),
+      includedAdults: 3,
+    });
+    expect(invalidOccupancy.statusCode).toBe(422);
+    expect(invalidOccupancy.json().error.code).toBe("INVALID_RATE_OCCUPANCY");
+
     const list = await app.inject({
       method: "GET",
       url: `/v1/rooms/${roomId}/rates`,
@@ -174,10 +181,10 @@ describe("inventory API", () => {
       ok: true,
       price: {
         currency: "EUR",
-        totalCents: 22_000,
+        totalCents: 26_800,
         nights: [
-          { date: "2026-01-31", baseCents: 10_000 },
-          { date: "2026-02-01", baseCents: 12_000 },
+          { date: "2026-01-31", baseCents: 10_000, breakfastCents: 2_400, totalCents: 12_400 },
+          { date: "2026-02-01", baseCents: 12_000, breakfastCents: 2_400, totalCents: 14_400 },
         ],
       },
     });
@@ -331,6 +338,8 @@ function ratePayload(start: string, endInclusive: string, nightlyBaseCents: numb
     includedChildren: 0,
     extraAdultCents: 3_000,
     extraChildCents: 1_500,
+    breakfastAdultCents: 1_200,
+    breakfastChildCents: 600,
     maxChildAge: 12,
     minNights: 1,
   };

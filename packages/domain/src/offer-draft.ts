@@ -41,6 +41,7 @@ export type OfferDraftOption = {
     baseCents: number;
     extraAdultCents: number;
     extraChildCents: number;
+    breakfastCents: number;
     totalCents: number;
   }[];
   totalCents: number;

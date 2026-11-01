@@ -77,6 +77,8 @@ export type RatePeriodProfile = {
   includedChildren: number;
   extraAdultCents: number;
   extraChildCents: number;
+  breakfastAdultCents: number;
+  breakfastChildCents: number;
   maxChildAge: number;
   minNights: number;
   active: boolean;

@@ -12,6 +12,7 @@ export type CalculatedNight = {
   baseCents: number;
   extraAdultCents: number;
   extraChildCents: number;
+  breakfastCents: number;
   totalCents: number;
 };
 
@@ -139,6 +140,10 @@ export function calculateStayPrice(input: {
     );
     const extraAdultCents = extraAdults * rate.extraAdultCents;
     const extraChildCents = extraChildren * rate.extraChildCents;
+    const breakfastCents = rate.mealPlan === "breakfast"
+      ? (input.occupancy.adults + childrenCountedAsAdults) * rate.breakfastAdultCents +
+        chargeableChildren * rate.breakfastChildCents
+      : 0;
 
     return {
       date,
@@ -146,7 +151,8 @@ export function calculateStayPrice(input: {
       baseCents: rate.nightlyBaseCents,
       extraAdultCents,
       extraChildCents,
-      totalCents: rate.nightlyBaseCents + extraAdultCents + extraChildCents,
+      breakfastCents,
+      totalCents: rate.nightlyBaseCents + extraAdultCents + extraChildCents + breakfastCents,
     };
   });
 

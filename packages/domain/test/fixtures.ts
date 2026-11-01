@@ -43,6 +43,8 @@ export function rate(overrides: Partial<RatePeriod> = {}): RatePeriod {
     includedChildren: 0,
     extraAdultCents: 2_000,
     extraChildCents: 1_000,
+    breakfastAdultCents: 0,
+    breakfastChildCents: 0,
     maxChildAge: 11,
     minNights: 1,
     createdAt: timestamp,

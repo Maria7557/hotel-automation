@@ -55,6 +55,8 @@ export function toDomainRatePeriod(rate: RatePeriodProfile): RatePeriod {
     includedChildren: rate.includedChildren,
     extraAdultCents: rate.extraAdultCents,
     extraChildCents: rate.extraChildCents,
+    breakfastAdultCents: rate.breakfastAdultCents,
+    breakfastChildCents: rate.breakfastChildCents,
     maxChildAge: rate.maxChildAge,
     minNights: rate.minNights,
     active: rate.active,

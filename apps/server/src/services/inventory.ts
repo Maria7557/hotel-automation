@@ -49,7 +49,8 @@ export class InventoryService {
     roomId: string,
     input: RatePeriodCreate,
   ): Promise<RatePeriodProfile> {
-    await this.getRoom(userId, roomId);
+    const room = await this.getRoom(userId, roomId);
+    assertRateOccupancy(room, input);
     if (input.active) await this.assertNoRateOverlap(userId, roomId, input);
     try {
       const rate = await this.repository.createRatePeriodForUser(userId, roomId, input);
@@ -81,6 +82,8 @@ export class InventoryService {
   ): Promise<RatePeriodProfile> {
     const current = await this.getRatePeriod(userId, roomId, ratePeriodId);
     const next = { ...current, ...input };
+    const room = await this.getRoom(userId, roomId);
+    assertRateOccupancy(room, next);
     if (next.start >= next.endExclusive) {
       throw errors.invalidRateRange();
     }
@@ -149,6 +152,19 @@ function assertRoomCapacity(input: Pick<RoomCreate, "maxAdults" | "maxChildren" 
   }
 }
 
+function assertRateOccupancy(
+  room: Pick<RoomProfile, "maxAdults" | "maxChildren" | "maxGuests">,
+  rate: Pick<RatePeriodCreate, "includedAdults" | "includedChildren">,
+): void {
+  if (
+    rate.includedAdults > room.maxAdults ||
+    rate.includedChildren > room.maxChildren ||
+    rate.includedAdults + rate.includedChildren > room.maxGuests
+  ) {
+    throw errors.invalidRateOccupancy();
+  }
+}
+
 function isRateOverlapError(error: unknown): boolean {
   return error instanceof Error && error.name === "RateOverlapConflictError";
 }
@@ -187,6 +203,8 @@ function toDomainRatePeriod(rate: RatePeriodProfile): RatePeriod {
     includedChildren: rate.includedChildren,
     extraAdultCents: rate.extraAdultCents,
     extraChildCents: rate.extraChildCents,
+    breakfastAdultCents: rate.breakfastAdultCents,
+    breakfastChildCents: rate.breakfastChildCents,
     maxChildAge: rate.maxChildAge,
     minNights: rate.minNights,
     active: rate.active,

@@ -15,7 +15,6 @@ import {
 import {
   ArrowLeft,
   BedDouble,
-  CalendarDays,
   Check,
   ChevronLeft,
   ChevronRight,
@@ -42,6 +41,7 @@ import type {
   RoomInput,
 } from "@/api/types";
 import { Button, EmptyState, Field, InlineState, SectionTitle, uiStyles } from "@/components/ui";
+import { RateCalendar } from "@/components/RateCalendar";
 
 type InventoryView = "list" | "roomForm" | "detail" | "rateForm";
 
@@ -541,16 +541,19 @@ function RoomDetail({ room, onBack, onEdit, onAddRate, onEditRate }: { room: Roo
       </View>
 
       <View style={styles.section}>
-        <SectionTitle action={<HeaderAction icon={Plus} label="Add" onPress={onAddRate} />}>Date-based rates</SectionTitle>
-        <Text style={styles.sectionHelper}>One card is one date period with one nightly price. Add a new period when the price changes.</Text>
-        {error ? <InlineState tone="danger">{error}</InlineState> : loading ? <LoadingState label="Loading rates…" compact /> : rates.length === 0 ? (
-          <View style={styles.emptyWrap}>
-            <EmptyState title="No rates yet" description="Add the price and conditions for the first period." />
-            <Button onPress={onAddRate} icon={Plus}>Add rate</Button>
-          </View>
-        ) : (
-          <View style={styles.list}>{rates.map((rate) => <RateCard key={rate.id} rate={rate} onPress={() => onEditRate(rate)} />)}</View>
+        <SectionTitle action={<HeaderAction icon={Plus} label="Add rate" onPress={onAddRate} />}>Rates calendar</SectionTitle>
+        <Text style={styles.sectionHelper}>Prices are shown per night. Dates without a rate are highlighted so gaps are easy to find.</Text>
+        {error ? <InlineState tone="danger">{error}</InlineState> : loading ? <LoadingState label="Loading rates…" compact /> : (
+          <RateCalendar rates={rates} />
         )}
+        {!loading && !error && rates.length === 0 ? (
+          <View style={styles.emptyWrap}>
+            <EmptyState title="No rates yet" description="Choose a free date range and add the first nightly price." />
+            <Button onPress={onAddRate} icon={Plus}>Add first rate</Button>
+          </View>
+        ) : !loading && !error && rates.length > 0 ? (
+          <View style={styles.list}>{rates.map((rate) => <RateCard key={rate.id} rate={rate} onPress={() => onEditRate(rate)} />)}</View>
+        ) : null}
       </View>
 
       {rates.length > 0 ? <PreviewCalculator room={room} rates={rates} /> : null}
@@ -560,33 +563,52 @@ function RoomDetail({ room, onBack, onEdit, onAddRate, onEditRate }: { room: Roo
 
 function RateForm({ room, rate, onBack, onSaved }: { room: Room; rate: RatePeriod | null; onBack: () => void; onSaved: () => void }) {
   const [mealPlan, setMealPlan] = useState<MealPlan>(rate?.mealPlan ?? "room_only");
-  const [start, setStart] = useState(rate?.start ?? todayIso());
-  const [endInclusive, setEndInclusive] = useState(rate?.endInclusive ?? addDaysIso(todayIso(), 60));
+  const [start, setStart] = useState(rate?.start ?? "");
+  const [endInclusive, setEndInclusive] = useState(rate?.endInclusive ?? "");
   const [nightly, setNightly] = useState(rate ? moneyInput(rate.nightlyBaseCents) : "100");
   const [includedAdults, setIncludedAdults] = useState(String(rate?.includedAdults ?? Math.min(room.maxAdults, 2)));
   const [includedChildren, setIncludedChildren] = useState(String(rate?.includedChildren ?? 0));
   const [extraAdult, setExtraAdult] = useState(rate ? moneyInput(rate.extraAdultCents) : "0");
   const [extraChild, setExtraChild] = useState(rate ? moneyInput(rate.extraChildCents) : "0");
+  const [breakfastAdult, setBreakfastAdult] = useState(rate ? moneyInput(rate.breakfastAdultCents) : "12");
+  const [breakfastChild, setBreakfastChild] = useState(rate ? moneyInput(rate.breakfastChildCents) : "6");
   const [maxChildAge, setMaxChildAge] = useState(String(rate?.maxChildAge ?? 17));
   const [minNights, setMinNights] = useState(String(rate?.minNights ?? 1));
+  const [existingRates, setExistingRates] = useState<RatePeriod[]>([]);
+  const [ratesLoading, setRatesLoading] = useState(true);
   const [submitted, setSubmitted] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [calendarError, setCalendarError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    setRatesLoading(true);
+    apiClient.listRates(room.id)
+      .then((rates) => { if (active) setExistingRates(rates); })
+      .catch((nextError) => { if (active) setError(authErrorMessage(nextError)); })
+      .finally(() => { if (active) setRatesLoading(false); });
+    return () => { active = false; };
+  }, [room.id]);
 
   const datesValid = isIsoDate(start) && isIsoDate(endInclusive) && start <= endInclusive;
-  const moneyValues = [nightly, extraAdult, extraChild].map(parseMoneyCents);
+  const moneyValues = [nightly, extraAdult, extraChild, breakfastAdult, breakfastChild].map(parseMoneyCents);
   const integerValues = [includedAdults, includedChildren, maxChildAge, minNights].map(parseInteger);
-  const valid = datesValid && moneyValues.every((value) => value !== null && value >= 0) && integerValues.every((value) => value !== null && value >= 0) && (integerValues[3] ?? 0) > 0 && (integerValues[2] ?? 18) <= 17;
+  const capacityValid = (integerValues[0] ?? room.maxAdults + 1) <= room.maxAdults &&
+    (integerValues[1] ?? room.maxChildren + 1) <= room.maxChildren &&
+    (integerValues[0] ?? 0) + (integerValues[1] ?? 0) <= room.maxGuests;
+  const valid = datesValid && capacityValid && moneyValues.every((value) => value !== null && value >= 0) && integerValues.every((value) => value !== null && value >= 0) && (integerValues[3] ?? 0) > 0 && (integerValues[2] ?? 18) <= 17;
 
   const save = async () => {
     setSubmitted(true);
     setError(null);
     if (!valid) return;
-    const [nightlyBaseCents, extraAdultCents, extraChildCents] = moneyValues as [number, number, number];
+    const [nightlyBaseCents, extraAdultCents, extraChildCents, breakfastAdultCents, breakfastChildCents] = moneyValues as [number, number, number, number, number];
     const [adults, children, childAge, nights] = integerValues as [number, number, number, number];
+    const existingTechnicalPlan = existingRates[0];
     const input: RatePeriodInput = {
-      planCode: rate?.planCode ?? "standard",
-      planName: rate?.planName ?? "Standard rate",
+      planCode: rate?.planCode ?? existingTechnicalPlan?.planCode ?? "standard",
+      planName: rate?.planName ?? existingTechnicalPlan?.planName ?? "Standard",
       mealPlan,
       start,
       endInclusive,
@@ -596,6 +618,8 @@ function RateForm({ room, rate, onBack, onSaved }: { room: Room; rate: RatePerio
       includedChildren: children,
       extraAdultCents,
       extraChildCents,
+      breakfastAdultCents: mealPlan === "breakfast" ? breakfastAdultCents : 0,
+      breakfastChildCents: mealPlan === "breakfast" ? breakfastChildCents : 0,
       maxChildAge: childAge,
       minNights: nights,
       active: rate?.active ?? true,
@@ -617,20 +641,28 @@ function RateForm({ room, rate, onBack, onSaved }: { room: Room; rate: RatePerio
         <Text style={styles.lead}>{room.name}</Text>
         {error ? <InlineState tone="danger">{error}</InlineState> : null}
         <View style={styles.formSection}>
-          <View style={styles.rateRuleCard}>
-            <View style={styles.rateRuleIcon}><CalendarDays size={20} color={theme.colors.action} /></View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.rateRuleTitle}>One period = one nightly price</Text>
-              <Text style={styles.rateRuleText}>When the price changes, add the next non-overlapping period. Dates include the last selected day.</Text>
-            </View>
-          </View>
-          <Text style={styles.fieldLabel}>Meal plan</Text>
-          <ChoiceRow options={[{ value: "room_only", label: "Room only" }, { value: "breakfast", label: "Breakfast included" }]} selected={mealPlan} onSelect={(value) => setMealPlan(value as MealPlan)} />
+          <SectionTitle>Select dates</SectionTitle>
+          <Text style={styles.sectionHelper}>Grey dates already have a price and cannot be selected again.</Text>
+          {ratesLoading ? <LoadingState label="Loading calendar…" compact /> : (
+            <RateCalendar
+              rates={existingRates}
+              selectedStart={start || undefined}
+              selectedEndInclusive={endInclusive || undefined}
+              editingRateId={rate?.id}
+              disabled={saving}
+              onRangeChange={(nextStart, nextEnd) => {
+                setStart(nextStart);
+                setEndInclusive(nextEnd ?? "");
+                setCalendarError(null);
+              }}
+              onBlockedRange={() => setCalendarError("That range crosses dates that already have a rate. Choose a free period.")}
+            />
+          )}
+          {calendarError ? <InlineState tone="warning">{calendarError}</InlineState> : null}
+          {submitted && !datesValid ? <Text style={styles.validationSummary}>Choose the first and last night on the calendar.</Text> : null}
         </View>
         <View style={styles.formSection}>
-          <SectionTitle>One period, one price</SectionTitle>
-          <Field label="Start date" placeholder="2026-11-01" autoCapitalize="none" value={start} onChangeText={setStart} editable={!saving} helper="YYYY-MM-DD" />
-          <Field label="End date, inclusive" placeholder="2026-12-31" autoCapitalize="none" value={endInclusive} onChangeText={setEndInclusive} editable={!saving} error={submitted && !datesValid ? "Check the period dates" : undefined} />
+          <SectionTitle>Nightly price</SectionTitle>
           <Field label="Price per night, EUR" keyboardType="decimal-pad" value={nightly} onChangeText={setNightly} editable={!saving} error={submitted && parseMoneyCents(nightly) === null ? "Enter an amount, for example 100 or 100.50" : undefined} />
           {datesValid && parseMoneyCents(nightly) !== null ? (
             <View style={styles.rateSummary}>
@@ -641,6 +673,7 @@ function RateForm({ room, rate, onBack, onSaved }: { room: Room; rate: RatePerio
         </View>
         <View style={styles.formSection}>
           <SectionTitle>Guests and supplements</SectionTitle>
+          <Text style={styles.sectionHelper}>The nightly price includes the guests below. Supplements are added per extra guest, per night.</Text>
           <View style={styles.fieldRow}>
             <View style={styles.fieldHalf}><Field label="Adults included" keyboardType="number-pad" value={includedAdults} onChangeText={setIncludedAdults} editable={!saving} /></View>
             <View style={styles.fieldHalf}><Field label="Children included" keyboardType="number-pad" value={includedChildren} onChangeText={setIncludedChildren} editable={!saving} /></View>
@@ -653,7 +686,20 @@ function RateForm({ room, rate, onBack, onSaved }: { room: Room; rate: RatePerio
             <View style={styles.fieldHalf}><Field label="Child age up to" keyboardType="number-pad" value={maxChildAge} onChangeText={setMaxChildAge} editable={!saving} /></View>
             <View style={styles.fieldHalf}><Field label="Minimum nights" keyboardType="number-pad" value={minNights} onChangeText={setMinNights} editable={!saving} /></View>
           </View>
-          {submitted && !valid ? <Text style={styles.validationSummary}>Check the numbers: values cannot be negative, child age is up to 17, and minimum stay starts at 1 night.</Text> : null}
+          <View style={styles.mealCard}>
+            <Text style={styles.fieldLabel}>Meal plan</Text>
+            <ChoiceRow options={[{ value: "room_only", label: "Room only" }, { value: "breakfast", label: "Breakfast included" }]} selected={mealPlan} onSelect={(value) => setMealPlan(value as MealPlan)} />
+            {mealPlan === "breakfast" ? (
+              <>
+                <Text style={styles.mealHelper}>Breakfast is added for every guest, every night.</Text>
+                <View style={styles.fieldRow}>
+                  <View style={styles.fieldHalf}><Field label="Breakfast / adult, EUR" keyboardType="decimal-pad" value={breakfastAdult} onChangeText={setBreakfastAdult} editable={!saving} /></View>
+                  <View style={styles.fieldHalf}><Field label="Breakfast / child, EUR" keyboardType="decimal-pad" value={breakfastChild} onChangeText={setBreakfastChild} editable={!saving} /></View>
+                </View>
+              </>
+            ) : null}
+          </View>
+          {submitted && !valid ? <Text style={styles.validationSummary}>Check the numbers: included guests must fit the room, values cannot be negative, child age is up to 17, and minimum stay starts at 1 night.</Text> : null}
         </View>
         <Button onPress={() => void save()} loading={saving} icon={Check}>{rate ? "Save rate changes" : "Add rate period"}</Button>
       </ScrollView>
@@ -662,8 +708,7 @@ function RateForm({ room, rate, onBack, onSaved }: { room: Room; rate: RatePerio
 }
 
 function PreviewCalculator({ room, rates }: { room: Room; rates: RatePeriod[] }) {
-  const planCodes = useMemo(() => [...new Set(rates.map((rate) => rate.planCode))], [rates]);
-  const [planCode, setPlanCode] = useState(planCodes[0] ?? "standard");
+  const planCode = rates.find((rate) => rate.planCode === "standard")?.planCode ?? rates[0]?.planCode ?? "standard";
   const [checkIn, setCheckIn] = useState(rates[0]?.start ?? "2026-11-01");
   const [checkOut, setCheckOut] = useState(rates[0]?.endExclusive ?? "2026-11-02");
   const [adults, setAdults] = useState("2");
@@ -671,6 +716,14 @@ function PreviewCalculator({ room, rates }: { room: Room; rates: RatePeriod[] })
   const [preview, setPreview] = useState<RatePreview | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const breakdown = preview?.ok ? preview.price.nights.reduce(
+    (sum, night) => ({
+      room: sum.room + night.baseCents,
+      guests: sum.guests + night.extraAdultCents + night.extraChildCents,
+      breakfast: sum.breakfast + night.breakfastCents,
+    }),
+    { room: 0, guests: 0, breakfast: 0 },
+  ) : null;
 
   const calculate = async () => {
     setError(null);
@@ -692,7 +745,6 @@ function PreviewCalculator({ room, rates }: { room: Room; rates: RatePeriod[] })
       <SectionTitle>Price check</SectionTitle>
       <View style={[uiStyles.card, styles.previewCard]}>
         <Text style={styles.previewIntro}>See how the system prices a sample request.</Text>
-        <ChoiceRow options={planCodes.map((value) => ({ value, label: value }))} selected={planCode} onSelect={setPlanCode} />
         <View style={styles.fieldRow}>
           <View style={styles.fieldHalf}><Field label="Check-in" value={checkIn} onChangeText={setCheckIn} autoCapitalize="none" /></View>
           <View style={styles.fieldHalf}><Field label="Check-out" value={checkOut} onChangeText={setCheckOut} autoCapitalize="none" /></View>
@@ -702,10 +754,15 @@ function PreviewCalculator({ room, rates }: { room: Room; rates: RatePeriod[] })
           <View style={styles.fieldHalf}><Field label="Child ages" keyboardType="numbers-and-punctuation" placeholder="5, 10" value={childAges} onChangeText={setChildAges} /></View>
         </View>
         {error ? <InlineState tone="danger">{error}</InlineState> : null}
-        {preview?.ok ? (
-          <View style={styles.previewResult}>
-            <View><Text style={styles.previewResultLabel}>{preview.price.nights.length} night{preview.price.nights.length === 1 ? "" : "s"}</Text><Text style={styles.previewResultHint}>Server calculation</Text></View>
-            <Text style={styles.previewTotal}>{formatCents(preview.price.totalCents)}</Text>
+        {preview?.ok && breakdown ? (
+          <View style={styles.previewBreakdown}>
+            <View style={styles.previewBreakdownHeader}>
+              <View><Text style={styles.previewResultLabel}>{preview.price.nights.length} night{preview.price.nights.length === 1 ? "" : "s"}</Text><Text style={styles.previewResultHint}>Server calculation</Text></View>
+              <Text style={styles.previewTotal}>{formatCents(preview.price.totalCents)}</Text>
+            </View>
+            <View style={styles.previewLine}><Text style={styles.previewLineLabel}>Room</Text><Text style={styles.previewLineValue}>{formatCents(breakdown.room)}</Text></View>
+            {breakdown.guests > 0 ? <View style={styles.previewLine}><Text style={styles.previewLineLabel}>Extra guests</Text><Text style={styles.previewLineValue}>{formatCents(breakdown.guests)}</Text></View> : null}
+            {breakdown.breakfast > 0 ? <View style={styles.previewLine}><Text style={styles.previewLineLabel}>Breakfast</Text><Text style={styles.previewLineValue}>{formatCents(breakdown.breakfast)}</Text></View> : null}
           </View>
         ) : preview && !preview.ok ? (
           <InlineState tone="warning">No complete rate coverage: {preview.issues.map((issue) => issue.date ?? issue.type).join(", ")}</InlineState>
@@ -717,6 +774,9 @@ function PreviewCalculator({ room, rates }: { room: Room; rates: RatePeriod[] })
 }
 
 function RateCard({ rate, onPress }: { rate: RatePeriod; onPress: () => void }) {
+  const mealDescription = rate.mealPlan === "breakfast"
+    ? `Breakfast · ${formatCents(rate.breakfastAdultCents)}/adult · ${formatCents(rate.breakfastChildCents)}/child`
+    : "Room only";
   return (
     <Pressable accessibilityRole="button" accessibilityLabel={`Edit rate from ${rate.start} to ${rate.endInclusive}`} onPress={onPress} style={({ pressed }) => [uiStyles.card, styles.rateCard, pressed && styles.pressed]}>
       <View style={styles.rateTop}>
@@ -725,7 +785,7 @@ function RateCard({ rate, onPress }: { rate: RatePeriod; onPress: () => void }) 
         <Text style={styles.ratePrice}>{formatCents(rate.nightlyBaseCents)}</Text>
         <Edit3 size={17} color={theme.colors.action} />
       </View>
-      <Text style={styles.rateConditions}>{rate.mealPlan === "breakfast" ? "Breakfast included" : "Room only"} · {rate.includedAdults} adult{rate.includedAdults === 1 ? "" : "s"} · min. {rate.minNights} night{rate.minNights === 1 ? "" : "s"}</Text>
+      <Text style={styles.rateConditions}>{mealDescription} · {rate.includedAdults} adult{rate.includedAdults === 1 ? "" : "s"} included · min. {rate.minNights} night{rate.minNights === 1 ? "" : "s"}</Text>
     </Pressable>
   );
 }
@@ -814,8 +874,6 @@ function imageMimeType(asset: ImagePicker.ImagePickerAsset): "image/jpeg" | "ima
   if (fileName.endsWith(".png")) return "image/png";
   return null;
 }
-function todayIso(): string { return new Date().toISOString().slice(0, 10); }
-function addDaysIso(date: string, days: number): string { const next = new Date(`${date}T00:00:00Z`); next.setUTCDate(next.getUTCDate() + days); return next.toISOString().slice(0, 10); }
 function moneyInput(cents: number): string { return (cents / 100).toFixed(2).replace(/\.00$/, ""); }
 function formatCents(cents: number): string { return new Intl.NumberFormat("en-GB", { style: "currency", currency: "EUR", maximumFractionDigits: 2 }).format(cents / 100); }
 function formatDate(date: string): string { const [year, month, day] = date.split("-"); return `${day}.${month}.${year}`; }
@@ -901,6 +959,8 @@ const styles = StyleSheet.create({
   choiceText: { ...theme.typography.bodySmallMedium, color: theme.colors.textSecondary },
   choiceTextSelected: { color: theme.colors.onAction },
   validationSummary: { ...theme.typography.captionMedium, color: theme.colors.danger },
+  mealCard: { gap: theme.spacing[3], borderRadius: theme.radii.lg, borderWidth: 1, borderColor: theme.colors.border, backgroundColor: theme.colors.background, padding: theme.spacing[4] },
+  mealHelper: { ...theme.typography.caption, color: theme.colors.textSecondary },
   detailHero: { borderRadius: theme.radii.lg, backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, padding: theme.spacing[4], gap: theme.spacing[3] },
   detailDescription: { ...theme.typography.body, color: theme.colors.textSecondary },
   detailMetaRow: { flexDirection: "row", flexWrap: "wrap", gap: theme.spacing[2] },
@@ -923,8 +983,12 @@ const styles = StyleSheet.create({
   rateSummaryPrice: { ...theme.typography.bodySmallMedium, color: theme.colors.success },
   previewCard: { gap: theme.spacing[4] },
   previewIntro: { ...theme.typography.bodySmall, color: theme.colors.textSecondary },
-  previewResult: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", backgroundColor: theme.colors.successTint, borderRadius: theme.radii.md, padding: theme.spacing[3] },
+  previewBreakdown: { gap: theme.spacing[2], backgroundColor: theme.colors.successTint, borderRadius: theme.radii.md, padding: theme.spacing[3] },
+  previewBreakdownHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: theme.spacing[3] },
   previewResultLabel: { ...theme.typography.bodySmallMedium, color: theme.colors.success },
   previewResultHint: { ...theme.typography.caption, color: theme.colors.textMuted },
+  previewLine: { flexDirection: "row", justifyContent: "space-between", gap: theme.spacing[3] },
+  previewLineLabel: { ...theme.typography.caption, color: theme.colors.textSecondary },
+  previewLineValue: { ...theme.typography.captionMedium, color: theme.colors.text },
   previewTotal: { ...theme.typography.h3, color: theme.colors.success },
 });

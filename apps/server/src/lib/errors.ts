@@ -27,9 +27,11 @@ export const errors = {
   roomNotFound: () => new AppError(404, "ROOM_NOT_FOUND", "Room was not found."),
   ratePeriodNotFound: () => new AppError(404, "RATE_PERIOD_NOT_FOUND", "Rate period was not found."),
   rateOverlap: (details?: unknown) =>
-    new AppError(409, "RATE_PERIOD_OVERLAP", "This rate overlaps another active period for the same plan.", details),
+    new AppError(409, "RATE_PERIOD_OVERLAP", "This room already has a rate for part of this period.", details),
   invalidRateRange: () =>
     new AppError(422, "INVALID_RATE_RANGE", "The inclusive end date must be on or after the start date."),
+  invalidRateOccupancy: () =>
+    new AppError(422, "INVALID_RATE_OCCUPANCY", "Included guests exceed the room capacity."),
   invalidRoomCapacity: () =>
     new AppError(422, "INVALID_ROOM_CAPACITY", "Room capacity values are inconsistent."),
   roomCapacityExceeded: () =>

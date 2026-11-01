@@ -91,6 +91,48 @@ describe("stay calculator", () => {
     });
   });
 
+  it("adds breakfast per guest only when the meal plan includes breakfast", () => {
+    const breakfast = calculateStayPrice({
+      roomId: "room-1",
+      planCode: "breakfast",
+      checkIn: "2027-01-10",
+      checkOut: "2027-01-11",
+      occupancy: { adults: 2, childAges: [8] },
+      periods: [rate({
+        includedChildren: 1,
+        breakfastAdultCents: 1_200,
+        breakfastChildCents: 600,
+      })],
+    });
+
+    expect(breakfast).toMatchObject({
+      ok: true,
+      price: {
+        totalCents: 13_000,
+        nights: [{ breakfastCents: 3_000, totalCents: 13_000 }],
+      },
+    });
+
+    const roomOnly = calculateStayPrice({
+      roomId: "room-1",
+      planCode: "breakfast",
+      checkIn: "2027-01-10",
+      checkOut: "2027-01-11",
+      occupancy: { adults: 2, childAges: [8] },
+      periods: [rate({
+        mealPlan: "room_only",
+        includedChildren: 1,
+        breakfastAdultCents: 1_200,
+        breakfastChildCents: 600,
+      })],
+    });
+
+    expect(roomOnly).toMatchObject({
+      ok: true,
+      price: { totalCents: 10_000, nights: [{ breakfastCents: 0 }] },
+    });
+  });
+
   it("blocks calculation when a night has no tariff", () => {
     const result = calculateStayPrice({
       roomId: "room-1",

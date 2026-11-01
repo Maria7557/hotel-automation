@@ -57,6 +57,13 @@
       "when": 1793531360694,
       "tag": "0007_uneven_edwin_jarvis",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1793532178584,
+      "tag": "0008_awesome_doctor_doom",
+      "breakpoints": true
     }
   ]
 }

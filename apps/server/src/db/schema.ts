@@ -165,6 +165,8 @@ export const ratePeriods = pgTable(
     includedChildren: integer("included_children").notNull().default(0),
     extraAdultCents: integer("extra_adult_cents").notNull().default(0),
     extraChildCents: integer("extra_child_cents").notNull().default(0),
+    breakfastAdultCents: integer("breakfast_adult_cents").notNull().default(0),
+    breakfastChildCents: integer("breakfast_child_cents").notNull().default(0),
     childMaxAge: integer("child_max_age").notNull().default(17),
     minimumNights: integer("minimum_nights").notNull().default(1),
     active: boolean("active").notNull().default(true),
