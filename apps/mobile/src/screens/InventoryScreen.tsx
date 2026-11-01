@@ -15,6 +15,7 @@ import {
 import {
   ArrowLeft,
   BedDouble,
+  CalendarDays,
   Check,
   ChevronLeft,
   ChevronRight,
@@ -43,7 +44,7 @@ import type {
 import { Button, EmptyState, Field, InlineState, SectionTitle, uiStyles } from "@/components/ui";
 import { RateCalendar } from "@/components/RateCalendar";
 
-type InventoryView = "list" | "roomForm" | "detail" | "rateForm";
+type InventoryView = "list" | "roomForm" | "detail" | "rates" | "rateForm";
 
 type RoomPhotoDraft = {
   id: string;
@@ -60,6 +61,7 @@ export function InventoryScreen({ onBack }: { onBack: () => void }) {
   const [rooms, setRooms] = useState<Room[]>([]);
   const [selectedRoom, setSelectedRoom] = useState<Room | null>(null);
   const [selectedRate, setSelectedRate] = useState<RatePeriod | null>(null);
+  const [rateReturnView, setRateReturnView] = useState<"detail" | "rates">("detail");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -98,7 +100,18 @@ export function InventoryScreen({ onBack }: { onBack: () => void }) {
   }
 
   if (view === "rateForm" && selectedRoom) {
-    return <RateForm room={selectedRoom} rate={selectedRate} onBack={() => setView("detail")} onSaved={() => setView("detail")} />;
+    return <RateForm room={selectedRoom} rate={selectedRate} onBack={() => setView(rateReturnView)} onSaved={() => setView(rateReturnView)} />;
+  }
+
+  if (view === "rates" && selectedRoom) {
+    return (
+      <RoomRatesView
+        room={selectedRoom}
+        onBack={() => { setSelectedRoom(null); setView("list"); }}
+        onAddRate={() => { setSelectedRate(null); setRateReturnView("rates"); setView("rateForm"); }}
+        onEditRate={(rate) => { setSelectedRate(rate); setRateReturnView("rates"); setView("rateForm"); }}
+      />
+    );
   }
 
   if (view === "detail" && selectedRoom) {
@@ -107,8 +120,8 @@ export function InventoryScreen({ onBack }: { onBack: () => void }) {
         room={selectedRoom}
         onBack={() => { setSelectedRoom(null); setView("list"); }}
         onEdit={() => setView("roomForm")}
-        onAddRate={() => { setSelectedRate(null); setView("rateForm"); }}
-        onEditRate={(rate) => { setSelectedRate(rate); setView("rateForm"); }}
+        onAddRate={() => { setSelectedRate(null); setRateReturnView("detail"); setView("rateForm"); }}
+        onEditRate={(rate) => { setSelectedRate(rate); setRateReturnView("detail"); setView("rateForm"); }}
       />
     );
   }
@@ -157,24 +170,34 @@ export function InventoryScreen({ onBack }: { onBack: () => void }) {
             ) : (
               <View style={styles.list}>
                 {rooms.map((room) => (
-                  <Pressable
-                    key={room.id}
-                    accessibilityRole="button"
-                    accessibilityLabel={`${room.name}, up to ${room.maxGuests} guests`}
-                    onPress={() => { setSelectedRoom(room); setView("detail"); }}
-                    style={({ pressed }) => [uiStyles.card, styles.roomCard, pressed && styles.pressed]}
-                  >
-                    <RoomPhoto uri={room.photoUrls[0]} variant="card" />
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.roomName}>{room.name}</Text>
-                      <Text numberOfLines={2} style={styles.roomDescription}>{room.description || "No description added yet"}</Text>
-                      <View style={styles.compactMeta}>
-                        <Users size={14} color={theme.colors.textMuted} />
-                        <Text style={styles.compactMetaText}>up to {room.maxGuests} · {bedSummary(room)}</Text>
+                  <View key={room.id} style={[uiStyles.card, styles.roomCardShell]}>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={`${room.name}, up to ${room.maxGuests} guests`}
+                      onPress={() => { setSelectedRoom(room); setView("detail"); }}
+                      style={({ pressed }) => [styles.roomCardMain, pressed && styles.pressed]}
+                    >
+                      <RoomPhoto uri={room.photoUrls[0]} variant="card" />
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.roomName}>{room.name}</Text>
+                        <Text numberOfLines={2} style={styles.roomDescription}>{room.description || "No description added yet"}</Text>
+                        <View style={styles.compactMeta}>
+                          <Users size={14} color={theme.colors.textMuted} />
+                          <Text style={styles.compactMetaText}>up to {room.maxGuests} · {bedSummary(room)}</Text>
+                        </View>
                       </View>
-                    </View>
-                    <ChevronRight size={20} color={theme.colors.textMuted} />
-                  </Pressable>
+                      <ChevronRight size={20} color={theme.colors.textMuted} />
+                    </Pressable>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={`Open rates calendar for ${room.name}`}
+                      onPress={() => { setSelectedRoom(room); setRateReturnView("rates"); setView("rates"); }}
+                      style={({ pressed }) => [styles.roomRatesButton, pressed && styles.pressed]}
+                    >
+                      <CalendarDays size={21} color={theme.colors.action} />
+                      <Text style={styles.roomRatesButtonText}>Rates</Text>
+                    </Pressable>
+                  </View>
                 ))}
               </View>
             )}
@@ -509,6 +532,49 @@ function PhotoEditorCard({
         </Pressable>
       </View>
     </View>
+  );
+}
+
+function RoomRatesView({ room, onBack, onAddRate, onEditRate }: { room: Room; onBack: () => void; onAddRate: () => void; onEditRate: (rate: RatePeriod) => void }) {
+  const [rates, setRates] = useState<RatePeriod[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    apiClient.listRates(room.id)
+      .then((nextRates) => { if (active) setRates(nextRates); })
+      .catch((nextError) => { if (active) setError(authErrorMessage(nextError)); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [room.id]);
+
+  return (
+    <ScrollView style={uiStyles.screen} contentContainerStyle={styles.screenContent} showsVerticalScrollIndicator={false}>
+      <ScreenHeader title={`${room.name} rates`} onBack={onBack} action={<HeaderAction icon={Plus} label="Add rate" onPress={onAddRate} />} />
+      <View style={styles.calendarRoomSummary}>
+        <RoomPhoto uri={room.photoUrls[0]} variant="card" />
+        <View style={{ flex: 1 }}>
+          <Text style={styles.roomName}>{room.name}</Text>
+          <Text style={styles.compactMetaText}>Up to {room.maxGuests} guests · {bedSummary(room)}</Text>
+        </View>
+      </View>
+      <View style={styles.section}>
+        <SectionTitle>Rates calendar</SectionTitle>
+        <Text style={styles.sectionHelper}>Prices are shown per night. Dates without a rate are highlighted so gaps are easy to find.</Text>
+        {error ? <InlineState tone="danger">{error}</InlineState> : loading ? <LoadingState label="Loading rates…" compact /> : <RateCalendar rates={rates} />}
+        {!loading && !error && rates.length === 0 ? (
+          <View style={styles.emptyWrap}>
+            <EmptyState title="No rates yet" description="Choose a free date range and add the first nightly price." />
+            <Button onPress={onAddRate} icon={Plus}>Add first rate</Button>
+          </View>
+        ) : !loading && !error ? (
+          <View style={styles.list}>{rates.map((rate) => <RateCard key={rate.id} rate={rate} onPress={() => onEditRate(rate)} />)}</View>
+        ) : null}
+      </View>
+      {rates.length > 0 ? <PreviewCalculator room={room} rates={rates} /> : null}
+    </ScrollView>
   );
 }
 
@@ -910,7 +976,11 @@ const styles = StyleSheet.create({
   section: { gap: theme.spacing[3], marginTop: theme.spacing[3] },
   list: { gap: theme.spacing[3] },
   emptyWrap: { gap: theme.spacing[3] },
-  roomCard: { flexDirection: "row", alignItems: "center", gap: theme.spacing[3] },
+  roomCardShell: { flexDirection: "row", alignItems: "stretch", padding: 0, overflow: "hidden" },
+  roomCardMain: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: theme.spacing[3], padding: theme.spacing[4] },
+  roomRatesButton: { width: 88, minHeight: 96, alignItems: "center", justifyContent: "center", gap: theme.spacing[1], borderLeftWidth: 1, borderLeftColor: theme.colors.border, backgroundColor: theme.colors.actionTint },
+  roomRatesButtonText: { ...theme.typography.captionMedium, color: theme.colors.action },
+  calendarRoomSummary: { flexDirection: "row", alignItems: "center", gap: theme.spacing[3], borderRadius: theme.radii.lg, borderWidth: 1, borderColor: theme.colors.border, backgroundColor: theme.colors.surface, padding: theme.spacing[3] },
   roomImage: { width: 72, height: 72, borderRadius: theme.radii.md, backgroundColor: theme.colors.actionTint },
   roomHeroImage: { width: "100%", height: 190, borderRadius: theme.radii.lg, backgroundColor: theme.colors.actionTint },
   roomPreviewImage: { width: 120, height: 88, borderRadius: theme.radii.md, backgroundColor: theme.colors.actionTint },
