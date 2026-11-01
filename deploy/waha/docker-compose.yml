@@ -7,8 +7,8 @@ services:
     ports:
       - "127.0.0.1:3000:3000/tcp"
     volumes:
-      - "./sessions:/app/.sessions"
-      - "./media:/app/.media"
+      - "./sessions:/app/.sessions:Z"
+      - "./media:/app/.media:Z"
     env_file:
       - .env
     logging:
