@@ -331,6 +331,26 @@ export const apiClient = {
     return response.data.ratePeriod;
   },
 
+  async updateRate(roomId: string, ratePeriodId: string, input: RatePeriodInput): Promise<RatePeriod> {
+    const token = await requireToken();
+    const response = await apiRequest<{ data: { ratePeriod: RatePeriod } }>(
+      `/v1/rooms/${encodeURIComponent(roomId)}/rates/${encodeURIComponent(ratePeriodId)}`,
+      { method: "PATCH", body: JSON.stringify(input) },
+      token,
+    );
+    return response.data.ratePeriod;
+  },
+
+  async uploadImage(input: { base64: string; mimeType: "image/jpeg" | "image/png" | "image/webp" }): Promise<string> {
+    const token = await requireToken();
+    const response = await apiRequest<{ data: { url: string } }>(
+      "/v1/media/images",
+      { method: "POST", body: JSON.stringify(input) },
+      token,
+    );
+    return response.data.url;
+  },
+
   async previewRate(
     roomId: string,
     input: { planCode: string; checkIn: string; checkOut: string; adults: number; childAges: number[] },

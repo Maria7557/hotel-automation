@@ -32,6 +32,13 @@ describe("public intake and proposal automation", () => {
     expect(script.headers["x-content-type-options"]).toBe("nosniff");
     expect(script.body).toContain("data-public-key");
     expect(script.body).toContain("Idempotency-Key");
+    expect(script.body).toContain('script.dataset.mode === "adapter"');
+    expect(script.body).toContain('formSelector = script.dataset.form || "[data-hotel-inquiry-form]"');
+    expect(script.body).toContain('data-hotel-field="');
+    expect(script.body).toContain('"existing_form"');
+    expect(script.body).toContain('"embed"');
+    expect(script.body).toContain("host.attachShadow");
+    expect(() => new Function(script.body)).not.toThrow();
 
     const owner = await setupHotel(app, "honeypot@example.com", true);
     const trapped = await app.inject({
@@ -50,6 +57,117 @@ describe("public intake and proposal automation", () => {
     });
     expect(trapped.statusCode).toBe(202);
     expect(repositories.automation.inquiries).toHaveLength(0);
+  });
+
+  it("keeps widget mode as the default and exposes selector mapping for an existing form", async () => {
+    const script = await app.inject({ method: "GET", url: "/embed.js" });
+
+    expect(script.statusCode).toBe(200);
+    expect(script.body).toContain('data-mode="adapter"');
+    expect(script.body).toContain("script.dataset.checkIn");
+    expect(script.body).toContain("script.dataset.checkOut");
+    expect(script.body).toContain("script.dataset.childAges");
+    expect(script.body).toContain('[data-hotel-inquiry-status]');
+    expect(script.body).toContain('form.dataset.hotelInquiryBound === "true"');
+    expect(script.body).toContain('script.dataset.submitBehavior === "replace"');
+    expect(script.body).toContain('keepalive: sourceType === "existing_form"');
+    expect(script.body).toContain("{ capture: true }");
+
+    const adapterBranch = script.body.indexOf('script.dataset.mode === "adapter"');
+    const widgetCreation = script.body.indexOf('document.createElement("div")');
+    expect(adapterBranch).toBeGreaterThan(0);
+    expect(widgetCreation).toBeGreaterThan(adapterBranch);
+  });
+
+  it("captures an existing form submit and maps its fields without replacing the form", async () => {
+    const response = await app.inject({ method: "GET", url: "/embed.js" });
+    const fields: Record<string, { value: string; type?: string }> = {
+      "#arrival": { value: "2026-08-10" },
+      "#departure": { value: "2026-08-13" },
+      "#guest": { value: "Giulia Bianchi" },
+      "#mail": { value: "giulia@example.com" },
+      "#phone": { value: "+393331112222" },
+      "#adults": { value: "2" },
+      "#ages": { value: "4, 9" },
+      "#message": { value: "Late arrival" },
+    };
+    const submitButton = { disabled: false };
+    const status = { dataset: {} as Record<string, string>, textContent: "" };
+    let submitHandler: ((event: { preventDefault(): void; stopImmediatePropagation(): void }) => Promise<void>) | undefined;
+    let listenerOptions: unknown;
+    const dispatched: string[] = [];
+    const form = {
+      dataset: {} as Record<string, string>,
+      querySelector(selector: string) {
+        if (selector === "[data-hotel-inquiry-status]") return status;
+        return fields[selector] ?? null;
+      },
+      querySelectorAll: () => [submitButton],
+      addEventListener(_name: string, handler: typeof submitHandler, options: unknown) {
+        submitHandler = handler;
+        listenerOptions = options;
+      },
+      dispatchEvent(event: { type: string }) { dispatched.push(event.type); },
+    };
+    const script = {
+      src: "https://api.example.com/embed.js",
+      dataset: {
+        publicKey: "11111111-1111-4111-8111-111111111111",
+        mode: "adapter",
+        form: "#booking-form",
+        checkIn: "#arrival",
+        checkOut: "#departure",
+        name: "#guest",
+        email: "#mail",
+        phone: "#phone",
+        adults: "#adults",
+        childAges: "#ages",
+        note: "#message",
+      },
+    };
+    const documentStub = {
+      currentScript: script,
+      documentElement: { lang: "it" },
+      querySelector: (selector: string) => selector === "#booking-form" ? form : null,
+    };
+    const requests: Array<{ url: string; init: { body: string; headers: Record<string, string> } }> = [];
+    const fetchStub = async (url: string, init: { body: string; headers: Record<string, string> }) => {
+      requests.push({ url, init });
+      return { ok: true };
+    };
+    class CustomEventStub {
+      constructor(public readonly type: string) {}
+    }
+
+    const run = new Function("document", "fetch", "crypto", "location", "CustomEvent", response.body);
+    run(documentStub, fetchStub, { randomUUID: () => "request-id" }, { origin: origin, pathname: "/booking" }, CustomEventStub);
+
+    expect(form.dataset.hotelInquiryBound).toBe("true");
+    expect(listenerOptions).toEqual({ capture: true });
+    expect(submitHandler).toBeTypeOf("function");
+    let prevented = false;
+    let propagationStopped = false;
+    await submitHandler?.({
+      preventDefault: () => { prevented = true; },
+      stopImmediatePropagation: () => { propagationStopped = true; },
+    });
+
+    expect(prevented).toBe(false);
+    expect(propagationStopped).toBe(false);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.url).toBe("https://api.example.com/v1/public/hotels/11111111-1111-4111-8111-111111111111/inquiries");
+    expect(requests[0]?.init.headers["Idempotency-Key"]).toBe("request-id");
+    expect(JSON.parse(requests[0]?.init.body ?? "{}")).toMatchObject({
+      guest: { name: "Giulia Bianchi", email: "giulia@example.com", phone: "+393331112222", language: "it" },
+      checkIn: "2026-08-10",
+      checkOut: "2026-08-13",
+      occupancy: { adults: 2, childAges: [4, 9] },
+      note: "Late arrival",
+      source: { type: "existing_form", page: "https://hotel.example/booking", widgetVersion: "v1" },
+    });
+    expect(submitButton.disabled).toBe(false);
+    expect(status).toMatchObject({ dataset: { state: "success" }, textContent: "Request sent. You will receive our offer shortly." });
+    expect(dispatched).toEqual(["hotel-inquiry:sending", "hotel-inquiry:success"]);
   });
 
   it("creates one immutable offer and fake deliveries without persisting the raw token", async () => {

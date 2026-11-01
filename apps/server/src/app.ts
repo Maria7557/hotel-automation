@@ -10,6 +10,7 @@ import { registerAutomationRoutes } from "./http/routes/automation.js";
 import { registerEmbedRoutes } from "./http/routes/embed.js";
 import { registerHotelRoutes } from "./http/routes/hotels.js";
 import { registerInventoryRoutes } from "./http/routes/inventory.js";
+import { registerMediaRoutes } from "./http/routes/media.js";
 import { AppError } from "./lib/errors.js";
 import { GoogleProvider } from "./providers/google.js";
 import type { ProviderFetch } from "./providers/http.js";
@@ -102,6 +103,7 @@ export async function createApp(options: AppOptions): Promise<FastifyInstance> {
   await registerChannelRoutes(app, authService, channelService);
   await registerHotelRoutes(app, authService, hotelService);
   await registerInventoryRoutes(app, authService, inventoryService);
+  await registerMediaRoutes(app, authService, options.env.PUBLIC_BASE_URL);
   await registerAutomationRoutes(app, authService, automationService);
   await registerEmbedRoutes(app);
 
