@@ -5,6 +5,7 @@ import {
   ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
+  Linking,
   Platform,
   Pressable,
   ScrollView,
@@ -199,6 +200,11 @@ export function AuthFlow({ initialUser, onAuthenticated, onDemo, onSocialAuth }:
           <Button disabled={socialLoading !== null} onPress={() => openAccount("register")}>{t("Create account with email")}</Button>
           <Button disabled={socialLoading !== null} variant="secondary" icon={LogIn} onPress={() => openAccount("login")}>{t("Sign in with password")}</Button>
           <Button disabled={socialLoading !== null} variant="tertiary" onPress={() => onDemo(mockProfile)}>{t("Open demo without an account")}</Button>
+        </View>
+        <View style={styles.legalLinks}>
+          <Text accessibilityRole="link" style={styles.legalLink} onPress={() => void Linking.openURL("https://ospio.online/privacy.html")}>Privacy Policy</Text>
+          <Text accessibilityRole="link" style={styles.legalLink} onPress={() => void Linking.openURL("https://ospio.online/terms.html")}>Terms and Conditions</Text>
+          <Text accessibilityRole="link" style={styles.legalLink} onPress={() => void Linking.openURL("https://ospio.online/terms-it.html")}>Termini e condizioni</Text>
         </View>
       </ScrollView>
     );
@@ -447,6 +453,8 @@ const styles = StyleSheet.create({
   feature: { minHeight: 58, flexDirection: "row", alignItems: "center", gap: theme.spacing[3], borderRadius: theme.radii.md, backgroundColor: theme.colors.background, paddingHorizontal: theme.spacing[3] },
   featureIcon: { width: 36, height: 36, borderRadius: theme.radii.md, alignItems: "center", justifyContent: "center", backgroundColor: theme.colors.actionTint },
   featureLabel: { ...theme.typography.bodySmallMedium, color: theme.colors.text, flex: 1 },
+  legalLinks: { flexDirection: "row", flexWrap: "wrap", justifyContent: "center", gap: 16, marginTop: 20 },
+  legalLink: { color: "#176b60", fontSize: 13, textDecorationLine: "underline", paddingVertical: 8 },
   welcomeActions: { marginTop: theme.spacing[8], gap: theme.spacing[2] },
   socialButton: { minHeight: theme.controls.buttonHeight, borderRadius: theme.radii.md, alignItems: "center", justifyContent: "center", paddingHorizontal: theme.spacing[5] },
   googleButton: { backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.borderStrong },
