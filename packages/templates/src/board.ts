@@ -1,4 +1,4 @@
-import { copyFor } from "./content.js";
+import { copyFor, languageFor } from "./content.js";
 import type { OfferSnapshot } from "./types.js";
 import { boardAppearance } from "@hotel/design";
 import { escapeHtml } from "./security.js";
@@ -9,7 +9,7 @@ export function boardLabel(value: unknown, locale?: string): string {
   if (code === "BB" || code === "HB" || code === "FB") return `${code} · ${copy.boardNames[code]}`;
   // Historical snapshots are immutable and must not acquire meals they never included.
   if (code === "room_only") return copy.roomOnly;
-  return `${copy.board}: ${locale?.startsWith("it") ? "da confermare" : "needs confirmation"}`;
+  return `${copy.board}: ${languageFor(locale) === "it" ? "da confermare" : "needs confirmation"}`;
 }
 
 export function offerBoardLabel(snapshot: OfferSnapshot, locale?: string): string {

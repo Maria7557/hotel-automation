@@ -1,3 +1,4 @@
+import { translateLabel } from "../i18n";
 import type { ReactNode } from "react";
 import { Platform, Pressable, type PressableProps } from "react-native";
 import { detailHref, shouldOpenInApp } from "../navigation/detail-href";
@@ -16,7 +17,7 @@ export function DetailLink({ kind, id, label, onOpen, style, children }: Props) 
   return <Pressable
     {...(Platform.OS === "web" ? { href: detailHref(kind, id) } : {})}
     accessibilityRole="link"
-    accessibilityLabel={label}
+    accessibilityLabel={translateLabel(label)}
     style={style}
     onPress={(event) => {
       event.stopPropagation();

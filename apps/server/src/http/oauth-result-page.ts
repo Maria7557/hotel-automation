@@ -1,9 +1,11 @@
+import { resolveLanguage, translate, type Language } from "@hotel/i18n";
 import type { FastifyReply } from "fastify";
 import { ZodError } from "zod";
 
 import { AppError } from "../lib/errors.js";
 
 type OAuthResult = {
+  language?: string | undefined;
   success: boolean;
   provider: "Google" | "Microsoft";
   statusCode?: number;
@@ -25,11 +27,13 @@ export function oauthFailureStatus(error: unknown): number {
   return 500;
 }
 
-function renderOAuthResultPage({ success, provider }: OAuthResult): string {
-  const title = success ? "Mail connected" : "Connection unsuccessful";
+function renderOAuthResultPage({ success, provider, language: requested }: OAuthResult): string {
+  const language = resolveLanguage(requested);
+  const t = (text: string, values?: Record<string, string>) => translate(language, text, values);
+  const title = success ? t("Mail connected") : t("Connection unsuccessful");
   const description = success
-    ? `${provider} Mail is ready. You can now send offers from your connected address.`
-    : `We could not connect ${provider} Mail. Return to Connections and try again.`;
+    ? t("{{v0}} Mail is ready. You can now send offers from your connected address.", { v0: provider })
+    : t("We could not connect {{v0}} Mail. Return to Connections and try again.", { v0: provider });
   const icon = success
     ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>'
     : '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8v5m0 3h.01"/><circle cx="12" cy="12" r="9"/></svg>';
@@ -37,11 +41,11 @@ function renderOAuthResultPage({ success, provider }: OAuthResult): string {
     ? '<meta http-equiv="refresh" content="5;url=/">'
     : "";
   const note = success
-    ? "Returning to Hotel in a few seconds…"
-    : "If the problem continues, contact support and we’ll help you connect it.";
+    ? t("Returning to Hotel in a few seconds…")
+    : t("If the problem continues, contact support and we’ll help you connect it.");
 
   return `<!doctype html>
-<html lang="en">
+<html lang="${language}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -65,10 +69,10 @@ function renderOAuthResultPage({ success, provider }: OAuthResult): string {
 <body>
   <main>
     <div class="mark">${icon}</div>
-    <p class="eyebrow">Hotel · Connections</p>
+    <p class="eyebrow">${t("Hotel · Connections")}</p>
     <h1>${title}</h1>
     <p class="description">${description}</p>
-    <a href="/">Back to Hotel</a>
+    <a href="/">${t("Back to Hotel")}</a>
     <p class="note">${note}</p>
   </main>
 </body>

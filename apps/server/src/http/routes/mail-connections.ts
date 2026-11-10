@@ -24,9 +24,9 @@ export async function registerMailConnectionRoutes(app: FastifyInstance, auth: A
     try {
       const q = mailCallbackSchema.parse(r.query);
       await mail.completeOAuth(provider, q.state, q.code);
-      return sendOAuthResultPage(reply, { success: true, provider: providerName });
+      return sendOAuthResultPage(reply, { language: r.cookies.hotel_language ?? r.headers["accept-language"]?.split(",")[0], success: true, provider: providerName });
     } catch (error) {
-      return sendOAuthResultPage(reply, {
+      return sendOAuthResultPage(reply, { language: r.cookies.hotel_language ?? r.headers["accept-language"]?.split(",")[0],
         success: false,
         provider: providerName,
         statusCode: oauthFailureStatus(error),

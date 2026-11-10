@@ -1,3 +1,4 @@
+import { t, translateLabel, getLanguage } from "../i18n";
 import { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -57,11 +58,11 @@ export function ConnectionsScreen({ onBack, demo }: { onBack: () => void; demo: 
 
   const mail = useMemo(
     () => connections.find((connection) => connection.kind === "mail") ?? disconnectedMail,
-    [connections],
+    [connections, getLanguage()],
   );
   const waha = useMemo(
     () => connections.find((connection) => connection.kind === "waha") ?? disconnectedWaha,
-    [connections],
+    [connections, getLanguage()],
   );
 
   const replaceConnection = (updated: ConnectionStatus) => {
@@ -164,12 +165,12 @@ export function ConnectionsScreen({ onBack, demo }: { onBack: () => void; demo: 
       }
     };
     if (Platform.OS === "web") {
-      if (typeof window !== "undefined" && window.confirm("Disconnect this mail account?")) void confirm();
+      if (typeof window !== "undefined" && window.confirm(t("Disconnect this mail account?"))) void confirm();
       return;
     }
-    Alert.alert("Disconnect mail?", "Hotel messages will stop sending from this address.", [
-      { text: "Cancel", style: "cancel" },
-      { text: "Disconnect", style: "destructive", onPress: () => void confirm() },
+    Alert.alert(t("Disconnect mail?"), t("Hotel messages will stop sending from this address."), [
+      { text: t("Cancel"), style: "cancel" },
+      { text: t("Disconnect"), style: "destructive", onPress: () => void confirm() },
     ]);
   };
 
@@ -191,16 +192,16 @@ export function ConnectionsScreen({ onBack, demo }: { onBack: () => void; demo: 
       const authorization = await apiClient.startMailOAuth(provider, email);
       const url = new URL(authorization.authorizationUrl);
       if (url.protocol !== "https:" || !["accounts.google.com", "login.microsoftonline.com"].includes(url.hostname)) {
-        throw new Error("Unexpected authorization URL");
+        throw new Error(t("Unexpected authorization URL"));
       }
       if (!(await Linking.canOpenURL(authorization.authorizationUrl))) {
-        throw new Error("Cannot open authorization URL");
+        throw new Error(t("Cannot open authorization URL"));
       }
       setMailOpen(false);
       await Linking.openURL(authorization.authorizationUrl);
     } catch (nextError) {
       setError(provider === "microsoft" && nextError instanceof ApiError && nextError.code === "CONFIG_REQUIRED"
-        ? "Microsoft connection is temporarily unavailable."
+        ? t("Microsoft connection is temporarily unavailable.")
         : authErrorMessage(nextError));
     } finally {
       setBusyKind(null);
@@ -272,12 +273,12 @@ export function ConnectionsScreen({ onBack, demo }: { onBack: () => void; demo: 
       }
     };
     if (Platform.OS === "web") {
-      if (typeof window !== "undefined" && window.confirm("Disconnect this WhatsApp account?")) void confirm();
+      if (typeof window !== "undefined" && window.confirm(t("Disconnect this WhatsApp account?"))) void confirm();
       return;
     }
-    Alert.alert("Disconnect WhatsApp?", "Hotel WhatsApp messages will stop sending from this number.", [
-      { text: "Cancel", style: "cancel" },
-      { text: "Disconnect", style: "destructive", onPress: () => void confirm() },
+    Alert.alert(t("Disconnect WhatsApp?"), t("Hotel WhatsApp messages will stop sending from this number."), [
+      { text: t("Cancel"), style: "cancel" },
+      { text: t("Disconnect"), style: "destructive", onPress: () => void confirm() },
     ]);
   };
 
@@ -293,8 +294,8 @@ export function ConnectionsScreen({ onBack, demo }: { onBack: () => void; demo: 
         replaceConnection(result.connection);
         setQrCode(result.qrCode);
         setNotice(result.connection.state === "connected"
-          ? "WhatsApp is connected."
-          : "Scan the QR code with the new WhatsApp phone.");
+          ? t("WhatsApp is connected.")
+          : t("Scan the QR code with the new WhatsApp phone."));
       } catch (nextError) {
         setError(authErrorMessage(nextError));
       } finally {
@@ -302,12 +303,12 @@ export function ConnectionsScreen({ onBack, demo }: { onBack: () => void; demo: 
       }
     };
     if (Platform.OS === "web") {
-      if (typeof window !== "undefined" && window.confirm("Change the connected WhatsApp account? The current phone will be disconnected.")) void confirm();
+      if (typeof window !== "undefined" && window.confirm(t("Change the connected WhatsApp account? The current phone will be disconnected."))) void confirm();
       return;
     }
-    Alert.alert("Change WhatsApp?", "The current phone will be disconnected before a new QR code is created.", [
-      { text: "Cancel", style: "cancel" },
-      { text: "Change", style: "destructive", onPress: () => void confirm() },
+    Alert.alert(t("Change WhatsApp?"), t("The current phone will be disconnected before a new QR code is created."), [
+      { text: t("Cancel"), style: "cancel" },
+      { text: t("Change"), style: "destructive", onPress: () => void confirm() },
     ]);
   };
 
@@ -315,8 +316,8 @@ export function ConnectionsScreen({ onBack, demo }: { onBack: () => void; demo: 
     <View style={uiStyles.screen}>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <ScreenHeader onBack={onBack} />
-        {error ? <InlineState tone="danger">{error}</InlineState> : null}
-        {notice ? <InlineState tone="success">{notice}</InlineState> : null}
+        {error ? <InlineState tone="danger">{translateLabel(error)}</InlineState> : null}
+        {notice ? <InlineState tone="success">{translateLabel(notice)}</InlineState> : null}
 
         {loading ? (
           <View style={styles.loading}>
@@ -326,7 +327,7 @@ export function ConnectionsScreen({ onBack, demo }: { onBack: () => void; demo: 
           <View style={styles.list}>
             <ConnectionRow
               connection={mail}
-              title="Mail"
+              title={t("Mail")}
               subtitle={mail.senderEmail ?? undefined}
               icon={Mail}
               busy={busyKind === "mail"}
@@ -348,8 +349,8 @@ export function ConnectionsScreen({ onBack, demo }: { onBack: () => void; demo: 
 
         {qrCode ? (
           <View style={styles.qrCard}>
-            <Text style={styles.qrTitle}>Connect WhatsApp</Text>
-            <Text style={styles.qrText}>Open WhatsApp → Linked devices → Link a device, then scan this code.</Text>
+            <Text style={styles.qrTitle}>{t("Connect WhatsApp")}</Text>
+            <Text style={styles.qrText}>{t("Open WhatsApp → Linked devices → Link a device, then scan this code.")}</Text>
             <View style={styles.qrFrame}>
               <Image source={{ uri: qrCode }} style={styles.qrImage} resizeMode="contain" />
             </View>
@@ -358,27 +359,26 @@ export function ConnectionsScreen({ onBack, demo }: { onBack: () => void; demo: 
               loading={busyKind === "waha"}
               onPress={() => void checkWhatsApp()}
             >
-              I scanned the code
-            </Button>
+              {t("I scanned the code")}{" "}</Button>
           </View>
         ) : null}
         {mailOpen ? <View style={styles.mailCard}>
-          <Text style={styles.qrTitle}>{mail.state === "connected" ? "Change mail" : "Connect mail"}</Text>
-          <Text style={styles.qrText}>Enter the address used to send hotel messages.</Text>
+          <Text style={styles.qrTitle}>{mail.state === "connected" ? t("Change mail") : t("Connect mail")}</Text>
+          <Text style={styles.qrText}>{t("Enter the address used to send hotel messages.")}</Text>
           <TextInput autoCapitalize="none" keyboardType="email-address" placeholder="booking@hotel.it" value={email} onChangeText={(v) => { setEmail(v); setProvider(null); }} style={styles.input} />
-          {!provider ? <Button loading={busyKind === "mail"} onPress={() => void detectMail()}>Continue</Button> : <>
-            <Text style={styles.providerText}>Suggested: {provider === "google" ? "Google" : provider === "microsoft" ? "Microsoft" : "Other mail provider"}</Text>
-            <View style={styles.providerRow}>{(["google", "microsoft", "smtp"] as const).map((value) => <Pressable key={value} onPress={() => setProvider(value)} style={[styles.providerChoice, provider === value && styles.providerSelected]}><Text>{value === "smtp" ? "Other" : value === "microsoft" ? "Microsoft" : "Google"}</Text></Pressable>)}</View>
+          {!provider ? <Button loading={busyKind === "mail"} onPress={() => void detectMail()}>{t("Continue")}</Button> : <>
+            <Text style={styles.providerText}>{t("Suggested:")}{" "}{provider === "google" ? "Google" : provider === "microsoft" ? "Microsoft" : t("Other mail provider")}</Text>
+            <View style={styles.providerRow}>{(["google", "microsoft", "smtp"] as const).map((value) => <Pressable key={value} onPress={() => setProvider(value)} style={[styles.providerChoice, provider === value && styles.providerSelected]}><Text>{value === "smtp" ? t("Other") : value === "microsoft" ? "Microsoft" : "Google"}</Text></Pressable>)}</View>
             {provider === "smtp" ? <>
               <View style={styles.providerRow}>{[
                 ["Zoho", "smtp.zoho.com"], ["Namecheap", "mail.privateemail.com"], ["Aruba", "smtps.aruba.it"],
-              ].map(([label, host]) => <Pressable key={label} onPress={() => { setSmtpHost(host!); setSmtpPort(465); }} style={styles.providerChoice}><Text>{label}</Text></Pressable>)}</View>
-              <TextInput autoCapitalize="none" placeholder="SMTP hostname" value={smtpHost} onChangeText={setSmtpHost} style={styles.input} />
+              ].map(([label, host]) => <Pressable key={label} onPress={() => { setSmtpHost(host!); setSmtpPort(465); }} style={styles.providerChoice}><Text>{translateLabel(label)}</Text></Pressable>)}</View>
+              <TextInput autoCapitalize="none" placeholder={t("SMTP hostname")} value={smtpHost} onChangeText={setSmtpHost} style={styles.input} />
               <View style={styles.providerRow}>{([465, 587] as const).map((port) => <Pressable key={port} onPress={() => setSmtpPort(port)} style={[styles.providerChoice, smtpPort === port && styles.providerSelected]}><Text>{port} · {port === 465 ? "TLS" : "STARTTLS"}</Text></Pressable>)}</View>
-              <TextInput autoCapitalize="none" placeholder="Username" value={smtpUser} onChangeText={setSmtpUser} style={styles.input} />
-              <TextInput placeholder="App password" secureTextEntry value={smtpPassword} onChangeText={setSmtpPassword} style={styles.input} />
+              <TextInput autoCapitalize="none" placeholder={t("Username")} value={smtpUser} onChangeText={setSmtpUser} style={styles.input} />
+              <TextInput placeholder={t("App password")} secureTextEntry value={smtpPassword} onChangeText={setSmtpPassword} style={styles.input} />
             </> : null}
-            <Button loading={busyKind === "mail"} onPress={() => void finishMail()}>Connect and send test</Button>
+            <Button loading={busyKind === "mail"} onPress={() => void finishMail()}>{t("Connect and send test")}</Button>
           </>}
         </View> : null}
       </ScrollView>
@@ -409,7 +409,7 @@ function ConnectionRow({
   const needsReconnect = connection.configured && (
     connection.state === "attention" || connection.state === "error" || Boolean(connection.lastErrorCode)
   );
-  const label = needsReconnect ? "Reconnect" : "Connect";
+  const label = needsReconnect ? t("Reconnect") : t("Connect");
 
   return (
     <View style={styles.connectionRow}>
@@ -417,23 +417,23 @@ function ConnectionRow({
         <Icon size={24} color={connected ? theme.colors.success : theme.colors.action} />
       </View>
       <View style={styles.connectionCopy}>
-        <Text style={styles.connectionTitle}>{title}</Text>
+        <Text style={styles.connectionTitle}>{translateLabel(title)}</Text>
         <Text numberOfLines={1} style={[styles.connectionStatus, connected && styles.connectedText]}>
-          {connected ? (subtitle ?? "Connected") : needsReconnect ? "Connection lost" : "Not connected"}
+          {connected ? (subtitle ?? t("Connected")) : needsReconnect ? t("Connection lost") : t("Not connected")}
         </Text>
       </View>
       {connected ? (
         <View style={styles.connectedActions}>
           <View style={styles.connectedBadge}>
             <Check size={17} color={theme.colors.success} />
-            <Text style={styles.connectedBadgeText}>Connected</Text>
+            <Text style={styles.connectedBadgeText}>{t("Connected")}</Text>
           </View>
           {onEdit && onDisconnect ? <View style={styles.rowActions}>
             <Pressable disabled={busy} onPress={onEdit} style={({ pressed }) => [styles.textAction, pressed && styles.pressed, busy && styles.disabled]}>
-              <Text style={styles.textActionLabel}>Change</Text>
+              <Text style={styles.textActionLabel}>{t("Change")}</Text>
             </Pressable>
             <Pressable disabled={busy} onPress={onDisconnect} style={({ pressed }) => [styles.textAction, pressed && styles.pressed, busy && styles.disabled]}>
-              <Text style={styles.disconnectLabel}>Disconnect</Text>
+              <Text style={styles.disconnectLabel}>{t("Disconnect")}</Text>
             </Pressable>
           </View> : null}
         </View>
@@ -453,7 +453,7 @@ function ConnectionRow({
           {busy ? (
             <ActivityIndicator size="small" color={theme.colors.action} />
           ) : (
-            <Text style={styles.connectButtonText}>{label}</Text>
+            <Text style={styles.connectButtonText}>{translateLabel(label)}</Text>
           )}
         </Pressable>
       )}
@@ -464,10 +464,10 @@ function ConnectionRow({
 function ScreenHeader({ onBack }: { onBack: () => void }) {
   return (
     <View style={styles.header}>
-      <Pressable accessibilityRole="button" accessibilityLabel="Back" onPress={onBack} style={({ pressed }) => [styles.back, pressed && styles.pressed]}>
+      <Pressable accessibilityRole="button" accessibilityLabel={t("Back")} onPress={onBack} style={({ pressed }) => [styles.back, pressed && styles.pressed]}>
         <ArrowLeft size={22} color={theme.colors.text} />
       </Pressable>
-      <Text style={styles.headerTitle}>Connections</Text>
+      <Text style={styles.headerTitle}>{t("Connections")}</Text>
       <View style={{ width: 44 }} />
     </View>
   );

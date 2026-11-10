@@ -1,5 +1,7 @@
+import { locale as uiLocale } from "../i18n";
 import { requestLabel } from "../requests/status";
-import type { DashboardSnapshot, HotelProfile, HotelRequest } from "./types";
+import { AUTOMATIC_SENDING_TIMEOUT_MS, AUTOMATIC_SENDING_TIMEOUT_REASON } from "@hotel/contracts";
+import type { DeliverySummary, HotelProfile, HotelRequest } from "./types";
 
 const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
 
@@ -91,11 +93,19 @@ const primaryRequests: HotelRequest[] = [
 ];
 
 const demoNames = ["Emma Wilson", "Noah Martin", "Olivia Brown", "Liam Garcia", "Mia Taylor", "Ethan Davis", "Ava Moore", "Leo Anderson"];
+const pendingDelivery = (variant: number, channel: "email" | "whatsapp", recipient: string): DeliverySummary => ({
+  status: "pending",
+  state: variant === 1 ? "processing" : "scheduled",
+  attemptCount: variant === 3 ? 1 : 0,
+  recipient,
+  lastErrorCode: variant === 2 ? `${channel.toUpperCase()}_CONNECTION_NOT_READY` : variant === 3 ? "PROVIDER_HTTP_429" : null,
+});
 const generatedRequests: HotelRequest[] = Array.from({ length: 283 }, (_, index) => {
   const status: HotelRequest["status"] = index < 22 ? "payment" : index < 25 ? "attention" : index < 97 ? "waiting" : "new";
   const totalCents = 28_000 + (index % 7) * 9_500;
   const review = status === "attention" && index === 24;
   const failed = status === "attention" && !review;
+  const receivedAt = minutesAgo(status === "new" ? index % 20 : 28 + (index % 180) * 4);
   return {
     id: `req_demo_${index}`,
     reservationNumber: String(index + 4),
@@ -107,29 +117,35 @@ const generatedRequests: HotelRequest[] = Array.from({ length: 283 }, (_, index)
     stayLabel: `${3 + (index % 20)}–${5 + (index % 20)} November · 2 nights`,
     guestLabel: index % 4 === 0 ? "2 adults · 1 child" : "2 adults",
     roomLabel: index % 3 === 0 ? "Deluxe Room" : index % 3 === 1 ? "Classic Double" : "Junior Suite",
-    totalLabel: new Intl.NumberFormat("en-GB", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(totalCents / 100),
+    totalLabel: new Intl.NumberFormat(uiLocale(), { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(totalCents / 100),
     totalCents,
     currency: "EUR",
-    receivedAt: minutesAgo(28 + (index % 180) * 4),
+    receivedAt,
+    ...(status === "new" ? { processingDeadlineAt: new Date(Date.parse(receivedAt) + AUTOMATIC_SENDING_TIMEOUT_MS).toISOString() } : {}),
     ...(status === "waiting" ? { offerSentAt: minutesAgo(26 + (index % 180) * 4) } : {}),
     status,
     statusLabel: requestLabel(status, failed),
     ...(status === "payment" ? { nextAction: "Review availability", acceptedAt: minutesAgo(24 + index * 4) } : review ? { nextAction: "Review rates and request" } : failed ? { nextAction: "Review delivery" } : {}),
     ...(review ? { attentionReason: "manual_review" } : {}),
     ...(failed ? { attentionReason: "EMAIL_DELIVERY_FAILED" } : {}),
-    email: { status: failed ? "failed" : "sent", recipient: `guest${index + 1}@example.com`, lastErrorCode: failed ? "GMAIL_ACCESS_REVOKED" : null },
-    whatsapp: { status: index % 4 === 0 ? "unused" : "sent", recipient: `+39333000${String(index).padStart(4, "0")}` },
+    email: status === "new" ? pendingDelivery(index % 4, "email", `guest${index + 1}@example.com`) : { status: failed ? "failed" : "sent", recipient: `guest${index + 1}@example.com`, lastErrorCode: failed ? "GMAIL_ACCESS_REVOKED" : null },
+    whatsapp: status === "new" && index % 4 !== 0 ? pendingDelivery((index + 1) % 4, "whatsapp", `+39333000${String(index).padStart(4, "0")}`) : { status: index % 4 === 0 ? "unused" : "sent", recipient: `+39333000${String(index).padStart(4, "0")}` },
   };
 });
 
-export const mockDashboard: DashboardSnapshot = {
-  totalCount: 286,
-  newCount: 186,
-  waitingCount: 72,
-  paymentPendingCount: 24,
-  paymentPendingTotalCents: 1_584_000,
-  attentionCount: 4,
-  failedDeliveryCount: 3,
-  pagination: { page: 1, limit: 30, total: 286 },
+export const mockDashboard = {
   requests: [...primaryRequests, ...generatedRequests],
 };
+
+export function refreshDemoSendingStatuses(now = Date.now()) {
+  for (const request of mockDashboard.requests) {
+    if (request.status !== "new") continue;
+    request.processingDeadlineAt ??= new Date(Date.parse(request.receivedAt) + AUTOMATIC_SENDING_TIMEOUT_MS).toISOString();
+    const deadline = Date.parse(request.processingDeadlineAt);
+    if (!Number.isFinite(deadline) || deadline > now) continue;
+    request.status = "attention";
+    request.statusLabel = requestLabel("attention", true);
+    request.attentionReason = AUTOMATIC_SENDING_TIMEOUT_REASON;
+    request.nextAction = "Check delivery and channel connections";
+  }
+}

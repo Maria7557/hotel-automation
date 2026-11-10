@@ -1,0 +1,12 @@
+{
+  "name": "@hotel/i18n",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": { ".": "./src/index.ts", "./catalog": "./src/catalog.ts" },
+  "scripts": { "typecheck": "tsc --noEmit", "test": "vitest run" },
+  "dependencies": { "i18next": "^25.6.0" },
+  "devDependencies": { "typescript": "^5.9.3", "vitest": "^4.0.8" }
+}

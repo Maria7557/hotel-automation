@@ -1,7 +1,8 @@
-import { copyFor, formatGuests, formatMoney, formatStay } from "./content.js";
+import { copyFor, formatGuests, formatMoney, formatStay, languageFor } from "./content.js";
 import { escapeHtml, requirePublicOfferUrl, safeHeaderText, safeImageUrl } from "./security.js";
 import type { MessageRenderContext, OfferSnapshot } from "./types.js";
 import { offerBoardLabel, renderOfferBoardBadge } from "./board.js";
+import { offerDetailsText } from "./offer-details.js";
 
 function lowestPrice(snapshot: OfferSnapshot): number | null {
   return snapshot.options.reduce<number | null>(
@@ -10,18 +11,20 @@ function lowestPrice(snapshot: OfferSnapshot): number | null {
   );
 }
 
-export function renderOfferChoicesText(snapshot: OfferSnapshot, locale?: string): string {
+export function renderOfferChoicesText(snapshot: OfferSnapshot, locale = snapshot.guestSnapshot.language): string {
   return snapshot.options.map((option, index) =>
-    `${index + 1}. ${option.roomName} · ${option.planName} · ${formatMoney(option.totalCents, locale)}${option.note ? `\n${option.note}` : ""}`,
+    `${index + 1}. ${option.roomName} · ${option.planName} · ${formatMoney(option.totalCents, locale)}${offerDetailsText(snapshot, option, locale) ? `\n${offerDetailsText(snapshot, option, locale)}` : ""}${option.note ? `\n${option.note}` : ""}`,
   ).join("\n");
 }
 
 export function renderEmailSubject(snapshot: OfferSnapshot, context: MessageRenderContext): string {
+  context = { ...context, locale: context.locale ?? snapshot.guestSnapshot.language ?? "it" };
   const copy = copyFor(context.locale);
   return safeHeaderText(`${offerBoardLabel(snapshot, context.locale)} · ${copy.title(snapshot.hotelSnapshot.name)}`);
 }
 
 export function renderEmailText(snapshot: OfferSnapshot, context: MessageRenderContext): string {
+  context = { ...context, locale: context.locale ?? snapshot.guestSnapshot.language ?? "it" };
   const copy = copyFor(context.locale);
   const offerUrl = requirePublicOfferUrl(context.publicOfferUrl);
   const price = lowestPrice(snapshot);
@@ -45,6 +48,7 @@ export function renderEmailText(snapshot: OfferSnapshot, context: MessageRenderC
 }
 
 export function renderWhatsAppText(snapshot: OfferSnapshot, context: MessageRenderContext): string {
+  context = { ...context, locale: context.locale ?? snapshot.guestSnapshot.language ?? "it" };
   const copy = copyFor(context.locale);
   const offerUrl = requirePublicOfferUrl(context.publicOfferUrl);
   const price = lowestPrice(snapshot);
@@ -63,12 +67,13 @@ export function renderWhatsAppText(snapshot: OfferSnapshot, context: MessageRend
 }
 
 export function renderEmailHtml(snapshot: OfferSnapshot, context: MessageRenderContext): string {
+  context = { ...context, locale: context.locale ?? snapshot.guestSnapshot.language ?? "it" };
   const copy = copyFor(context.locale);
   const offerUrl = requirePublicOfferUrl(context.publicOfferUrl);
   const price = lowestPrice(snapshot);
   const logoUrl = safeImageUrl(snapshot.hotelSnapshot.logoUrl);
   return `<!doctype html>
-<html lang="${context.locale?.toLowerCase().startsWith("en") ? "en" : "it"}">
+<html lang="${languageFor(context.locale)}">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>${escapeHtml(copy.title(snapshot.hotelSnapshot.name))}</title></head>
 <body style="margin:0;background:#f1f1f1;color:#202020;font-family:Poppins,Inter,Arial,sans-serif">
   <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f1f1f1"><tr><td align="center" style="padding:24px 12px">

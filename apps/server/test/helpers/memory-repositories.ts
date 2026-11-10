@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import type { DashboardQuery } from "@hotel/contracts";
+import type { DashboardQuery, OfferSettings } from "@hotel/contracts";
+import { AUTOMATIC_SENDING_TIMEOUT_MS } from "@hotel/contracts";
 
 import type {
   AuthRepository,
@@ -41,6 +42,7 @@ import type {
   WhatsAppSupportRecord,
 } from "../../src/repositories/types.js";
 import { errors } from "../../src/lib/errors.js";
+import { acceptedStay } from "../../src/lib/accepted-stay.js";
 
 class MemoryAuthRepository implements AuthRepository {
   readonly users = new Map<string, UserRecord>();
@@ -105,6 +107,11 @@ class MemoryAuthRepository implements AuthRepository {
     return user;
   }
 
+  async updateUserLanguage(userId: string, uiLanguage: "en" | "it"): Promise<void> {
+    const user = this.users.get(userId);
+    if (user) user.uiLanguage = uiLanguage;
+  }
+
   async createSession(input: { userId: string; tokenHash: string; expiresAt: Date }): Promise<void> {
     this.sessions.set(input.tokenHash, { userId: input.userId, expiresAt: input.expiresAt });
   }
@@ -113,7 +120,7 @@ class MemoryAuthRepository implements AuthRepository {
     const session = this.sessions.get(tokenHash);
     if (!session || session.expiresAt <= now) return null;
     const user = this.users.get(session.userId);
-    return user ? { id: user.id, email: user.email, displayName: user.displayName } : null;
+    return user ? { id: user.id, email: user.email, displayName: user.displayName, ...(user.uiLanguage ? { uiLanguage: user.uiLanguage } : {}) } : null;
   }
 
   async refreshSessionExpiry(input: {
@@ -188,6 +195,7 @@ class MemoryHotelRepository implements HotelRepository {
 }
 
 class MemoryAutomationRepository implements AutomationRepository {
+  readonly offerSettings = new Map<string, OfferSettings>();
   private nextReservationNumber = 1n;
   readonly inquiries = new Map<string, InquiryRecord>();
   readonly offers = new Map<string, OfferRecord>();
@@ -200,6 +208,17 @@ class MemoryAutomationRepository implements AutomationRepository {
 
   async findPublicHotelByKey(publicKey: string): Promise<HotelProfile | null> {
     return [...this.hotels.hotels.values()].find((hotel) => hotel.publicKey === publicKey) ?? null;
+  }
+
+  async findOfferSettingsForHotel(hotelId: string): Promise<OfferSettings | null> {
+    return this.offerSettings.get(hotelId) ?? null;
+  }
+
+  async saveOfferSettingsForUser(userId: string, settings: OfferSettings): Promise<OfferSettings | null> {
+    const hotel = await this.hotels.findForUser(userId);
+    if (!hotel) return null;
+    this.offerSettings.set(hotel.id, settings);
+    return settings;
   }
 
   async findPublicHotelWebsite(hotelId: string): Promise<string | null> {
@@ -302,7 +321,7 @@ class MemoryAutomationRepository implements AutomationRepository {
       }
     }
     const inquiry = this.inquiries.get(offer.inquiryId);
-    if (inquiry) this.inquiries.set(inquiry.id, { ...inquiry, currentOfferId: offer.id, updatedAt: now });
+    if (inquiry) this.inquiries.set(inquiry.id, { ...inquiry, ...acceptedStay(offer.snapshot, selectedOptionIndex), currentOfferId: offer.id, updatedAt: now });
     return accepted;
   }
 
@@ -325,15 +344,15 @@ class MemoryAutomationRepository implements AutomationRepository {
     const day = new Intl.DateTimeFormat("en-CA", { timeZone: facts.hotel.timezone });
     const items = facts.inquiries.filter((inquiry) => day.format(inquiry.createdAt) === day.format(now)).map((inquiry) => {
       const latest = facts.offers.filter((offer) => offer.inquiryId === inquiry.id).sort((a, b) => b.version - a.version)[0];
-      const currentDeliveries = facts.deliveries.filter((delivery) => delivery.inquiryId === inquiry.id && (!latest || delivery.offerVersionId === latest.id))
-        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || b.id.localeCompare(a.id));
+      const currentDeliveries = facts.deliveries.filter((delivery) => delivery.inquiryId === inquiry.id && (!latest || delivery.offerVersionId === latest.id));
       const status = inquiry.closedAt ? "completed" : latest?.acceptedAt ? "payment" : inquiry.attentionReason ? "attention"
         : latest && (latest.state === "expired" || latest.state === "revoked" || latest.expiresAt <= now) ? "attention"
-        : latest && currentDeliveries.some(({ state }) => state === "provider_accepted" || state === "delivered") ? "waiting" : "new";
+        : latest && currentDeliveries.some(({ state }) => state === "provider_accepted" || state === "delivered") ? "waiting"
+        : (latest?.createdAt ?? inquiry.createdAt).getTime() + AUTOMATIC_SENDING_TIMEOUT_MS <= now.getTime() ? "attention" : "new";
+      const processingDeadlineAt = new Date((latest?.createdAt ?? inquiry.createdAt).getTime() + AUTOMATIC_SENDING_TIMEOUT_MS);
       const options = latest?.snapshot.options;
       const option = Array.isArray(options) ? options[latest?.selectedOptionIndex ?? 0] as Record<string, unknown> | undefined : undefined;
-      const failedDelivery = (["email", "whatsapp"] as const).some((channel) => currentDeliveries.find((delivery) => delivery.channel === channel)?.state === "failed");
-      return { inquiry, status, option, failedDelivery };
+      return { inquiry, status, option, processingDeadlineAt };
     });
     const reservationNumber = /^#?\s*(\d+)$/.exec(query.search)?.[1];
     const labels: Record<string, string> = { new: "New", waiting: "Waiting for reply", payment: "Payment link needed", completed: "Waiting for client", attention: "Not delivered" };
@@ -349,9 +368,10 @@ class MemoryAutomationRepository implements AutomationRepository {
         offerSent: items.filter(({ status }) => status === "waiting").length,
         requiresConfirmation: items.filter(({ status }) => status === "payment").length,
         requiresConfirmationTotalCents: items.filter(({ status }) => status === "payment").reduce((total, { option }) => total + (typeof option?.totalCents === "number" ? option.totalCents : 0), 0),
-        needsAttention: items.filter(({ status }) => status === "attention").length,
-        failedDeliveries: items.filter(({ failedDelivery }) => failedDelivery).length },
-      pagination: { page, limit: query.limit, total: filtered.length } };
+        needsAttention: items.filter(({ status }) => status === "attention").length },
+      pagination: { page, limit: query.limit, total: filtered.length },
+      evaluatedAt: now, nextProcessingDeadlineAt: items.filter(({ status }) => status === "new").map(({ processingDeadlineAt }) => processingDeadlineAt)
+        .sort((a, b) => a.getTime() - b.getTime())[0] ?? null };
   }
 
   async dashboardFactsForUser(userId: string, inquiryIds?: string[]): Promise<DashboardFacts | null> {
@@ -509,7 +529,7 @@ class MemoryNotificationRepository implements NotificationRepository {
     const user = this.auth.users.get(userId);
     if (!user) return null;
     return {
-      user: { id: user.id, email: user.email, displayName: user.displayName },
+      user: { id: user.id, email: user.email, displayName: user.displayName, ...(user.uiLanguage ? { uiLanguage: user.uiLanguage } : {}) },
       preferences: this.preferences.get(userId) ?? null,
       devices: [...this.devices.values()].filter((device) => device.userId === userId && device.active),
     };
@@ -572,7 +592,7 @@ class MemoryNotificationRepository implements NotificationRepository {
       const user = this.auth.users.get(userId);
       if (!user) return [];
       return [{
-        user: { id: user.id, email: user.email, displayName: user.displayName },
+        user: { id: user.id, email: user.email, displayName: user.displayName, ...(user.uiLanguage ? { uiLanguage: user.uiLanguage } : {}) },
         preferences: this.preferences.get(userId) ?? null,
         devices: [...this.devices.values()].filter((device) => device.userId === userId && device.active),
       }];

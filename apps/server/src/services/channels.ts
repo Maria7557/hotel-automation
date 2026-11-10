@@ -1,3 +1,4 @@
+import { DEFAULT_GUEST_LANGUAGE } from "@hotel/contracts";
 import { randomUUID } from "node:crypto";
 
 import type { AppEnv } from "../config/env.js";
@@ -30,11 +31,11 @@ import type { AutomationService } from "./automation.js";
 import { renderOfferDelivery } from "./offer-delivery-renderer.js";
 
 export const defaultMessageSettings: MessageSettingsUpdate = {
-  emailSubjectTemplate: "Your offer from {{hotel_name}}",
+  emailSubjectTemplate: "La sua offerta da {{hotel_name}}",
   emailBodyTemplate:
-    "Hello {{guest_name}},\n\nYour offer for {{check_in}} to {{check_out}} is ready.\nTotal: {{total}}\n\n{{offer_url}}",
+    "Gentile {{guest_name}},\n\nLa sua offerta dal {{check_in}} al {{check_out}} è pronta.\nTotale: {{total}}\n\n{{offer_url}}",
   whatsappBodyTemplate:
-    "Hello {{guest_name}}, your offer from {{hotel_name}} is ready: {{offer_url}}",
+    "Gentile {{guest_name}}, la sua offerta da {{hotel_name}} è pronta: {{offer_url}}",
 };
 
 type PreviewInput = z.infer<typeof previewInputSchema>;
@@ -388,18 +389,17 @@ export class ChannelService {
     testOffer: Awaited<ReturnType<AutomationService["createTestProposal"]>>,
   ) {
     const rendered = renderOfferDelivery({
-      snapshot: testOffer.snapshot,
-      proposalUrl: testOffer.proposalUrl,
+      snapshot: { ...testOffer.snapshot, guestSnapshot: { ...(testOffer.snapshot.guestSnapshot as Record<string, unknown>), language: input.sample?.language ?? DEFAULT_GUEST_LANGUAGE } },
+      proposalUrl: `${testOffer.proposalUrl}${input.sample?.language ? `?lang=${input.sample.language}` : ""}`,
       channel: input.channel,
       settings: { hotelId: hotel.id, ...settings, createdAt: new Date(), updatedAt: new Date() },
-      locale: hotel.locale,
     });
     const guest = record(testOffer.snapshot.guestSnapshot);
     const options = Array.isArray(testOffer.snapshot.options) ? testOffer.snapshot.options : [];
     return {
       ...rendered,
       offer: {
-        url: testOffer.proposalUrl,
+        url: `${testOffer.proposalUrl}${input.sample?.language ? `?lang=${input.sample.language}` : ""}`,
         hotelName: hotel.name,
         checkIn: typeof guest?.checkIn === "string" ? guest.checkIn : "",
         checkOut: typeof guest?.checkOut === "string" ? guest.checkOut : "",

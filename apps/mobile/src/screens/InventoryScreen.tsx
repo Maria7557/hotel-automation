@@ -1,3 +1,4 @@
+import { locale as uiLocale, t, translateLabel } from "../i18n";
 import { BoardBadge, BoardSelector } from "@/components/BoardBadge";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
@@ -134,39 +135,38 @@ export function InventoryScreen({ onBack }: { onBack: () => void }) {
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void loadRooms(true)} tintColor={theme.colors.action} />}
       showsVerticalScrollIndicator={false}
     >
-      <ScreenHeader title="Rooms and rates" onBack={onBack} />
-      <Text style={styles.lead}>Room categories, capacity and date-based pricing.</Text>
+      <ScreenHeader title={t("Rooms and rates")} onBack={onBack} />
+      <Text style={styles.lead}>{t("Room categories, capacity and date-based pricing.")}</Text>
 
       {error ? (
         <View style={styles.stateGap}>
-          <InlineState tone="danger">{error}</InlineState>
-          <Button variant="secondary" onPress={() => void loadRooms()}>Try again</Button>
+          <InlineState tone="danger">{translateLabel(error)}</InlineState>
+          <Button variant="secondary" onPress={() => void loadRooms()}>{t("Try again")}</Button>
         </View>
       ) : loading ? (
-        <LoadingState label="Loading rooms…" />
+        <LoadingState label={t("Loading rooms…")} />
       ) : (
         <>
           <View style={styles.summaryCard}>
             <View style={styles.summaryIcon}><BedDouble size={22} color={theme.colors.action} /></View>
             <View style={{ flex: 1 }}>
               <Text style={styles.summaryValue}>{rooms.length}</Text>
-              <Text style={styles.summaryLabel}>{rooms.length === 1 ? "room category" : "room categories"}</Text>
+              <Text style={styles.summaryLabel}>{rooms.length === 1 ? t("room category") : t("room categories")}</Text>
             </View>
             <Button
               variant="tertiary"
               icon={Plus}
               onPress={() => { setSelectedRoom(null); setView("roomForm"); }}
             >
-              Add
-            </Button>
+              {t("Add")}{" "}</Button>
           </View>
 
           <View style={styles.section}>
-            <SectionTitle>Catalogue</SectionTitle>
+            <SectionTitle>{t("Catalogue")}</SectionTitle>
             {rooms.length === 0 ? (
               <View style={styles.emptyWrap}>
-                <EmptyState title="Add your first room" description="Set its capacity and beds, then add date-based rates." />
-                <Button onPress={() => { setSelectedRoom(null); setView("roomForm"); }} icon={Plus}>Create room</Button>
+                <EmptyState title={t("Add your first room")} description={t("Set its capacity and beds, then add date-based rates.")} />
+                <Button onPress={() => { setSelectedRoom(null); setView("roomForm"); }} icon={Plus}>{t("Create room")}</Button>
               </View>
             ) : (
               <View style={styles.list}>
@@ -174,29 +174,29 @@ export function InventoryScreen({ onBack }: { onBack: () => void }) {
                   <View key={room.id} style={[uiStyles.card, styles.roomCardShell]}>
                     <Pressable
                       accessibilityRole="button"
-                      accessibilityLabel={`${room.name}, up to ${room.maxGuests} guests`}
+                      accessibilityLabel={t("{{v0}}, up to {{v1}} guests", { v0: room.name, v1: room.maxGuests })}
                       onPress={() => { setSelectedRoom(room); setView("detail"); }}
                       style={({ pressed }) => [styles.roomCardMain, pressed && styles.pressed]}
                     >
                       <RoomPhoto uri={room.photoUrls[0]} variant="card" />
                       <View style={{ flex: 1 }}>
                         <Text style={styles.roomName}>{room.name}</Text>
-                        <Text numberOfLines={2} style={styles.roomDescription}>{room.description || "No description added yet"}</Text>
+                        <Text numberOfLines={2} style={styles.roomDescription}>{room.description || t("No description added yet")}</Text>
                         <View style={styles.compactMeta}>
                           <Users size={14} color={theme.colors.textMuted} />
-                          <Text style={styles.compactMetaText}>up to {room.maxGuests} · {bedSummary(room)}</Text>
+                          <Text style={styles.compactMetaText}>{t("up to")}{" "}{room.maxGuests} · {bedSummary(room)}</Text>
                         </View>
                       </View>
                       <ChevronRight size={20} color={theme.colors.textMuted} />
                     </Pressable>
                     <Pressable
                       accessibilityRole="button"
-                      accessibilityLabel={`Open rates calendar for ${room.name}`}
+                      accessibilityLabel={t("Open rates calendar for {{v0}}", { v0: room.name })}
                       onPress={() => { setSelectedRoom(room); setRateReturnView("rates"); setView("rates"); }}
                       style={({ pressed }) => [styles.roomRatesButton, pressed && styles.pressed]}
                     >
                       <CalendarDays size={21} color={theme.colors.action} />
-                      <Text style={styles.roomRatesButtonText}>Rates</Text>
+                      <Text style={styles.roomRatesButtonText}>{t("Rates")}</Text>
                     </Pressable>
                   </View>
                 ))}
@@ -216,7 +216,7 @@ function RoomForm({ room, onBack, onSaved }: { room: Room | null; onBack: () => 
   const [maxChildren, setMaxChildren] = useState(String(room?.maxChildren ?? 0));
   const [maxGuests, setMaxGuests] = useState(String(room?.maxGuests ?? 2));
   const [bedCounts, setBedCounts] = useState<BedCounts>(() => initialBedCounts(room));
-  const [amenities, setAmenities] = useState<string[]>(room?.amenities ?? ["Wi-Fi", "Air conditioning"]);
+  const [amenities, setAmenities] = useState<string[]>(room?.amenities ?? [t("Wi-Fi"), t("Air conditioning")]);
   const [photos, setPhotos] = useState<RoomPhotoDraft[]>(() =>
     (room?.photoUrls ?? []).map((url, index) => ({ id: `saved-${index}-${url}`, uri: url, uploadedUrl: url })),
   );
@@ -278,7 +278,7 @@ function RoomForm({ room, onBack, onSaved }: { room: Room | null; onBack: () => 
     });
     setPhotos((current) => [...current, ...accepted].slice(0, 30));
     if (rejected > 0) {
-      setError(`${rejected} photo${rejected === 1 ? " was" : "s were"} skipped. Please choose JPEG or PNG files.`);
+      setError(t("{{count}} skipped photo", { count: rejected }));
     }
   };
 
@@ -307,7 +307,7 @@ function RoomForm({ room, onBack, onSaved }: { room: Room | null; onBack: () => 
           uploadedPhotos.push(photo);
           continue;
         }
-        if (!photo.base64 || !photo.mimeType) throw new Error("One selected photo could not be prepared. Remove it and choose it again.");
+        if (!photo.base64 || !photo.mimeType) throw new Error(t("One selected photo could not be prepared. Remove it and choose it again."));
         setUploadingPhoto(index + 1);
         const uploadedUrl = await apiClient.uploadImage({ base64: photo.base64, mimeType: photo.mimeType });
         uploadedPhotos.push({ id: photo.id, uri: uploadedUrl, uploadedUrl });
@@ -336,56 +336,56 @@ function RoomForm({ room, onBack, onSaved }: { room: Room | null; onBack: () => 
   return (
     <KeyboardAvoidingView style={uiStyles.screen} behavior={Platform.OS === "ios" ? "padding" : undefined}>
       <ScrollView contentContainerStyle={styles.screenContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-        <ScreenHeader title={room ? "Edit room" : "New room"} onBack={onBack} />
-        <Text style={styles.lead}>Add the room details guests need to compare it with other options.</Text>
-        {error ? <InlineState tone="danger">{error}</InlineState> : null}
+        <ScreenHeader title={room ? t("Edit room") : t("New room")} onBack={onBack} />
+        <Text style={styles.lead}>{t("Add the room details guests need to compare it with other options.")}</Text>
+        {error ? <InlineState tone="danger">{translateLabel(error)}</InlineState> : null}
         <View style={styles.formSection}>
-          <Field label="Name" placeholder="Deluxe Room" value={name} onChangeText={setName} editable={!saving} error={submitted && !name.trim() ? "Enter a name" : undefined} />
-          <Field label="Description" placeholder="Spacious room with a garden view" value={description} onChangeText={setDescription} multiline numberOfLines={4} style={styles.textArea} editable={!saving} />
+          <Field label={t("Name")} placeholder={t("Deluxe Room")} value={name} onChangeText={setName} editable={!saving} error={submitted && !name.trim() ? t("Enter a name") : undefined} />
+          <Field label={t("Description")} placeholder={t("Spacious room with a garden view")} value={description} onChangeText={setDescription} multiline numberOfLines={4} style={styles.textArea} editable={!saving} />
         </View>
         <View style={styles.formSection}>
-          <SectionTitle>Capacity</SectionTitle>
+          <SectionTitle>{t("Capacity")}</SectionTitle>
           <View style={styles.fieldRow}>
-            <View style={styles.fieldHalf}><Field label="Adults" keyboardType="number-pad" value={maxAdults} onChangeText={setMaxAdults} editable={!saving} /></View>
-            <View style={styles.fieldHalf}><Field label="Children" keyboardType="number-pad" value={maxChildren} onChangeText={setMaxChildren} editable={!saving} /></View>
+            <View style={styles.fieldHalf}><Field label={t("Adults")} keyboardType="number-pad" value={maxAdults} onChangeText={setMaxAdults} editable={!saving} /></View>
+            <View style={styles.fieldHalf}><Field label={t("Children")} keyboardType="number-pad" value={maxChildren} onChangeText={setMaxChildren} editable={!saving} /></View>
           </View>
           <Field
-            label="Total guests"
+            label={t("Total guests")}
             keyboardType="number-pad"
             value={maxGuests}
             onChangeText={setMaxGuests}
             editable={!saving}
-            error={submitted && !capacityValid ? "Total guests must include all adults and stay within the combined capacity" : undefined}
+            error={submitted && !capacityValid ? t("Total guests must include all adults and stay within the combined capacity") : undefined}
           />
         </View>
         <View style={styles.formSection}>
-          <SectionTitle>Beds</SectionTitle>
-          <Text style={styles.sectionHelper}>Add every sleeping arrangement available in this room.</Text>
+          <SectionTitle>{t("Beds")}</SectionTitle>
+          <Text style={styles.sectionHelper}>{t("Add every sleeping arrangement available in this room.")}</Text>
           <BedPicker
             counts={bedCounts}
             disabled={saving}
             onChange={setBedCounts}
           />
-          {submitted && bedCount < 1 ? <Text style={styles.validationSummary}>Add at least one bed.</Text> : null}
+          {submitted && bedCount < 1 ? <Text style={styles.validationSummary}>{t("Add at least one bed.")}</Text> : null}
         </View>
         <View style={styles.formSection}>
-          <SectionTitle>Features and amenities</SectionTitle>
-          <Text style={styles.sectionHelper}>Select everything included with this room, or add a custom feature.</Text>
+          <SectionTitle>{t("Features and amenities")}</SectionTitle>
+          <Text style={styles.sectionHelper}>{t("Select everything included with this room, or add a custom feature.")}</Text>
           <AmenityPicker selected={amenities} onChange={setAmenities} disabled={saving} />
         </View>
         <View style={styles.formSection}>
           <View style={styles.photoHeading}>
             <View style={{ flex: 1 }}>
-              <SectionTitle>Room photos</SectionTitle>
-              <Text style={styles.sectionHelper}>{photos.length}/30 · the first photo is the cover.</Text>
+              <SectionTitle>{t("Room photos")}</SectionTitle>
+              <Text style={styles.sectionHelper}>{photos.length}{t("/30 · the first photo is the cover.")}</Text>
             </View>
-            <Button variant="secondary" icon={ImagePlus} onPress={() => void pickPhotos()} disabled={saving || photos.length >= 30}>Add photos</Button>
+            <Button variant="secondary" icon={ImagePlus} onPress={() => void pickPhotos()} disabled={saving || photos.length >= 30}>{t("Add photos")}</Button>
           </View>
           {photos.length === 0 ? (
             <Pressable accessibilityRole="button" onPress={() => void pickPhotos()} disabled={saving} style={({ pressed }) => [styles.photoEmpty, pressed && styles.pressed]}>
               <View style={styles.photoEmptyIcon}><ImagePlus size={25} color={theme.colors.action} /></View>
-              <Text style={styles.photoEmptyTitle}>Choose photos from this device</Text>
-              <Text style={styles.photoEmptyText}>JPEG or PNG · select several at once</Text>
+              <Text style={styles.photoEmptyTitle}>{t("Choose photos from this device")}</Text>
+              <Text style={styles.photoEmptyText}>{t("JPEG or PNG · select several at once")}</Text>
             </Pressable>
           ) : (
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.photoStrip}>
@@ -405,8 +405,8 @@ function RoomForm({ room, onBack, onSaved }: { room: Room | null; onBack: () => 
             </ScrollView>
           )}
         </View>
-        {uploadingPhoto ? <InlineState tone="warning">Uploading photo {uploadingPhoto} of {photos.length}…</InlineState> : null}
-        <Button onPress={() => void save()} loading={saving} icon={Check}>{room ? "Save changes" : "Create room"}</Button>
+        {uploadingPhoto ? <InlineState tone="warning">{t("Uploading photo")}{" "}{uploadingPhoto} {" "}{t("of")}{" "}{photos.length}…</InlineState> : null}
+        <Button onPress={() => void save()} loading={saving} icon={Check}>{room ? t("Save changes") : t("Create room")}</Button>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -434,13 +434,13 @@ function BedPicker({
         return (
           <View key={option.value} style={[styles.bedPickerRow, count > 0 && styles.bedPickerRowSelected]}>
             <View style={styles.bedPickerCopy}>
-              <Text style={styles.bedPickerLabel}>{option.label}</Text>
-              {count > 0 ? <Text style={styles.bedPickerSelectedText}>{count} selected</Text> : null}
+              <Text style={styles.bedPickerLabel}>{translateLabel(option.label)}</Text>
+              {count > 0 ? <Text style={styles.bedPickerSelectedText}>{count} {" "}{t("selected")}</Text> : null}
             </View>
             <View style={styles.stepper}>
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel={`Remove one ${option.label.toLowerCase()}`}
+                accessibilityLabel={t("Remove one {{v0}}", { v0: t(option.label).toLowerCase() })}
                 accessibilityState={{ disabled: disabled || count === 0 }}
                 disabled={disabled || count === 0}
                 onPress={() => update(option.value, -1)}
@@ -448,10 +448,10 @@ function BedPicker({
               >
                 <Minus size={18} color={count === 0 ? theme.colors.textMuted : theme.colors.action} />
               </Pressable>
-              <Text accessibilityLabel={`${count} ${option.label.toLowerCase()}`} style={styles.stepperValue}>{count}</Text>
+              <Text accessibilityLabel={`${count} ${t(option.label).toLowerCase()}`} style={styles.stepperValue}>{count}</Text>
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel={`Add one ${option.label.toLowerCase()}`}
+                accessibilityLabel={t("Add one {{v0}}", { v0: t(option.label).toLowerCase() })}
                 accessibilityState={{ disabled: disabled || count === 10 }}
                 disabled={disabled || count === 10}
                 onPress={() => update(option.value, 1)}
@@ -489,7 +489,7 @@ function AmenityPicker({ selected, onChange, disabled }: { selected: string[]; o
           const choiceDisabled = disabled || (featureLimitReached && !isSelected);
           return (
             <Pressable
-              key={amenity}
+              key={t(amenity)}
               accessibilityRole="checkbox"
               accessibilityState={{ checked: isSelected, disabled: choiceDisabled }}
               disabled={choiceDisabled}
@@ -497,23 +497,23 @@ function AmenityPicker({ selected, onChange, disabled }: { selected: string[]; o
               style={({ pressed }) => [styles.amenityChoice, isSelected && styles.amenityChoiceSelected, pressed && styles.pressed]}
             >
               {isSelected ? <Check size={15} color={theme.colors.onAction} /> : null}
-              <Text style={[styles.choiceText, isSelected && styles.choiceTextSelected]}>{amenity}</Text>
+              <Text style={[styles.choiceText, isSelected && styles.choiceTextSelected]}>{t(amenity)}</Text>
             </Pressable>
           );
         })}
       </View>
       <Field
-        label="Custom feature"
-        placeholder="e.g. Nespresso machine"
+        label={t("Custom feature")}
+        placeholder={t("e.g. Nespresso machine")}
         value={customFeature}
         onChangeText={setCustomFeature}
         maxLength={100}
         editable={!disabled && !featureLimitReached}
         returnKeyType="done"
         onSubmitEditing={addFeature}
-        helper={featureLimitReached ? "You can select up to 100 features per room." : "Add a feature to include it with this room."}
+        helper={featureLimitReached ? t("You can select up to 100 features per room.") : t("Add a feature to include it with this room.")}
       />
-      <Button variant="secondary" icon={Plus} onPress={addFeature} disabled={disabled || featureLimitReached || !customFeature.trim()}>Add feature</Button>
+      <Button variant="secondary" icon={Plus} onPress={addFeature} disabled={disabled || featureLimitReached || !customFeature.trim()}>{t("Add feature")}</Button>
     </View>
   );
 }
@@ -541,21 +541,21 @@ function PhotoEditorCard({
     <View style={styles.photoEditorCard}>
       <RoomPhoto uri={photo.uri} variant="preview" />
       {index === 0 ? (
-        <View style={styles.coverBadge}><Star size={12} color={theme.colors.onAction} /><Text style={styles.coverBadgeText}>Cover</Text></View>
+        <View style={styles.coverBadge}><Star size={12} color={theme.colors.onAction} /><Text style={styles.coverBadgeText}>{t("Cover")}</Text></View>
       ) : (
-        <Pressable accessibilityRole="button" accessibilityLabel={`Make photo ${index + 1} the cover`} disabled={disabled} onPress={onCover} style={({ pressed }) => [styles.makeCover, pressed && styles.pressed]}>
-          <Star size={14} color={theme.colors.action} /><Text style={styles.makeCoverText}>Set cover</Text>
+        <Pressable accessibilityRole="button" accessibilityLabel={t("Make photo {{v0}} the cover", { v0: index + 1 })} disabled={disabled} onPress={onCover} style={({ pressed }) => [styles.makeCover, pressed && styles.pressed]}>
+          <Star size={14} color={theme.colors.action} /><Text style={styles.makeCoverText}>{t("Set cover")}</Text>
         </Pressable>
       )}
-      <Pressable accessibilityRole="button" accessibilityLabel={`Remove photo ${index + 1}`} disabled={disabled} onPress={onRemove} style={({ pressed }) => [styles.removePhoto, pressed && styles.pressed]}>
+      <Pressable accessibilityRole="button" accessibilityLabel={t("Remove photo {{v0}}", { v0: index + 1 })} disabled={disabled} onPress={onRemove} style={({ pressed }) => [styles.removePhoto, pressed && styles.pressed]}>
         <Trash2 size={16} color={theme.colors.danger} />
       </Pressable>
       <View style={styles.photoOrderRow}>
-        <Pressable accessibilityRole="button" accessibilityLabel={`Move photo ${index + 1} left`} disabled={disabled || index === 0} onPress={onMoveLeft} style={({ pressed }) => [styles.orderButton, (disabled || index === 0) && styles.orderButtonDisabled, pressed && styles.pressed]}>
+        <Pressable accessibilityRole="button" accessibilityLabel={t("Move photo {{v0}} left", { v0: index + 1 })} disabled={disabled || index === 0} onPress={onMoveLeft} style={({ pressed }) => [styles.orderButton, (disabled || index === 0) && styles.orderButtonDisabled, pressed && styles.pressed]}>
           <ChevronLeft size={18} color={theme.colors.textSecondary} />
         </Pressable>
         <Text style={styles.photoPosition}>{index + 1} / {count}</Text>
-        <Pressable accessibilityRole="button" accessibilityLabel={`Move photo ${index + 1} right`} disabled={disabled || index === count - 1} onPress={onMoveRight} style={({ pressed }) => [styles.orderButton, (disabled || index === count - 1) && styles.orderButtonDisabled, pressed && styles.pressed]}>
+        <Pressable accessibilityRole="button" accessibilityLabel={t("Move photo {{v0}} right", { v0: index + 1 })} disabled={disabled || index === count - 1} onPress={onMoveRight} style={({ pressed }) => [styles.orderButton, (disabled || index === count - 1) && styles.orderButtonDisabled, pressed && styles.pressed]}>
           <ChevronRight size={18} color={theme.colors.textSecondary} />
         </Pressable>
       </View>
@@ -580,22 +580,22 @@ function RoomRatesView({ room, onBack, onAddRate, onEditRate }: { room: Room; on
 
   return (
     <ScrollView style={uiStyles.screen} contentContainerStyle={styles.screenContent} showsVerticalScrollIndicator={false}>
-      <ScreenHeader title={`${room.name} rates`} onBack={onBack} action={<HeaderAction icon={Plus} label="Add rate" onPress={onAddRate} />} />
+      <ScreenHeader title={t("{{v0}} rates", { v0: room.name })} onBack={onBack} action={<HeaderAction icon={Plus} label={t("Add rate")} onPress={onAddRate} />} />
       <View style={styles.calendarRoomSummary}>
         <RoomPhoto uri={room.photoUrls[0]} variant="card" />
         <View style={{ flex: 1 }}>
           <Text style={styles.roomName}>{room.name}</Text>
-          <Text style={styles.compactMetaText}>Up to {room.maxGuests} guests · {bedSummary(room)}</Text>
+          <Text style={styles.compactMetaText}>{t("Up to")}{" "}{room.maxGuests} {" "}{t("guests ·")}{" "}{bedSummary(room)}</Text>
         </View>
       </View>
       <View style={styles.section}>
-        <SectionTitle>Rates calendar</SectionTitle>
-        <Text style={styles.sectionHelper}>Prices are shown per night. Dates without a rate are highlighted so gaps are easy to find.</Text>
-        {error ? <InlineState tone="danger">{error}</InlineState> : loading ? <LoadingState label="Loading rates…" compact /> : <BoardRateCalendar rates={rates} />}
+        <SectionTitle>{t("Rates calendar")}</SectionTitle>
+        <Text style={styles.sectionHelper}>{t("Prices are shown per night. Dates without a rate are highlighted so gaps are easy to find.")}</Text>
+        {error ? <InlineState tone="danger">{translateLabel(error)}</InlineState> : loading ? <LoadingState label={t("Loading rates…")} compact /> : <BoardRateCalendar rates={rates} />}
         {!loading && !error && rates.length === 0 ? (
           <View style={styles.emptyWrap}>
-            <EmptyState title="No rates yet" description="Choose a free date range and add the first nightly price." />
-            <Button onPress={onAddRate} icon={Plus}>Add first rate</Button>
+            <EmptyState title={t("No rates yet")} description={t("Choose a free date range and add the first nightly price.")} />
+            <Button onPress={onAddRate} icon={Plus}>{t("Add first rate")}</Button>
           </View>
         ) : !loading && !error ? (
           <View style={styles.list}>{rates.map((rate) => <RateCard key={rate.id} rate={rate} onPress={() => onEditRate(rate)} />)}</View>
@@ -623,27 +623,27 @@ function RoomDetail({ room, onBack, onEdit, onAddRate, onEditRate }: { room: Roo
 
   return (
     <ScrollView style={uiStyles.screen} contentContainerStyle={styles.screenContent} showsVerticalScrollIndicator={false}>
-      <ScreenHeader title={room.name} onBack={onBack} action={<HeaderAction icon={Edit3} label="Edit" onPress={onEdit} />} />
+      <ScreenHeader title={room.name} onBack={onBack} action={<HeaderAction icon={Edit3} label={t("Edit")} onPress={onEdit} />} />
       <View style={styles.detailHero}>
         <RoomPhoto uri={room.photoUrls[0]} variant="hero" />
-        <Text style={styles.detailDescription}>{room.description || "No description added yet"}</Text>
+        <Text style={styles.detailDescription}>{room.description || t("No description added yet")}</Text>
         <View style={styles.detailMetaRow}>
-          <View style={styles.detailMeta}><Users size={18} color={theme.colors.action} /><Text style={styles.detailMetaText}>up to {room.maxGuests} guests</Text></View>
+          <View style={styles.detailMeta}><Users size={18} color={theme.colors.action} /><Text style={styles.detailMetaText}>{t("up to")}{" "}{room.maxGuests} {" "}{t("guests")}</Text></View>
           <View style={styles.detailMeta}><BedDouble size={18} color={theme.colors.action} /><Text style={styles.detailMetaText}>{bedSummary(room)}</Text></View>
         </View>
         {room.amenities.length ? <Text style={styles.amenities}>{room.amenities.join(" · ")}</Text> : null}
       </View>
 
       <View style={styles.section}>
-        <SectionTitle action={<HeaderAction icon={Plus} label="Add rate" onPress={onAddRate} />}>Rates calendar</SectionTitle>
-        <Text style={styles.sectionHelper}>Prices are shown per night. Dates without a rate are highlighted so gaps are easy to find.</Text>
-        {error ? <InlineState tone="danger">{error}</InlineState> : loading ? <LoadingState label="Loading rates…" compact /> : (
+        <SectionTitle action={<HeaderAction icon={Plus} label={t("Add rate")} onPress={onAddRate} />}>{t("Rates calendar")}</SectionTitle>
+        <Text style={styles.sectionHelper}>{t("Prices are shown per night. Dates without a rate are highlighted so gaps are easy to find.")}</Text>
+        {error ? <InlineState tone="danger">{translateLabel(error)}</InlineState> : loading ? <LoadingState label={t("Loading rates…")} compact /> : (
           <BoardRateCalendar rates={rates} />
         )}
         {!loading && !error && rates.length === 0 ? (
           <View style={styles.emptyWrap}>
-            <EmptyState title="No rates yet" description="Choose a free date range and add the first nightly price." />
-            <Button onPress={onAddRate} icon={Plus}>Add first rate</Button>
+            <EmptyState title={t("No rates yet")} description={t("Choose a free date range and add the first nightly price.")} />
+            <Button onPress={onAddRate} icon={Plus}>{t("Add first rate")}</Button>
           </View>
         ) : !loading && !error && rates.length > 0 ? (
           <View style={styles.list}>{rates.map((rate) => <RateCard key={rate.id} rate={rate} onPress={() => onEditRate(rate)} />)}</View>
@@ -739,16 +739,16 @@ function RateForm({ room, rate, onBack, onSaved }: { room: Room; rate: RatePerio
   return (
     <KeyboardAvoidingView style={uiStyles.screen} behavior={Platform.OS === "ios" ? "padding" : undefined}>
       <ScrollView contentContainerStyle={styles.screenContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-        <ScreenHeader title={rate ? "Edit rate" : "New rate"} onBack={onBack} />
+        <ScreenHeader title={rate ? t("Edit rate") : t("New rate")} onBack={onBack} />
         <Text style={styles.lead}>{room.name}</Text>
-        {error ? <InlineState tone="danger">{error}</InlineState> : null}
+        {error ? <InlineState tone="danger">{translateLabel(error)}</InlineState> : null}
         <View style={styles.formSection}>
-          <SectionTitle>Board basis</SectionTitle>
+          <SectionTitle>{t("Board basis")}</SectionTitle>
           <BoardSelector value={mealPlan} disabled={saving} onChange={(value) => { setMealPlan(value); setCalendarError(null); }} />
-          <Text style={styles.sectionHelper}>This price applies only to {mealPlan} requests.</Text>
-          <SectionTitle>Select dates</SectionTitle>
-          <Text style={styles.sectionHelper}>Grey dates already have a price for this board. Other boards can use the same dates.</Text>
-          {ratesLoading ? <LoadingState label="Loading calendar…" compact /> : (
+          <Text style={styles.sectionHelper}>{t("This price applies only to")}{" "}{mealPlan} {" "}{t("requests.")}</Text>
+          <SectionTitle>{t("Select dates")}</SectionTitle>
+          <Text style={styles.sectionHelper}>{t("Grey dates already have a price for this board. Other boards can use the same dates.")}</Text>
+          {ratesLoading ? <LoadingState label={t("Loading calendar…")} compact /> : (
             <RateCalendar
               rates={existingRates.filter((item) => item.mealPlan === mealPlan && item.planCode === (rate?.planCode ?? existingRates.find((item) => item.mealPlan === mealPlan)?.planCode ?? "standard"))}
               selectedStart={start || undefined}
@@ -764,44 +764,44 @@ function RateForm({ room, rate, onBack, onSaved }: { room: Room; rate: RatePerio
             />
           )}
           {calendarError ? <InlineState tone="warning">{calendarError}</InlineState> : null}
-          {submitted && !datesValid ? <Text style={styles.validationSummary}>Choose the first and last night on the calendar.</Text> : null}
+          {submitted && !datesValid ? <Text style={styles.validationSummary}>{t("Choose the first and last night on the calendar.")}</Text> : null}
         </View>
         <View style={styles.formSection}>
-          <SectionTitle>Nightly price</SectionTitle>
-          <Field label={`${mealPlan} package / night, EUR`} keyboardType="decimal-pad" value={nightly} onChangeText={setNightly} editable={!saving} error={submitted && parseMoneyCents(nightly) === null ? "Enter an amount, for example 100 or 100.50" : undefined} />
+          <SectionTitle>{t("Nightly price")}</SectionTitle>
+          <Field label={t("{{v0}} package / night, EUR", { v0: mealPlan })} keyboardType="decimal-pad" value={nightly} onChangeText={setNightly} editable={!saving} error={submitted && parseMoneyCents(nightly) === null ? t("Enter an amount, for example 100 or 100.50") : undefined} />
           {datesValid && parseMoneyCents(nightly) !== null ? (
             <View style={styles.rateSummary}>
               <Text style={styles.rateSummaryPeriod}>{formatDate(start)} — {formatDate(endInclusive)}</Text>
-              <Text style={styles.rateSummaryPrice}>{formatCents(parseMoneyCents(nightly) ?? 0)} / night</Text>
+              <Text style={styles.rateSummaryPrice}>{formatCents(parseMoneyCents(nightly) ?? 0)} {" "}{t("/ night")}</Text>
             </View>
           ) : null}
         </View>
         <View style={styles.formSection}>
-          <SectionTitle>Guests and supplements</SectionTitle>
-          <Text style={styles.sectionHelper}>The package price includes accommodation and the selected board for the guests below. Extra guest supplements must include their board.</Text>
+          <SectionTitle>{t("Guests and supplements")}</SectionTitle>
+          <Text style={styles.sectionHelper}>{t("The package price includes accommodation and the selected board for the guests below. Extra guest supplements must include their board.")}</Text>
           <View style={styles.fieldRow}>
-            <View style={styles.fieldHalf}><Field label="Adults included" keyboardType="number-pad" value={includedAdults} onChangeText={setIncludedAdults} editable={!saving} /></View>
-            <View style={styles.fieldHalf}><Field label="Children included" keyboardType="number-pad" value={includedChildren} onChangeText={setIncludedChildren} editable={!saving} /></View>
+            <View style={styles.fieldHalf}><Field label={t("Adults included")} keyboardType="number-pad" value={includedAdults} onChangeText={setIncludedAdults} editable={!saving} /></View>
+            <View style={styles.fieldHalf}><Field label={t("Children included")} keyboardType="number-pad" value={includedChildren} onChangeText={setIncludedChildren} editable={!saving} /></View>
           </View>
           <View style={styles.fieldRow}>
-            <View style={styles.fieldHalf}><Field label="Extra adult, EUR" keyboardType="decimal-pad" value={extraAdult} onChangeText={setExtraAdult} editable={!saving} /></View>
-            <View style={styles.fieldHalf}><Field label="Extra child, EUR" keyboardType="decimal-pad" value={extraChild} onChangeText={setExtraChild} editable={!saving} /></View>
+            <View style={styles.fieldHalf}><Field label={t("Extra adult, EUR")} keyboardType="decimal-pad" value={extraAdult} onChangeText={setExtraAdult} editable={!saving} /></View>
+            <View style={styles.fieldHalf}><Field label={t("Extra child, EUR")} keyboardType="decimal-pad" value={extraChild} onChangeText={setExtraChild} editable={!saving} /></View>
           </View>
           <View style={styles.fieldRow}>
-            <View style={styles.fieldHalf}><Field label="Child age up to" keyboardType="number-pad" value={maxChildAge} onChangeText={setMaxChildAge} editable={!saving} /></View>
-            <View style={styles.fieldHalf}><Field label="Minimum nights" keyboardType="number-pad" value={minNights} onChangeText={setMinNights} editable={!saving} /></View>
+            <View style={styles.fieldHalf}><Field label={t("Child age up to")} keyboardType="number-pad" value={maxChildAge} onChangeText={setMaxChildAge} editable={!saving} /></View>
+            <View style={styles.fieldHalf}><Field label={t("Minimum nights")} keyboardType="number-pad" value={minNights} onChangeText={setMinNights} editable={!saving} /></View>
           </View>
           <View style={styles.mealCard}>
-            <Text style={styles.fieldLabel}>Additional board charge</Text>
-            <Text style={styles.mealHelper}>Leave at 0 when meals are included in the package price. Any amount here is added for every guest, every night.</Text>
+            <Text style={styles.fieldLabel}>{t("Additional board charge")}</Text>
+            <Text style={styles.mealHelper}>{t("Leave at 0 when meals are included in the package price. Any amount here is added for every guest, every night.")}</Text>
             <View style={styles.fieldRow}>
-              <View style={styles.fieldHalf}><Field label={`${mealPlan} / adult / night, EUR`} keyboardType="decimal-pad" value={boardAdult} onChangeText={setBoardAdult} editable={!saving} /></View>
-              <View style={styles.fieldHalf}><Field label={`${mealPlan} / child / night, EUR`} keyboardType="decimal-pad" value={boardChild} onChangeText={setBoardChild} editable={!saving} /></View>
+              <View style={styles.fieldHalf}><Field label={t("{{v0}} / adult / night, EUR", { v0: mealPlan })} keyboardType="decimal-pad" value={boardAdult} onChangeText={setBoardAdult} editable={!saving} /></View>
+              <View style={styles.fieldHalf}><Field label={t("{{v0}} / child / night, EUR", { v0: mealPlan })} keyboardType="decimal-pad" value={boardChild} onChangeText={setBoardChild} editable={!saving} /></View>
             </View>
           </View>
-          {submitted && !valid ? <Text style={styles.validationSummary}>Check the numbers: included guests must fit the room, values cannot be negative, child age is up to 17, and minimum stay starts at 1 night.</Text> : null}
+          {submitted && !valid ? <Text style={styles.validationSummary}>{t("Check the numbers: included guests must fit the room, values cannot be negative, child age is up to 17, and minimum stay starts at 1 night.")}</Text> : null}
         </View>
-        <Button onPress={() => void save()} loading={saving} icon={Check}>{rate ? "Save rate changes" : "Add rate period"}</Button>
+        <Button onPress={() => void save()} loading={saving} icon={Check}>{rate ? t("Save rate changes") : t("Add rate period")}</Button>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -844,49 +844,49 @@ function PreviewCalculator({ room, rates }: { room: Room; rates: RatePeriod[] })
 
   return (
     <View style={styles.section}>
-      <SectionTitle>Price check</SectionTitle>
+      <SectionTitle>{t("Price check")}</SectionTitle>
       <BoardSelector value={mealPlan} onChange={(value) => { setMealPlan(value); setPreview(null); }} />
       <View style={[uiStyles.card, styles.previewCard]}>
-        <Text style={styles.previewIntro}>See how the system prices a sample request.</Text>
+        <Text style={styles.previewIntro}>{t("See how the system prices a sample request.")}</Text>
         <View style={styles.fieldRow}>
-          <View style={styles.fieldHalf}><Field label="Check-in" value={checkIn} onChangeText={setCheckIn} autoCapitalize="none" /></View>
-          <View style={styles.fieldHalf}><Field label="Check-out" value={checkOut} onChangeText={setCheckOut} autoCapitalize="none" /></View>
+          <View style={styles.fieldHalf}><Field label={t("Check-in")} value={checkIn} onChangeText={setCheckIn} autoCapitalize="none" /></View>
+          <View style={styles.fieldHalf}><Field label={t("Check-out")} value={checkOut} onChangeText={setCheckOut} autoCapitalize="none" /></View>
         </View>
         <View style={styles.fieldRow}>
-          <View style={styles.fieldHalf}><Field label="Adults" keyboardType="number-pad" value={adults} onChangeText={setAdults} /></View>
-          <View style={styles.fieldHalf}><Field label="Child ages" keyboardType="numbers-and-punctuation" placeholder="5, 10" value={childAges} onChangeText={setChildAges} /></View>
+          <View style={styles.fieldHalf}><Field label={t("Adults")} keyboardType="number-pad" value={adults} onChangeText={setAdults} /></View>
+          <View style={styles.fieldHalf}><Field label={t("Child ages")} keyboardType="numbers-and-punctuation" placeholder="5, 10" value={childAges} onChangeText={setChildAges} /></View>
         </View>
-        {error ? <InlineState tone="danger">{error}</InlineState> : null}
+        {error ? <InlineState tone="danger">{translateLabel(error)}</InlineState> : null}
         {preview?.ok && breakdown ? (
           <View style={styles.previewBreakdown}>
             <View style={styles.previewBreakdownHeader}>
-              <View><Text style={styles.previewResultLabel}>{preview.price.nights.length} night{preview.price.nights.length === 1 ? "" : "s"}</Text><Text style={styles.previewResultHint}>Server calculation</Text></View>
+              <View><Text style={styles.previewResultLabel}>{t("{{count}} night", { count: preview.price.nights.length })}</Text><Text style={styles.previewResultHint}>{t("Server calculation")}</Text></View>
               <Text style={styles.previewTotal}>{formatCents(preview.price.totalCents)}</Text>
             </View>
-            <View style={styles.previewLine}><Text style={styles.previewLineLabel}>Room</Text><Text style={styles.previewLineValue}>{formatCents(breakdown.room)}</Text></View>
-            {breakdown.guests > 0 ? <View style={styles.previewLine}><Text style={styles.previewLineLabel}>Extra guests</Text><Text style={styles.previewLineValue}>{formatCents(breakdown.guests)}</Text></View> : null}
-            {breakdown.board > 0 ? <View style={styles.previewLine}><Text style={styles.previewLineLabel}>{mealPlan} board</Text><Text style={styles.previewLineValue}>{formatCents(breakdown.board)}</Text></View> : null}
+            <View style={styles.previewLine}><Text style={styles.previewLineLabel}>{t("Room")}</Text><Text style={styles.previewLineValue}>{formatCents(breakdown.room)}</Text></View>
+            {breakdown.guests > 0 ? <View style={styles.previewLine}><Text style={styles.previewLineLabel}>{t("Extra guests")}</Text><Text style={styles.previewLineValue}>{formatCents(breakdown.guests)}</Text></View> : null}
+            {breakdown.board > 0 ? <View style={styles.previewLine}><Text style={styles.previewLineLabel}>{mealPlan} {" "}{t("board")}</Text><Text style={styles.previewLineValue}>{formatCents(breakdown.board)}</Text></View> : null}
           </View>
         ) : preview && !preview.ok ? (
-          <InlineState tone="warning">No complete rate coverage: {preview.issues.map((issue) => issue.date ?? issue.type).join(", ")}</InlineState>
+          <InlineState tone="warning">{t("No complete rate coverage:")}{" "}{preview.issues.map((issue) => issue.date ?? issue.type).join(", ")}</InlineState>
         ) : null}
-        <Button variant="secondary" onPress={() => void calculate()} loading={loading}>Calculate</Button>
+        <Button variant="secondary" onPress={() => void calculate()} loading={loading}>{t("Calculate")}</Button>
       </View>
     </View>
   );
 }
 
 function RateCard({ rate, onPress }: { rate: RatePeriod; onPress: () => void }) {
-  const mealDescription = `${rate.mealPlan} · ${formatCents(rate.boardAdultCents)}/adult · ${formatCents(rate.boardChildCents)}/child additional board charge`;
+  const mealDescription = t("{{v0}} · {{v1}}/adult · {{v2}}/child additional board charge", { v0: rate.mealPlan, v1: formatCents(rate.boardAdultCents), v2: formatCents(rate.boardChildCents) });
   return (
-    <Pressable accessibilityRole="button" accessibilityLabel={`Edit ${rate.mealPlan} rate from ${rate.start} to ${rate.endInclusive}`} onPress={onPress} style={({ pressed }) => [uiStyles.card, styles.rateCard, pressed && styles.pressed]}>
+    <Pressable accessibilityRole="button" accessibilityLabel={t("Edit {{v0}} rate from {{v1}} to {{v2}}", { v0: rate.mealPlan, v1: rate.start, v2: rate.endInclusive })} onPress={onPress} style={({ pressed }) => [uiStyles.card, styles.rateCard, pressed && styles.pressed]}>
       <View style={styles.rateTop}>
         <BoardBadge mealPlan={rate.mealPlan} />
-        <View style={{ flex: 1 }}><Text style={styles.rateName}>{formatDate(rate.start)} — {formatDate(rate.endInclusive)}</Text><Text style={styles.rateCode}>{rate.mealPlan} · {rate.active ? "Active" : "Inactive"}</Text></View>
+        <View style={{ flex: 1 }}><Text style={styles.rateName}>{formatDate(rate.start)} — {formatDate(rate.endInclusive)}</Text><Text style={styles.rateCode}>{rate.mealPlan} · {rate.active ? t("Active") : t("Inactive")}</Text></View>
         <Text style={styles.ratePrice}>{formatCents(rate.nightlyBaseCents)}</Text>
         <Edit3 size={17} color={theme.colors.action} />
       </View>
-      <Text style={styles.rateConditions}>{mealDescription} · {rate.includedAdults} adult{rate.includedAdults === 1 ? "" : "s"} included · min. {rate.minNights} night{rate.minNights === 1 ? "" : "s"}</Text>
+      <Text style={styles.rateConditions}>{mealDescription} · {t("{{count}} adult", { count: rate.includedAdults })} {" "}{t("included · min.")}{" "}{t("{{count}} night", { count: rate.minNights })}</Text>
     </Pressable>
   );
 }
@@ -898,14 +898,14 @@ function RoomPhoto({ uri, variant }: { uri?: string | undefined; variant: "card"
   if (!uri || failed) {
     return <View style={[imageStyle, styles.roomImageFallback]}><ImageIcon size={variant === "hero" ? 30 : 23} color={theme.colors.action} /></View>;
   }
-  return <Image source={{ uri }} resizeMode="cover" accessibilityLabel="Room photo" onError={() => setFailed(true)} style={imageStyle} />;
+  return <Image source={{ uri }} resizeMode="cover" accessibilityLabel={t("Room photo")} onError={() => setFailed(true)} style={imageStyle} />;
 }
 
 function ScreenHeader({ title, onBack, action }: { title: string; onBack: () => void; action?: ReactNode }) {
   return (
     <View style={styles.header}>
-      <Pressable accessibilityRole="button" accessibilityLabel="Back" onPress={onBack} style={({ pressed }) => [styles.back, pressed && styles.pressed]}><ArrowLeft size={22} color={theme.colors.text} /></Pressable>
-      <Text numberOfLines={1} style={styles.headerTitle}>{title}</Text>
+      <Pressable accessibilityRole="button" accessibilityLabel={t("Back")} onPress={onBack} style={({ pressed }) => [styles.back, pressed && styles.pressed]}><ArrowLeft size={22} color={theme.colors.text} /></Pressable>
+      <Text numberOfLines={1} style={styles.headerTitle}>{translateLabel(title)}</Text>
       <View style={styles.headerAction}>{action}</View>
     </View>
   );
@@ -914,7 +914,7 @@ function ScreenHeader({ title, onBack, action }: { title: string; onBack: () => 
 function HeaderAction({ icon: Icon, label, onPress }: { icon: typeof Plus; label: string; onPress: () => void }) {
   return (
     <Pressable accessibilityRole="button" onPress={onPress} style={({ pressed }) => [styles.headerActionButton, pressed && styles.pressed]}>
-      <Icon size={17} color={theme.colors.action} /><Text style={styles.headerActionLabel}>{label}</Text>
+      <Icon size={17} color={theme.colors.action} /><Text style={styles.headerActionLabel}>{translateLabel(label)}</Text>
     </Pressable>
   );
 }
@@ -923,14 +923,14 @@ function ChoiceRow({ options, selected, onSelect }: { options: Array<{ value: st
   return (
     <View style={styles.choices}>{options.map((option) => (
       <Pressable key={option.value} accessibilityRole="button" accessibilityState={{ selected: option.value === selected }} onPress={() => onSelect(option.value)} style={({ pressed }) => [styles.choice, option.value === selected && styles.choiceSelected, pressed && styles.pressed]}>
-        <Text style={[styles.choiceText, option.value === selected && styles.choiceTextSelected]}>{option.label}</Text>
+        <Text style={[styles.choiceText, option.value === selected && styles.choiceTextSelected]}>{translateLabel(option.label)}</Text>
       </Pressable>
     ))}</View>
   );
 }
 
 function LoadingState({ label, compact = false }: { label: string; compact?: boolean }) {
-  return <View style={[styles.loading, compact && styles.loadingCompact]}><ActivityIndicator color={theme.colors.action} /><Text style={styles.loadingText}>{label}</Text></View>;
+  return <View style={[styles.loading, compact && styles.loadingCompact]}><ActivityIndicator color={theme.colors.action} /><Text style={styles.loadingText}>{translateLabel(label)}</Text></View>;
 }
 
 const bedOptions = [
@@ -980,18 +980,13 @@ function imageMimeType(asset: ImagePicker.ImagePickerAsset): "image/jpeg" | "ima
   return null;
 }
 function moneyInput(cents: number): string { return (cents / 100).toFixed(2).replace(/\.00$/, ""); }
-function formatCents(cents: number): string { return new Intl.NumberFormat("en-GB", { style: "currency", currency: "EUR", maximumFractionDigits: 2 }).format(cents / 100); }
-function formatDate(date: string): string { const [year, month, day] = date.split("-"); return `${day}.${month}.${year}`; }
+function formatCents(cents: number): string { return new Intl.NumberFormat(uiLocale(), { style: "currency", currency: "EUR", maximumFractionDigits: 2 }).format(cents / 100); }
+function formatDate(date: string): string { return new Intl.DateTimeFormat(uiLocale(), { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }).format(new Date(`${date}T00:00:00Z`)); }
 function bedSummary(room: Room): string {
-  if (room.beds.length === 0) return "beds not specified";
+  if (room.beds.length === 0) return t("beds not specified");
   return room.beds.map((bed) => {
-    const label = bedOptions.find((option) => option.value === bed.type)?.label.toLowerCase() ?? "bed";
-    return `${bed.count} ${bed.count === 1 ? label : pluralizeBedLabel(label)}`;
+    return `${bed.count} × ${t(bedOptions.find((option) => option.value === bed.type)?.label ?? "Beds").toLowerCase()}`;
   }).join(" · ");
-}
-function pluralizeBedLabel(label: string): string {
-  if (label === "cot") return "cots";
-  return `${label}s`;
 }
 
 const styles = StyleSheet.create({

@@ -1,3 +1,4 @@
+import { resolveLanguage, formatLocale } from "@hotel/i18n";
 import type { OfferSnapshot } from "./types.js";
 
 type SupportedLanguage = "it" | "en";
@@ -5,11 +6,11 @@ type SupportedLanguage = "it" | "en";
 export type Copy = ReturnType<typeof copyFor>;
 
 export function languageFor(locale?: string): SupportedLanguage {
-  return locale?.toLowerCase().startsWith("it") ? "it" : "en";
+  return !locale?.trim() ? "it" : resolveLanguage(locale);
 }
 
 export function localeFor(locale?: string): string {
-  return languageFor(locale) === "en" ? "en-GB" : "it-IT";
+  return formatLocale(languageFor(locale));
 }
 
 export function copyFor(locale?: string) {
@@ -29,6 +30,8 @@ export function copyFor(locale?: string) {
       adults: (count: number) => `${count} ${count === 1 ? "adult" : "adults"}`,
       children: (count: number) => `${count} ${count === 1 ? "child" : "children"}`,
       perStay: "Total stay",
+      accommodation: "Accommodation & board", extras: "Extras", discount: "Discount", deposit: "Deposit", cancellationPolicy: "Cancellation policy",
+      extraChargeModes: { per_stay: "once per stay", per_night: "per night", per_guest: "per guest", per_guest_per_night: "per guest, per night" },
       roomOnly: "Room only",
       breakfast: "Breakfast included",
       board: "Board",
@@ -42,13 +45,14 @@ export function copyFor(locale?: string) {
       nextPhoto: "Next photo",
       accept: "Accept proposal",
       select: "Select this option",
-      active: "This proposal is available.",
-      offerStatuses: { available: "Available", expired: "Expired", accepted: "Accepted" },
+      active: "Active",
+      activeNote: "Sent out, not accepted",
+      offerStatuses: { available: "Active", expired: "Expired", accepted: "Accepted" },
       expiredTitle: "This reservation offer has expired",
       newBooking: "Make a new booking & check availability",
       expiredNext: "Visit our website to check current availability and make a new booking.",
-      expired: "This proposal has expired.",
-      accepted: "Proposal accepted. The hotel will now verify availability.",
+      expired: "Expired",
+      accepted: "Accepted",
       acceptedTitle: (name: string) => `Thank you, ${name}.`,
       acceptedNext: (hotel: string) => `You will receive the booking confirmation soon from ${hotel}.`,
       revoked: "This proposal is no longer available.",
@@ -72,6 +76,8 @@ export function copyFor(locale?: string) {
     adults: (count: number) => `${count} ${count === 1 ? "adulto" : "adulti"}`,
     children: (count: number) => `${count} ${count === 1 ? "bambino" : "bambini"}`,
     perStay: "Totale soggiorno",
+    accommodation: "Soggiorno e trattamento", extras: "Servizi aggiuntivi", discount: "Sconto", deposit: "Caparra", cancellationPolicy: "Condizioni di cancellazione",
+    extraChargeModes: { per_stay: "una tantum", per_night: "a notte", per_guest: "a persona", per_guest_per_night: "a persona, a notte" },
     roomOnly: "Solo camera",
     breakfast: "Colazione inclusa",
     board: "Trattamento",
@@ -85,13 +91,14 @@ export function copyFor(locale?: string) {
     nextPhoto: "Foto successiva",
     accept: "Accetta la proposta",
     select: "Seleziona questa opzione",
-    active: "Questa proposta è disponibile.",
-    offerStatuses: { available: "Disponibile", expired: "Scaduta", accepted: "Accettata" },
+    active: "Attiva",
+    activeNote: "Inviata, non ancora accettata",
+    offerStatuses: { available: "Attiva", expired: "Scaduta", accepted: "Accettata" },
     expiredTitle: "Questa offerta di prenotazione è scaduta",
     newBooking: "Nuova prenotazione e disponibilità",
     expiredNext: "Visiti il nostro sito per verificare la disponibilità attuale e fare una nuova prenotazione.",
-    expired: "Questa proposta è scaduta.",
-    accepted: "Proposta accettata. L’hotel verificherà ora la disponibilità.",
+    expired: "Scaduta",
+    accepted: "Accettata",
     acceptedTitle: (name: string) => `Grazie, ${name}.`,
     acceptedNext: (hotel: string) => `Riceverà presto la conferma della prenotazione da ${hotel}.`,
     revoked: "Questa proposta non è più disponibile.",

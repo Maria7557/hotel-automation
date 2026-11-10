@@ -48,9 +48,12 @@ export const errors = {
   reservationAccepted: () => new AppError(409, "RESERVATION_ACCEPTED", "An offer has already been accepted for this reservation."),
   offerContactRequired: () => new AppError(422, "OFFER_CONTACT_REQUIRED", "Add an email or WhatsApp number to the request before sending offers."),
   offerBoardRequired: () => new AppError(422, "OFFER_BOARD_REQUIRED", "The request needs a board basis before offers can be sent."),
+  offerRateUnavailable: (details?: unknown) => new AppError(422, "OFFER_RATE_UNAVAILABLE", "No complete rate matches this room, stay, guests and board. Adjust the offer or add the missing rates in Settings.", details),
+  offerExtraUnavailable: () => new AppError(422, "OFFER_EXTRA_UNAVAILABLE", "One of the selected extras is no longer available. Refresh the offer settings."),
+  offerPriceChanged: () => new AppError(409, "OFFER_PRICE_CHANGED", "The rates or extras changed. Review the recalculated price before sending."),
   offerRevoked: () => new AppError(410, "OFFER_REVOKED", "This offer has been revoked."),
   invalidOfferOption: () =>
-    new AppError(422, "INVALID_OFFER_OPTION", "The selected offer option is invalid or does not match the requested board."),
+    new AppError(422, "INVALID_OFFER_OPTION", "The selected offer option is invalid."),
   configRequired: (provider: string) =>
     new AppError(503, "CONFIG_REQUIRED", `${provider} configuration is required.`),
   oauthStateInvalid: () =>

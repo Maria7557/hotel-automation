@@ -1,14 +1,19 @@
-import type { ManualInquiryInput } from "@hotel/contracts";
+import { DEFAULT_GUEST_LANGUAGE, type ManualInquiryInput } from "@hotel/contracts";
 import type { HotelRequest } from "../api/types";
 
-export function duplicateRequestDraft(request: HotelRequest, locale: string): Omit<ManualInquiryInput, "mealPlan"> & { mealPlan: HotelRequest["mealPlan"] } {
+type RequestDraft = Omit<ManualInquiryInput, "guest" | "mealPlan"> & {
+  guest: Omit<ManualInquiryInput["guest"], "email" | "phone"> & { email: string | null; phone: string | null };
+  mealPlan: HotelRequest["mealPlan"];
+};
+
+export function duplicateRequestDraft(request: HotelRequest): RequestDraft {
   const offers = request.offers?.map(({ roomId, planName, totalCents, note }) => ({ roomId, planName, totalCents, note }));
   return {
     guest: {
       name: request.guestName,
       email: request.email.recipient ?? null,
       phone: request.whatsapp.recipient ?? null,
-      language: request.locale ?? locale,
+      language: request.locale ?? DEFAULT_GUEST_LANGUAGE,
     },
     checkIn: request.checkIn,
     checkOut: request.checkOut,

@@ -77,9 +77,9 @@ export async function registerChannelRoutes(
       try {
         const { state, code } = googleCallbackQuerySchema.parse(request.query);
         await channelService.completeGoogleOAuth(state, code);
-        return sendOAuthResultPage(reply, { success: true, provider: "Google" });
+        return sendOAuthResultPage(reply, { language: request.cookies.hotel_language ?? request.headers["accept-language"]?.split(",")[0], success: true, provider: "Google" });
       } catch (error) {
-        return sendOAuthResultPage(reply, {
+        return sendOAuthResultPage(reply, { language: request.cookies.hotel_language ?? request.headers["accept-language"]?.split(",")[0],
           success: false,
           provider: "Google",
           statusCode: oauthFailureStatus(error),

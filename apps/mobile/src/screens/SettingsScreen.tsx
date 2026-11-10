@@ -1,3 +1,5 @@
+import { t, translateLabel, getLanguage } from "../i18n";
+import { LanguageSelector } from "../i18n/LanguageSelector";
 import { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import {
@@ -9,6 +11,7 @@ import {
   CircleHelp,
   Code2,
   FileText,
+  FileInput,
   Globe2,
   LogOut,
   Mail,
@@ -32,6 +35,8 @@ export function SettingsScreen({
   onOpenConnections,
   onOpenSiteIntegration,
   onOpenNotifications,
+  onOpenForm,
+  onOpenOfferSettings,
   onOpenSupport,
 }: {
   profile: HotelProfile;
@@ -45,9 +50,11 @@ export function SettingsScreen({
   onOpenConnections: () => void;
   onOpenSiteIntegration: () => void;
   onOpenNotifications: () => void;
+  onOpenForm: () => void;
+  onOpenOfferSettings: () => void;
   onOpenSupport: () => void;
 }) {
-  const notReady = (title: string) => Alert.alert(title, "This section will be connected to the API in the next iteration.");
+  const notReady = (title: string) => Alert.alert(title, t("This section will be connected to the API in the next iteration."));
   const [connections, setConnections] = useState<ConnectionStatus[]>([]);
   const [roomCount, setRoomCount] = useState(demo ? 2 : 0);
   const [hasRates, setHasRates] = useState(demo);
@@ -77,13 +84,13 @@ export function SettingsScreen({
     const mailConnected = demo || connections.some((connection) => connection.kind === "mail" && connection.state === "connected");
     const whatsappConnected = demo || connections.some((connection) => connection.kind === "waha" && connection.state === "connected");
     return [
-      { title: "Hotel profile", detail: "Name, location and photos", complete: Boolean(profile.name && profile.city && profile.countryCode), icon: Building2, onPress: onOpenProfile },
-      { title: "Rooms & rates", detail: roomCount > 0 ? "Add prices for every room" : "Add your first room and its prices", complete: roomCount > 0 && hasRates, icon: BedDouble, onPress: onOpenInventory },
-      { title: "Mail", detail: "Send offers from your hotel address", complete: mailConnected, icon: Mail, onPress: onOpenConnections },
-      { title: "WhatsApp", detail: "Send offers from your hotel number", complete: whatsappConnected, icon: MessageCircle, onPress: onOpenConnections },
-      { title: "Website form", detail: "Receive enquiries from your website", complete: demo || profile.allowedOrigins.length > 0, icon: Code2, onPress: onOpenSiteIntegration },
+      { title: t("Hotel profile"), detail: t("Name, location and photos"), complete: Boolean(profile.name && profile.city && profile.countryCode), icon: Building2, onPress: onOpenProfile },
+      { title: t("Rooms & rates"), detail: roomCount > 0 ? t("Add prices for every room") : t("Add your first room and its prices"), complete: roomCount > 0 && hasRates, icon: BedDouble, onPress: onOpenInventory },
+      { title: t("Mail"), detail: t("Send offers from your hotel address"), complete: mailConnected, icon: Mail, onPress: onOpenConnections },
+      { title: "WhatsApp", detail: t("Send offers from your hotel number"), complete: whatsappConnected, icon: MessageCircle, onPress: onOpenConnections },
+      { title: t("Website form"), detail: t("Receive enquiries from your website"), complete: demo || profile.allowedOrigins.length > 0, icon: Code2, onPress: onOpenSiteIntegration },
     ];
-  }, [connections, demo, hasRates, onOpenConnections, onOpenInventory, onOpenProfile, onOpenSiteIntegration, profile, roomCount]);
+  }, [connections, demo, hasRates, onOpenConnections, onOpenInventory, onOpenProfile, onOpenSiteIntegration, profile, roomCount, getLanguage()]);
   const completedSteps = setupSteps.filter((step) => step.complete).length;
   const setupProgress = `${Math.round((completedSteps / setupSteps.length) * 100)}%` as `${number}%`;
 
@@ -95,14 +102,14 @@ export function SettingsScreen({
       showsVerticalScrollIndicator={false}
     >
       <View style={styles.titleBlock}>
-        <Text style={uiStyles.h1}>Settings</Text>
+        <Text style={uiStyles.h1}>{t("Settings")}</Text>
       </View>
 
-      {demo ? <InlineState tone="warning">Demo mode: changes are not saved to the server</InlineState> : null}
+      {demo ? <InlineState tone="warning">{t("Demo mode: changes are not saved to the server")}</InlineState> : null}
 
       <View style={styles.section}>
         <View style={styles.sectionHeading}>
-          <SectionTitle>Automation setup</SectionTitle>
+          <SectionTitle>{t("Automation setup")}</SectionTitle>
           {setupLoading ? <ActivityIndicator color={theme.colors.action} /> : <Text style={styles.progressCount}>{completedSteps}/{setupSteps.length}</Text>}
         </View>
         <View style={styles.progressTrack}><View style={[styles.progressFill, { width: setupLoading ? "0%" : setupProgress }]} /></View>
@@ -112,19 +119,27 @@ export function SettingsScreen({
       </View>
 
       <View style={styles.section}>
-        <SectionTitle>Automation settings</SectionTitle>
+        <SectionTitle>{t("Automation settings")}</SectionTitle>
         <View style={styles.menuCard}>
-          <SettingRow icon={FileText} title="Offer messages" subtitle="Email, WhatsApp, preview and test" onPress={onOpenMessages} />
-          <SettingRow icon={Bell} title="Notifications" subtitle="Phone and email alerts" onPress={onOpenNotifications} last />
+          <SettingRow icon={FileText} title={t("Offer messages")} subtitle={t("Email, WhatsApp, preview and test")} onPress={onOpenMessages} />
+          <SettingRow icon={BedDouble} title={t("Extras & offer defaults")} subtitle={t("Services, prices, deposit and cancellation policy")} onPress={onOpenOfferSettings} />
+          <SettingRow icon={Bell} title={t("Notifications")} subtitle={t("Phone and email alerts")} onPress={onOpenNotifications} last />
         </View>
       </View>
 
       <View style={styles.section}>
-        <SectionTitle>Platform settings</SectionTitle>
+        <SectionTitle>{t("Platform settings")}</SectionTitle>
         <View style={styles.menuCard}>
-          <SettingRow icon={Globe2} title="Language and currency" subtitle={`${profile.locale} · ${profile.currency}`} onPress={() => notReady("Language and currency")} />
-          <SettingRow icon={Users} title="Team members" subtitle="Invitations will be added later" onPress={() => notReady("Team members")} />
-          <SettingRow icon={CircleHelp} title="Support" subtitle="WhatsApp · Telegram · Email · Phone" onPress={onOpenSupport} last />
+          <View style={{ padding: 20, gap: 12 }}><Text style={uiStyles.h2}>{t("App language")}</Text><LanguageSelector authenticated={!demo} /></View>
+          <SettingRow icon={Users} title={t("Team members")} subtitle={t("Invitations will be added later")} onPress={() => notReady(t("Team members"))} />
+          <SettingRow icon={CircleHelp} title={t("Support")} subtitle={t("WhatsApp · Telegram · Email · Phone")} onPress={onOpenSupport} last />
+        </View>
+      </View>
+
+      <View style={styles.section}>
+        <SectionTitle>{t("Testing")}</SectionTitle>
+        <View style={styles.menuCard}>
+          <SettingRow icon={FileInput} title={t("Form")} subtitle={t("Send a hotel enquiry")} onPress={onOpenForm} last />
         </View>
       </View>
 
@@ -136,11 +151,11 @@ export function SettingsScreen({
         style={({ pressed }) => [styles.logout, pressed && styles.pressed, logoutLoading && { opacity: 0.55 }]}
       >
         {logoutLoading ? <ActivityIndicator color={theme.colors.danger} /> : <LogOut size={19} color={theme.colors.danger} />}
-        <Text style={styles.logoutText}>{demo ? "Exit demo" : "Sign out"}</Text>
+        <Text style={styles.logoutText}>{demo ? t("Exit demo") : t("Sign out")}</Text>
       </Pressable>
-      {logoutError ? <Text style={styles.logoutError} accessibilityRole="alert">{logoutError}</Text> : null}
+      {logoutError ? <Text style={styles.logoutError} accessibilityRole="alert">{translateLabel(logoutError)}</Text> : null}
 
-      <Text style={styles.version}>Hotel Staff · V0.1</Text>
+      <Text style={styles.version}>{t("Hotel Staff · V0.1")}</Text>
     </ScrollView>
   );
 }
@@ -162,10 +177,10 @@ function SetupRow({
   onPress: () => void;
   last: boolean;
 }) {
-  return <Pressable accessibilityRole="button" accessibilityLabel={`${title}. ${complete ? "Completed" : detail}`} onPress={onPress} style={({ pressed }) => [styles.setupRow, !last && styles.settingDivider, pressed && styles.rowPressed]}>
+  return <Pressable accessibilityRole="button" accessibilityLabel={`${title}. ${complete ? t("Completed") : t(detail)}`} onPress={onPress} style={({ pressed }) => [styles.setupRow, !last && styles.settingDivider, pressed && styles.rowPressed]}>
     <View style={[styles.setupNumber, complete && styles.setupNumberComplete]}>{complete ? <Check size={18} color={theme.colors.onAction} strokeWidth={3} /> : <Text style={styles.setupNumberText}>{index}</Text>}</View>
     <View style={styles.settingIcon}><Icon size={20} color={complete ? theme.colors.success : theme.colors.action} /></View>
-    <View style={{ flex: 1 }}><Text style={styles.settingTitle}>{title}</Text><Text style={styles.settingSubtitle}>{complete ? "Completed" : detail}</Text></View>
+    <View style={{ flex: 1 }}><Text style={styles.settingTitle}>{translateLabel(title)}</Text><Text style={styles.settingSubtitle}>{complete ? t("Completed") : t(detail)}</Text></View>
     <ChevronRight size={18} color={theme.colors.textMuted} />
   </Pressable>;
 }
@@ -196,8 +211,8 @@ function SettingRow({
         <Icon size={20} color={theme.colors.action} />
       </View>
       <View style={{ flex: 1 }}>
-        <Text style={styles.settingTitle}>{title}</Text>
-        <Text style={styles.settingSubtitle}>{subtitle}</Text>
+        <Text style={styles.settingTitle}>{translateLabel(title)}</Text>
+        <Text style={styles.settingSubtitle}>{translateLabel(subtitle)}</Text>
       </View>
       {badge ? <Text style={styles.badge}>{badge}</Text> : null}
       <ChevronRight size={18} color={theme.colors.textMuted} />

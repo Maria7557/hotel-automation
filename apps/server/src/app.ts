@@ -1,3 +1,4 @@
+import { resolveLanguage, translate, validationMessage } from "@hotel/i18n";
 import { registerClientRoutes } from "./http/routes/clients.js";
 import type { ClientRepository } from "./repositories/clients.js";
 import cors from "@fastify/cors";
@@ -174,29 +175,30 @@ export async function createApp(options: AppOptions): Promise<FastifyInstance> {
   await registerEmbedRoutes(app);
   if (options.clients) await registerClientRoutes(app, authService, options.clients);
 
-  app.setNotFoundHandler(async (_request, reply) => {
-    return reply.code(404).send({ error: { code: "NOT_FOUND", message: "Route was not found." } });
+  app.setNotFoundHandler(async (request, reply) => {
+    return reply.code(404).send({ error: { code: "NOT_FOUND", message: translate(resolveLanguage(request.headers["accept-language"]?.split(",")[0]), "Route was not found.") } });
   });
 
   app.setErrorHandler(async (error, request, reply) => {
+    const language = resolveLanguage(request.headers["accept-language"]?.split(",")[0]);
     if (error instanceof ZodError) {
       return reply.code(400).send({
         error: {
           code: "VALIDATION_ERROR",
-          message: "Request validation failed.",
-          details: error.issues.map((issue) => ({ path: issue.path.join("."), message: issue.message })),
+          message: translate(language, "Request validation failed."),
+          details: error.issues.map((issue) => ({ path: issue.path.join("."), message: validationMessage(language, issue) })),
         },
       });
     }
 
     if (error instanceof AppError) {
       return reply.code(error.statusCode).send({
-        error: { code: error.code, message: error.message, ...(error.details ? { details: error.details } : {}) },
+        error: { code: error.code, message: translate(language, error.message), ...(error.details ? { details: error.details } : {}) },
       });
     }
 
     request.log.error({ err: error }, "Unhandled request error");
-    return reply.code(500).send({ error: { code: "INTERNAL_ERROR", message: "Unexpected server error." } });
+    return reply.code(500).send({ error: { code: "INTERNAL_ERROR", message: translate(language, "Unexpected server error.") } });
   });
 
   return app;

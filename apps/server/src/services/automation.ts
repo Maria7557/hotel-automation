@@ -1,7 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
-import { OFFER_VALIDITY_MS, mealPlanSchema, type DashboardQuery, type ManualInquiryInput, type MealPlan, type ReservationOffer, type SendReservationOffersInput } from "@hotel/contracts";
+import { AUTOMATIC_SENDING_TIMEOUT_MS, AUTOMATIC_SENDING_TIMEOUT_REASON } from "@hotel/contracts";
+import { DEFAULT_GUEST_LANGUAGE, OFFER_VALIDITY_MS, manualRequestSourceSchema, mealPlanSchema, occupancySchema, offerSettingsSchema, offerExtraLineSchema, type DashboardQuery, type InquiryFormInput, type ManualInquiryInput, type MealPlan, type OfferEditorData, type OfferSettings, type ReservationOffer, type SendReservationOffersInput } from "@hotel/contracts";
 
-import { buildOfferDraft, roomFitsOccupancy } from "@hotel/domain";
+import { buildOfferDraft } from "@hotel/domain";
+import { quoteReservationOffer } from "./reservation-offer-pricing.js";
 
 import { toDomainHotel, toDomainInquiry, toDomainRatePeriod, toDomainRoom } from "../adapters/domain.js";
 import { errors } from "../lib/errors.js";
@@ -51,7 +53,16 @@ export class AutomationService {
     if (!origin || !hotel.allowedOrigins.includes(origin)) throw errors.originNotAllowed();
     if (idempotencyKey.length < 1 || idempotencyKey.length > 160) throw errors.idempotencyKeyRequired();
 
-    return this.createInquiry(hotel, idempotencyKey, { ...input, source: { ...input.source, origin } });
+    return this.createInquiry(hotel, idempotencyKey, { ...input, source: { ...input.source, origin, heldForGuestNote: !!input.note.trim() } }, !input.note.trim());
+  }
+
+  async createFormInquiry(userId: string, idempotencyKey: string, input: InquiryFormInput) {
+    const facts = await this.repository.dashboardFactsForUser(userId, []);
+    if (!facts) throw errors.hotelNotFound();
+    return this.createInquiry(facts.hotel, `form:${idempotencyKey}`, {
+      ...input,
+      source: { type: "embed", widgetVersion: "v1", heldForGuestNote: !!input.note.trim() },
+    }, !input.note.trim());
   }
 
   async createManualInquiry(userId: string, idempotencyKey: string, input: ManualInquiryInput) {
@@ -178,43 +189,69 @@ export class AutomationService {
     return { ...this.intakeResponse(bundle), ...(bundle.replayed ? {} : { proposalUrl }) };
   }
 
+  async offerSettings(userId: string): Promise<OfferSettings> {
+    const facts = await this.repository.dashboardFactsForUser(userId, []);
+    if (!facts) throw errors.hotelNotFound();
+    return this.settingsForHotel(facts.hotel);
+  }
+
+  async saveOfferSettings(userId: string, settings: OfferSettings) {
+    const saved = await this.repository.saveOfferSettingsForUser(userId, settings);
+    if (!saved) throw errors.hotelNotFound();
+    return saved;
+  }
+
+  private async settingsForHotel(hotel: HotelProfile): Promise<OfferSettings> {
+    return await this.repository.findOfferSettingsForHotel(hotel.id)
+      ?? offerSettingsSchema.parse({ cancellationPolicy: hotel.termsText ?? "" });
+  }
+
+  async offerEditor(userId: string, inquiryId: string): Promise<OfferEditorData> {
+    const facts = await this.repository.dashboardFactsForUser(userId, [inquiryId]);
+    if (!facts) throw errors.hotelNotFound();
+    const inquiry = facts.inquiries.find(({ id }) => id === inquiryId);
+    if (!inquiry) throw errors.inquiryNotFound();
+    const [catalog, settings] = await Promise.all([this.repository.listCatalogForHotel(facts.hotel.id), this.settingsForHotel(facts.hotel)]);
+    const result = inquiry.mealPlan ? buildOfferDraft({ hotel: toDomainHotel(facts.hotel), inquiry: toDomainInquiry(inquiry),
+      rooms: catalog.rooms.map(toDomainRoom), ratePeriods: catalog.ratePeriods.map(toDomainRatePeriod) }) : null;
+    const suggestions = result?.ok ? result.draft.options.map(({ roomId, planCode }) =>
+      quoteReservationOffer(facts.hotel, inquiry, { roomId, planCode, pricingMode: "automatic", note: "" }, catalog, settings)) : [];
+    const plans = [...new Map(catalog.ratePeriods.map((rate) => [`${rate.roomId}:${rate.planCode}:${rate.mealPlan}`,
+      { roomId: rate.roomId, planCode: rate.planCode, planName: rate.planName, mealPlan: rate.mealPlan }])).values()];
+    return { settings, rooms: catalog.rooms.map(({ id, name, maxAdults, maxChildren, maxGuests }) => ({ id, name, maxAdults, maxChildren, maxGuests })), plans, suggestions };
+  }
+
+  async previewReservationOffer(userId: string, inquiryId: string, choice: SendReservationOffersInput["offers"][number]) {
+    const facts = await this.repository.dashboardFactsForUser(userId, [inquiryId]);
+    if (!facts) throw errors.hotelNotFound();
+    const inquiry = facts.inquiries.find(({ id }) => id === inquiryId);
+    if (!inquiry) throw errors.inquiryNotFound();
+    const [catalog, settings] = await Promise.all([this.repository.listCatalogForHotel(facts.hotel.id), this.settingsForHotel(facts.hotel)]);
+    return quoteReservationOffer(facts.hotel, inquiry, { ...choice, pricingMode: "automatic" }, catalog, settings);
+  }
+
   private async buildInquiryOffer(hotel: HotelProfile, inquiry: Omit<InquiryRecord, "reservationNumber">) {
-    const catalog = await this.repository.listCatalogForHotel(hotel.id);
-    return buildOfferDraft({
-      hotel: toDomainHotel(hotel),
-      rooms: catalog.rooms.map(toDomainRoom),
-      ratePeriods: catalog.ratePeriods.map(toDomainRatePeriod),
-      inquiry: toDomainInquiry(inquiry),
-    });
+    const [catalog, settings] = await Promise.all([this.repository.listCatalogForHotel(hotel.id), this.settingsForHotel(hotel)]);
+    const result = buildOfferDraft({ hotel: toDomainHotel(hotel), rooms: catalog.rooms.map(toDomainRoom),
+      ratePeriods: catalog.ratePeriods.map(toDomainRatePeriod), inquiry: toDomainInquiry(inquiry) });
+    if (!result.ok) return result;
+    return { ...result, draft: { ...result.draft, options: result.draft.options.map(({ roomId, planCode }) =>
+      quoteReservationOffer(hotel, inquiry, { roomId, planCode, pricingMode: "automatic", note: "" }, catalog, settings)) } };
   }
 
   private async buildStaffInquiryOffer(hotel: HotelProfile, inquiry: Omit<InquiryRecord, "reservationNumber">, choices: SendReservationOffersInput["offers"]) {
-    const mealPlan = inquiry.mealPlan;
+    const mealPlan = inquiry.mealPlan ?? choices[0]?.mealPlan;
     if (!mealPlan) throw errors.offerBoardRequired();
-    const catalog = await this.repository.listCatalogForHotel(hotel.id);
-    const options = choices.map((choice) => {
-      const room = catalog.rooms.find(({ id }) => id === choice.roomId);
-      if (!room) throw errors.roomNotFound();
-      const domainRoom = toDomainRoom(room);
-      if (!roomFitsOccupancy(domainRoom, inquiry.occupancy)) throw errors.roomCapacityExceeded();
-      return {
-        roomId: room.id, roomName: room.name,
-        roomSnapshot: { description: domainRoom.description, maxAdults: room.maxAdults, maxChildren: room.maxChildren,
-          maxGuests: room.maxGuests, beds: room.beds, amenities: room.amenities, photos: domainRoom.photos },
-        planCode: "personal", planName: choice.planName, mealPlan,
-        currency: hotel.currency, totalCents: choice.totalCents, note: choice.note,
-        pricingSource: "staff", nights: [],
-      };
-    });
+    const [catalog, settings] = await Promise.all([this.repository.listCatalogForHotel(hotel.id), this.settingsForHotel(hotel)]);
     return {
       inquiryId: inquiry.id,
       hotelSnapshot: { id: hotel.id, name: hotel.name, description: hotel.description,
         currency: hotel.currency, locale: hotel.locale, timezone: hotel.timezone,
         logoUrl: hotel.logoUrl, websiteUrl: hotel.website,
         photos: hotel.photoUrls.map((url, sortOrder) => ({ url, alt: hotel.name, sortOrder })) },
-      guestSnapshot: { name: inquiry.guestName, checkIn: inquiry.checkIn, checkOut: inquiry.checkOut,
+      guestSnapshot: { name: inquiry.guestName, language: inquiry.locale, checkIn: inquiry.checkIn, checkOut: inquiry.checkOut,
         occupancy: inquiry.occupancy, mealPlan },
-      options,
+      options: choices.map((choice) => quoteReservationOffer(hotel, inquiry, choice, catalog, settings)),
     };
   }
 
@@ -227,7 +264,6 @@ export class AutomationService {
     const digest = createHash("sha256").update(JSON.stringify([facts.hotel.id, inquiryId, idempotencyKey])).digest("hex");
     const offerId = `${digest.slice(0, 8)}-${digest.slice(8, 12)}-8${digest.slice(13, 16)}-a${digest.slice(17, 20)}-${digest.slice(20, 32)}`;
     if (facts.offers.some(({ id }) => id === offerId)) return { inquiry: await this.request(userId, inquiryId), replayed: true };
-    if (!inquiry.mealPlan) throw errors.offerBoardRequired();
     if (!inquiry.guestEmail && !inquiry.guestPhone) throw errors.offerContactRequired();
     const draft = await this.buildStaffInquiryOffer(facts.hotel, inquiry, input.offers);
     const now = new Date();
@@ -314,11 +350,9 @@ export class AutomationService {
     if (!Number.isInteger(selectedOptionIndex) || selectedOptionIndex < 0 || selectedOptionIndex >= options.length) {
       throw errors.invalidOfferOption();
     }
-    const guest = current.snapshot.guestSnapshot;
     const selected = options[selectedOptionIndex];
-    const requestedPlan = isRecord(guest) ? snapshotMealPlan(guest.mealPlan) : null;
     const selectedPlan = isRecord(selected) ? snapshotMealPlan(selected.mealPlan) : null;
-    if (!selectedPlan || (requestedPlan && selectedPlan !== requestedPlan)) throw errors.invalidOfferOption();
+    if (!selectedPlan) throw errors.invalidOfferOption();
     const offer = await this.repository.acceptOfferByTokenHash(hash, now, selectedOptionIndex);
     if (!offer) throw errors.offerNotFound();
     this.ensurePublicOfferAvailable(offer, now);
@@ -350,11 +384,12 @@ export class AutomationService {
   async dashboard(userId: string, query: DashboardQuery) {
     const facts = await this.repository.dashboardPageForUser(userId, query);
     if (!facts) throw errors.hotelNotFound();
-    const items = this.requestSummaries(facts);
+    const items = this.requestSummaries(facts, facts.evaluatedAt);
     return {
       hotel: { id: facts.hotel.id, name: facts.hotel.name, publicKey: facts.hotel.publicKey },
       counts: facts.counts,
       pagination: facts.pagination,
+      nextProcessingDeadlineAt: facts.nextProcessingDeadlineAt?.toISOString() ?? null,
       inquiries: items,
     };
   }
@@ -371,9 +406,11 @@ export class AutomationService {
     return inquiry;
   }
 
-  private requestSummaries(facts: DashboardFacts) {
-    const now = new Date();
+  private requestSummaries(facts: DashboardFacts, now = new Date()) {
     return facts.inquiries.map((inquiry) => {
+      const source = manualRequestSourceSchema.safeParse(inquiry.source.type === "manual"
+        ? inquiry.source.receivedVia
+        : typeof inquiry.source.origin === "string" || inquiry.source.type === "embed" || inquiry.source.type === "existing_form" ? "website" : null);
       const offers = facts.offers.filter(({ inquiryId }) => inquiryId === inquiry.id);
       const latest = offers.sort((a, b) => b.version - a.version)[0];
       const deliveries = facts.deliveries
@@ -385,6 +422,11 @@ export class AutomationService {
         .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime() || right.id.localeCompare(left.id));
       const emailDelivery = deliveries.find(({ channel }) => channel === "email");
       const whatsappDelivery = deliveries.find(({ channel }) => channel === "whatsapp");
+      const processingDeadlineAt = new Date((latest?.createdAt ?? inquiry.createdAt).getTime() + AUTOMATIC_SENDING_TIMEOUT_MS);
+      const offerUnavailable = latest && (latest.state === "expired" || latest.state === "revoked" || latest.expiresAt <= now);
+      const offerWasSent = latest && deliveries.some(({ state }) => ["provider_accepted", "delivered"].includes(state));
+      const waitingForSending = !inquiry.closedAt && !latest?.acceptedAt && !inquiry.attentionReason && !offerUnavailable && !offerWasSent;
+      const sendingTimedOut = waitingForSending && processingDeadlineAt <= now;
       const sentAt = deliveries
         .filter(({ state }) => state === "provider_accepted" || state === "delivered")
         .map((delivery) => delivery.processedAt ?? delivery.createdAt)
@@ -395,11 +437,11 @@ export class AutomationService {
           ? "requires_confirmation"
           : inquiry.attentionReason
             ? "needs_attention"
-            : latest && (latest.state === "expired" || latest.state === "revoked" || latest.expiresAt <= now)
+            : offerUnavailable
               ? "needs_attention"
-              : latest && deliveries.some(({ state }) => ["provider_accepted", "delivered"].includes(state))
+              : offerWasSent
                 ? "offer_sent"
-                : "new";
+                : sendingTimedOut ? "needs_attention" : "new";
       return {
         id: inquiry.id,
         reservationNumber: inquiry.reservationNumber,
@@ -408,7 +450,7 @@ export class AutomationService {
         guestPhone: inquiry.guestPhone,
         locale: inquiry.locale,
         note: inquiry.note,
-        receivedVia: inquiry.source.type === "manual" ? inquiry.source.receivedVia : null,
+        receivedVia: source.success ? source.data : null,
         checkIn: inquiry.checkIn,
         checkOut: inquiry.checkOut,
         occupancy: inquiry.occupancy,
@@ -425,7 +467,8 @@ export class AutomationService {
           whatsapp: whatsappDelivery ? deliverySummary(whatsappDelivery) : null,
         },
         workflowState,
-        attentionReason: inquiry.attentionReason,
+        attentionReason: inquiry.attentionReason ?? (sendingTimedOut ? AUTOMATIC_SENDING_TIMEOUT_REASON : null),
+        processingDeadlineAt: waitingForSending ? processingDeadlineAt.toISOString() : null,
         offerExpiresAt: latest?.expiresAt.toISOString() ?? null,
         offerSentAt: sentAt?.toISOString() ?? null,
         acceptedAt: latest?.acceptedAt?.toISOString() ?? null,
@@ -486,6 +529,7 @@ export class AutomationService {
       },
       guestSnapshot: {
         name: requested.guestName,
+        language: DEFAULT_GUEST_LANGUAGE,
         checkIn: requested.checkIn,
         checkOut: requested.checkOut,
         occupancy: { adults: requested.adults, childAges: [] },
@@ -503,7 +547,7 @@ export class AutomationService {
     const now = new Date();
     const inquiry: Omit<InquiryRecord, "reservationNumber"> = {
       id: randomUUID(), hotelId: hotel.id, idempotencyKey: `test:${randomUUID()}`,
-      guestName: sample.guestName, guestEmail: null, guestPhone: null, locale: hotel.locale,
+      guestName: sample.guestName, guestEmail: null, guestPhone: null, locale: DEFAULT_GUEST_LANGUAGE,
       checkIn: sample.checkIn, checkOut: sample.checkOut,
       occupancy: { adults: sample.adults, childAges: [] }, source: { test: true }, note: "",
       mealPlan: sample.mealPlan,
@@ -551,13 +595,31 @@ export class AutomationService {
 
 function reservationOffers(offer: OfferRecord, now: Date): ReservationOffer[] {
   if (!Array.isArray(offer.snapshot.options)) return [];
+  const guest = isRecord(offer.snapshot.guestSnapshot) ? offer.snapshot.guestSnapshot : {};
   return offer.snapshot.options.flatMap((option, index) => {
     if (!isRecord(option) || typeof option.roomId !== "string" || typeof option.roomName !== "string" ||
       typeof option.totalCents !== "number" || typeof option.currency !== "string") return [];
     const status = offer.state === "accepted" && offer.selectedOptionIndex === index ? "accepted" as const
       : offer.state === "active" && !offer.revokedAt && offer.expiresAt > now ? "available" as const : "expired" as const;
+    const occupancy = occupancySchema.safeParse(option.occupancy ?? guest.occupancy);
+    const extras = Array.isArray(option.extras) ? option.extras.flatMap((extra) => {
+      const parsed = offerExtraLineSchema.safeParse(extra);
+      return parsed.success ? [parsed.data] : [];
+    }) : [];
     return [{ id: `${offer.id}:${index}`, roomId: option.roomId, roomName: option.roomName,
       planName: typeof option.planName === "string" ? option.planName : "Personal offer",
+      planCode: typeof option.planCode === "string" ? option.planCode : "personal",
+      ...(typeof (option.checkIn ?? guest.checkIn) === "string" ? { checkIn: String(option.checkIn ?? guest.checkIn) } : {}),
+      ...(typeof (option.checkOut ?? guest.checkOut) === "string" ? { checkOut: String(option.checkOut ?? guest.checkOut) } : {}),
+      ...(occupancy.success ? { occupancy: occupancy.data } : {}),
+      description: typeof option.description === "string" ? option.description : "",
+      pricingSource: option.pricingSource === "rates" || (Array.isArray(option.nights) && option.nights.length > 0) ? "rates" as const : "staff" as const,
+      accommodationCents: typeof option.accommodationCents === "number" ? option.accommodationCents : option.totalCents,
+      extras, discountPercent: typeof option.discountPercent === "number" ? option.discountPercent : 0,
+      discountCents: typeof option.discountCents === "number" ? option.discountCents : 0,
+      ...(typeof option.depositPercent === "number" ? { depositPercent: option.depositPercent } : {}),
+      ...(typeof option.depositCents === "number" ? { depositCents: option.depositCents } : {}),
+      ...(typeof option.cancellationPolicy === "string" ? { cancellationPolicy: option.cancellationPolicy } : {}),
       mealPlan: snapshotMealPlan(option.mealPlan), totalCents: option.totalCents, currency: option.currency,
       note: typeof option.note === "string" ? option.note : "", status, expiresAt: offer.expiresAt.toISOString() }];
   });
@@ -566,6 +628,7 @@ function reservationOffers(offer: OfferRecord, now: Date): ReservationOffer[] {
 function deliverySummary(delivery: DeliveryRecord) {
   return {
     state: delivery.state,
+    attemptCount: delivery.attemptCount,
     recipient: delivery.recipient,
     lastErrorCode: delivery.lastErrorCode,
     processedAt: delivery.processedAt?.toISOString() ?? null,

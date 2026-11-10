@@ -18,6 +18,27 @@ const messageContext = {
 } as const;
 
 describe("message renderers", () => {
+  it("defaults guest messages and offer pages to Italian without a locale", () => {
+    const snapshot = offerSnapshot();
+    const context = { publicOfferUrl: messageContext.publicOfferUrl };
+    expect(renderEmailSubject(snapshot, context)).toContain("Proposta di soggiorno");
+    expect(renderEmailText(snapshot, context)).toContain("Gentile Anna,");
+    expect(renderWhatsAppText(snapshot, context)).toContain("Gentile Anna,");
+    expect(renderEmailHtml(snapshot, context)).toContain('<html lang="it">');
+    expect(renderPublicOfferPage(snapshot, { state: "active", acceptActionPath: "/o/token/accept" })).toContain('<html lang="it">');
+    expect(renderBoardBadge(undefined)).toContain("Trattamento: da confermare");
+  });
+
+  it("uses the saved guest language when no rendering locale is supplied", () => {
+    const original = offerSnapshot();
+    const snapshot = { ...original, guestSnapshot: { ...original.guestSnapshot, language: "en-GB" } };
+    const context = { publicOfferUrl: messageContext.publicOfferUrl };
+    expect(renderEmailText(snapshot, context)).toContain("Hello Anna,");
+    expect(renderWhatsAppText(snapshot, context)).toContain("Hello Anna,");
+    expect(renderEmailHtml(snapshot, context)).toContain('<html lang="en">');
+    expect(renderPublicOfferPage(snapshot, { state: "active", acceptActionPath: "/o/token/accept" })).toContain('<html lang="en">');
+  });
+
   it.each([["BB", 1], ["HB", 2], ["FB", 3]] as const)("renders %s with a continuous bottom border showing its coverage", (board, filled) => {
     const html = renderBoardBadge(board, "en");
     expect(html).toContain(`data-board="${board}"`);
@@ -145,9 +166,9 @@ describe("public offer page", () => {
       selectedOptionIndex: 1,
     });
     expect(html).toContain('class="confirmation"');
-    expect(html).toContain("Thank you, Anna.");
-    expect(html).toContain("Stay");
-    expect(html).toContain("You will receive the booking confirmation soon from Hotel Sole.");
+    expect(html).toContain("Grazie, Anna.");
+    expect(html).toContain("Soggiorno");
+    expect(html).toContain("Riceverà presto la conferma della prenotazione da Hotel Sole.");
     expect(html).not.toContain("Usually within 15 minutes");
     expect(html).not.toContain("payment link");
     expect(html).not.toContain('class="option-card"');

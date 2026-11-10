@@ -1,3 +1,6 @@
+import { t, translateLabel, getLanguage } from "./src/i18n";
+import { useTranslation } from "react-i18next";
+import { TranslationProvider, setLanguage } from "./src/i18n/Provider";
 import { useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import { useFonts } from "expo-font";
@@ -27,6 +30,9 @@ import { ConnectionsScreen } from "@/screens/ConnectionsScreen";
 import { SiteIntegrationScreen } from "@/screens/SiteIntegrationScreen";
 import { SupportScreen } from "@/screens/SupportScreen";
 import { NotificationSettingsScreen } from "@/screens/NotificationSettingsScreen";
+import { InquiryFormScreen } from "@/screens/InquiryFormScreen";
+import { OfferSettingsScreen } from "@/screens/OfferSettingsScreen";
+import { DemoOfferPreviewScreen, isDemoOfferPreview } from "@/screens/DemoOfferPreviewScreen";
 
 type Tab = "requests" | "clients" | "settings" | "support";
 type AppState =
@@ -36,6 +42,15 @@ type AppState =
   | { status: "demo"; profile: HotelProfile };
 
 export default function App() {
+  return <TranslationProvider><AppContent /></TranslationProvider>;
+}
+
+function AppContent() {
+  useTranslation();
+  return isDemoOfferPreview() ? <DemoOfferPreviewScreen /> : <HotelApp />;
+}
+
+function HotelApp() {
   const [fontsLoaded] = useFonts({
     Inter_400Regular,
     Inter_500Medium,
@@ -52,6 +67,8 @@ export default function App() {
   const [connectionsOpen, setConnectionsOpen] = useState(false);
   const [siteIntegrationOpen, setSiteIntegrationOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [formOpen, setFormOpen] = useState(false);
+  const [offerSettingsOpen, setOfferSettingsOpen] = useState(false);
   const details = useDetailPages();
   const [requestRevision, setRequestRevision] = useState(0);
   const openRequest = (id: string) => details.open({ kind: "reservation", id });
@@ -62,6 +79,8 @@ export default function App() {
     const restore = async () => {
       try {
         const user = await apiClient.getSession();
+        if (user?.uiLanguage) await setLanguage(user.uiLanguage);
+        else if (user) void apiClient.updateLanguage(getLanguage()).catch(() => {});
         if (!active) return;
         if (!user) {
           setAppState({ status: "signedOut", error: null });
@@ -101,9 +120,9 @@ export default function App() {
       setTab("requests");
       setAppState({ status: "signedOut", error: null });
     } catch (error) {
-      setLogoutError(`${authErrorMessage(error)} The local session was cleared.`);
+      setLogoutError(t("{{v0}} The local session was cleared.", { v0: authErrorMessage(error) }));
       setTab("requests");
-      setAppState({ status: "signedOut", error: `${authErrorMessage(error)} The local session was cleared.` });
+      setAppState({ status: "signedOut", error: t("{{v0}} The local session was cleared.", { v0: authErrorMessage(error) }) });
     } finally {
       setLogoutLoading(false);
     }
@@ -134,6 +153,8 @@ export default function App() {
     setConnectionsOpen(false);
     setSiteIntegrationOpen(false);
     setNotificationsOpen(false);
+    setFormOpen(false);
+    setOfferSettingsOpen(false);
     setTab(nextTab);
   };
 
@@ -143,22 +164,24 @@ export default function App() {
       <TooltipProvider>
       <SafeAreaView style={styles.safeArea} edges={["top", "left", "right"]}>
         {appState.status === "booting" ? (
-          <View style={styles.bootState} accessibilityLabel="Restoring session">
+          <View style={styles.bootState} accessibilityLabel={t("Restoring session")}>
             <View style={styles.bootMark}><Text style={styles.bootMarkText}>H</Text></View>
             <ActivityIndicator color={theme.colors.action} />
-            <Text style={styles.bootText}>Checking your secure session…</Text>
+            <Text style={styles.bootText}>{t("Checking your secure session…")}</Text>
           </View>
         ) : appState.status === "signedOut" || (appState.status === "authenticated" && !appState.profile) ? (
           <View style={{ flex: 1 }}>
             {appState.status === "signedOut" && appState.error ? (
               <View style={styles.restoreError} accessibilityRole="alert">
-                <Text style={styles.restoreErrorText}>{appState.error}</Text>
+                <Text style={styles.restoreErrorText}>{translateLabel(appState.error)}</Text>
               </View>
             ) : null}
             <AuthFlow
               initialUser={appState.status === "authenticated" ? appState.user : undefined}
               onSocialAuth={handleSocialAuth}
               onAuthenticated={(user, nextProfile) => {
+                if (user.uiLanguage) void setLanguage(user.uiLanguage);
+                else void apiClient.updateLanguage(getLanguage()).catch(() => {});
                 setAppState({ status: "authenticated", user, profile: nextProfile });
               }}
               onDemo={(demoProfile) => {
@@ -182,6 +205,8 @@ export default function App() {
                 />
               ) : inventoryOpen ? (
                 <InventoryScreen onBack={() => setInventoryOpen(false)} />
+              ) : offerSettingsOpen ? (
+                <OfferSettingsScreen demo={appState.status === "demo"} currency={profile.currency} onBack={() => setOfferSettingsOpen(false)} />
               ) : messagesOpen ? (
                 <MessageSettingsScreen onBack={() => setMessagesOpen(false)} demo={appState.status === "demo"} />
               ) : connectionsOpen ? (
@@ -201,6 +226,8 @@ export default function App() {
                 />
               ) : notificationsOpen ? (
                 <NotificationSettingsScreen onBack={() => setNotificationsOpen(false)} demo={appState.status === "demo"} />
+              ) : formOpen ? (
+                <InquiryFormScreen profile={profile} demo={appState.status === "demo"} onBack={() => setFormOpen(false)} onSubmitted={() => setRequestRevision((value) => value + 1)} onOpenRequest={openRequest} />
               ) : tab === "requests" ? (
                 <RequestsScreen
                   reloadVersion={requestRevision}
@@ -214,7 +241,7 @@ export default function App() {
                   onOpenSiteIntegration={() => setSiteIntegrationOpen(true)}
                 />
               ) : tab === "clients" ? (
-                <ClientsScreen reloadVersion={requestRevision} demo={appState.status === "demo"} locale={profile.locale} onOpenClient={openClient} />
+                <ClientsScreen reloadVersion={requestRevision} demo={appState.status === "demo"} onOpenClient={openClient} />
               ) : tab === "support" ? (
                 <SupportScreen />
               ) : (
@@ -230,20 +257,22 @@ export default function App() {
                   onOpenConnections={() => setConnectionsOpen(true)}
                   onOpenSiteIntegration={() => setSiteIntegrationOpen(true)}
                   onOpenNotifications={() => setNotificationsOpen(true)}
+                  onOpenForm={() => setFormOpen(true)}
+                  onOpenOfferSettings={() => setOfferSettingsOpen(true)}
                   onOpenSupport={() => setTab("support")}
                 />
               )}
             </View>
             {details.page ? <View style={styles.route}>
-              {details.page.kind === "reservation" ? <ReservationScreen key={`reservation:${details.page.id}`} id={details.page.id} demo={appState.status === "demo"} locale={profile.locale} onBack={details.back} onOpenClient={openClient} onOpenRequest={openRequest} onChanged={() => setRequestRevision((value) => value + 1)} />
+              {details.page.kind === "reservation" ? <ReservationScreen key={`reservation:${details.page.id}`} id={details.page.id} demo={appState.status === "demo"} onBack={details.back} onOpenClient={openClient} onOpenRequest={openRequest} onChanged={() => setRequestRevision((value) => value + 1)} />
                 : <ClientScreen key={`client:${details.page.id}`} id={details.page.id} demo={appState.status === "demo"} onBack={details.back} onOpenRequest={openRequest} onOpenClient={openClient} />}
             </View> : null}
             <SafeAreaView edges={["bottom"]} style={styles.navSafeArea}>
               <View style={styles.nav} accessibilityRole="tablist">
-                <NavItem label="Requests" icon={ClipboardList} selected={tab === "requests"} onPress={() => openTab("requests")} />
-                <NavItem label="Clients" icon={Users} selected={tab === "clients"} onPress={() => openTab("clients")} />
-                <NavItem label="Settings" icon={Settings} selected={tab === "settings"} onPress={() => openTab("settings")} />
-                <NavItem label="Support" icon={Headphones} selected={tab === "support"} onPress={() => openTab("support")} />
+                <NavItem label={t("Requests")} icon={ClipboardList} selected={tab === "requests"} onPress={() => openTab("requests")} />
+                <NavItem label={t("Clients")} icon={Users} selected={tab === "clients"} onPress={() => openTab("clients")} />
+                <NavItem label={t("Settings")} icon={Settings} selected={tab === "settings"} onPress={() => openTab("settings")} />
+                <NavItem label={t("Support")} icon={Headphones} selected={tab === "support"} onPress={() => openTab("support")} />
               </View>
             </SafeAreaView>
           </View></RequestClientStatusProvider>
@@ -259,12 +288,12 @@ function NavItem({ label, icon: Icon, selected, onPress }: { label: string; icon
     <Pressable
       accessibilityRole="tab"
       accessibilityState={{ selected }}
-      accessibilityLabel={label}
+      accessibilityLabel={translateLabel(label)}
       onPress={onPress}
       style={({ pressed }) => [styles.navItem, selected && styles.navItemSelected, pressed && styles.navItemPressed]}
     >
       <Icon size={22} color={selected ? theme.colors.action : theme.colors.textMuted} strokeWidth={selected ? 2.5 : 2} />
-      <Text style={[styles.navLabel, selected && styles.navLabelSelected]}>{label}</Text>
+      <Text style={[styles.navLabel, selected && styles.navLabelSelected]}>{translateLabel(label)}</Text>
     </Pressable>
   );
 }

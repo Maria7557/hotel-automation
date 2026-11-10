@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
-import { OFFER_VALIDITY_MS } from "@hotel/contracts";
+import { AUTOMATIC_SENDING_TIMEOUT_MS, AUTOMATIC_SENDING_TIMEOUT_REASON, OFFER_VALIDITY_MS } from "@hotel/contracts";
 
 import type { FastifyInstance } from "fastify";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createApp } from "../src/app.js";
 import { unsealPrivateValue } from "../src/lib/public-token.js";
@@ -25,12 +25,118 @@ describe("public intake and proposal automation", () => {
     app = await createApp({ env: testEnv, repositories, logger: false });
   });
 
-  afterEach(async () => app.close());
+  afterEach(async () => { await app.close(); vi.useRealTimers(); });
 
   function sentToken(offerId: string): string {
     const delivery = [...repositories.automation.deliveries.values()].find(({ offerVersionId }) => offerVersionId === offerId)!;
     return unsealPrivateValue(String(delivery.payload.proposalUrlCiphertext), testEnv.AUTH_SECRET).split("/").at(-1)!;
   }
+
+  it.each([
+    { language: undefined, expected: "it", htmlLanguage: "it" },
+    { language: "en-GB", expected: "en-GB", htmlLanguage: "en" },
+  ])("uses guest language $expected for the request, immutable offer and public page", async ({ language, expected, htmlLanguage }) => {
+    const owner = await setupHotel(app, "guest-language@example.com", true);
+    const response = await manualIntake(app, owner.token, "guest-language", {
+      guest: { name: "Anna", email: "anna@example.com", ...(language ? { language } : {}) },
+      sendOffer: true,
+    });
+    expect(response.statusCode, response.body).toBe(201);
+    const inquiry = repositories.automation.inquiries.get(response.json().data.inquiryId)!;
+    expect(inquiry.locale).toBe(expected);
+    const offer = repositories.automation.offers.get(inquiry.currentOfferId!)!;
+    expect(offer.snapshot.guestSnapshot).toMatchObject({ language: expected });
+    const token = response.json().data.proposalUrl.split("/").at(-1);
+    const page = await app.inject({ method: "GET", url: `/proposal/${token}` });
+    expect(page.statusCode).toBe(200);
+    expect(page.body).toContain(`<html lang="${htmlLanguage}">`);
+    const sent = await app.inject({ method: "POST", url: `/v1/inquiries/${inquiry.id}/offers`,
+      headers: { ...auth(owner.token), "idempotency-key": "staff-language" },
+      payload: { baseOfferId: offer.id, offers: [{ roomId: owner.roomId, planName: "Agreed terms", totalCents: 12_345 }] } });
+    expect(sent.statusCode, sent.body).toBe(201);
+    const replacement = repositories.automation.offers.get(sent.json().data.inquiry.currentOfferId)!;
+    expect(replacement.snapshot.guestSnapshot).toMatchObject({ language: expected });
+  });
+
+  it("submits the settings form as an ordinary website enquiry with real offers and deliveries", async () => {
+    const owner = await setupHotel(app, "form-owner@example.com", true);
+    await app.inject({ method: "PUT", url: "/v1/hotel/intake-settings", headers: auth(owner.token), payload: { allowedOrigins: [] } });
+    const response = await formIntake(app, owner.token, "form-enquiry");
+    expect(response.statusCode, response.body).toBe(202);
+    expect(response.headers["cache-control"]).toBe("private, no-store");
+    const result = response.json().data;
+    expect(result).toMatchObject({ automated: true, attentionReason: null, deliveriesScheduled: 2, replayed: false });
+    expect(repositories.automation.inquiries.get(result.inquiryId)).toMatchObject({
+      guestName: "Form Guest", guestEmail: "guest@example.com", guestPhone: "+393331234567", locale: "en-GB",
+      checkIn: "2026-06-10", checkOut: "2026-06-12", occupancy: { adults: 2, childAges: [7] },
+      mealPlan: "BB", note: "", source: { type: "embed", widgetVersion: "v1" },
+    });
+    expect(repositories.automation.inquiries.get(result.inquiryId)!.source).toEqual({ type: "embed", widgetVersion: "v1", heldForGuestNote: false });
+    const detail = await app.inject({ method: "GET", url: `/v1/inquiries/${result.inquiryId}`, headers: auth(owner.token) });
+    expect(detail.json().data.inquiry).toMatchObject({ receivedVia: "website", reservationNumber: result.reservationNumber,
+      offerSummary: { roomName: "Camera Deluxe", totalCents: 23_000 } });
+    expect([...repositories.automation.deliveries.values()]).toEqual(expect.arrayContaining([
+      expect.objectContaining({ channel: "email", state: "scheduled", recipient: "guest@example.com", kind: "offer" }),
+      expect.objectContaining({ channel: "whatsapp", state: "scheduled", recipient: "+393331234567", kind: "offer" }),
+    ]));
+    const rawToken = result.proposalUrl.split("/").at(-1);
+    expect((await app.inject({ method: "POST", url: `/v1/public/offers/${rawToken}/accept` })).statusCode).toBe(200);
+    const accepted = await app.inject({ method: "GET", url: `/v1/inquiries/${result.inquiryId}`, headers: auth(owner.token) });
+    expect(accepted.json().data.inquiry.workflowState).toBe("requires_confirmation");
+  });
+
+  it("deduplicates concurrent settings form retries and uses the normal missing-rate review flow", async () => {
+    const owner = await setupHotel(app, "form-retry@example.com", true);
+    const responses = await Promise.all(Array.from({ length: 4 }, () => formIntake(app, owner.token, "same-form")));
+    expect(responses.map((response) => response.statusCode).sort()).toEqual([200, 200, 200, 202]);
+    expect(new Set(responses.map((response) => response.json().data.inquiryId)).size).toBe(1);
+    expect(repositories.automation.inquiries.size).toBe(1);
+    expect(repositories.automation.offers.size).toBe(1);
+    expect(repositories.automation.deliveries.size).toBe(2);
+    const unavailable = await formIntake(app, owner.token, "no-hb-rates", { mealPlan: "HB" });
+    expect(unavailable.statusCode).toBe(202);
+    expect(unavailable.json().data).toMatchObject({ automated: false, attentionReason: "meal_plan_unavailable", deliveriesScheduled: 0 });
+    expect(repositories.automation.inquiries.size).toBe(2);
+    expect(repositories.automation.offers.size).toBe(1);
+    expect(repositories.automation.deliveries.size).toBe(2);
+  });
+
+  it("requires authentication and hotel membership for the settings form and isolates hotel data", async () => {
+    const owner = await setupHotel(app, "form-tenant@example.com", true);
+    const other = await setupHotel(app, "form-other@example.com", true);
+    expect((await app.inject({ method: "POST", url: "/v1/inquiries/form", headers: { "idempotency-key": "no-session" }, payload: formPayload() })).statusCode).toBe(401);
+    const registration = await app.inject({ method: "POST", url: "/v1/auth/register", payload: { email: "form-no-hotel@example.com", password: "a-strong-password" } });
+    expect((await formIntake(app, registration.json().data.accessToken, "no-hotel")).statusCode).toBe(404);
+    const created = await formIntake(app, owner.token, "tenant-form");
+    expect((await app.inject({ method: "GET", url: `/v1/inquiries/${created.json().data.inquiryId}`, headers: auth(other.token) })).statusCode).toBe(404);
+    expect((await formIntake(app, other.token, "tenant-form")).statusCode).toBe(202);
+    const otherDashboard = await app.inject({ method: "GET", url: "/v1/dashboard", headers: auth(other.token) });
+    expect(otherDashboard.json().data.inquiries).toHaveLength(1);
+    expect(otherDashboard.json().data.inquiries[0].id).not.toBe(created.json().data.inquiryId);
+  });
+
+  it("validates all settings form details and rejects caller-supplied hotel and test metadata", async () => {
+    const owner = await setupHotel(app, "form-validation@example.com", true);
+    const invalidInputs = [
+      { guest: { name: "Guest" } }, { guest: { name: "", email: "guest@example.com" } },
+      { guest: { name: "Guest", email: "invalid" } }, { guest: { name: "Guest", phone: "123" } },
+      { guest: { name: "Guest", email: "guest@example.com", language: "" } },
+      { checkIn: "2026-02-30" }, { checkOut: "2026-06-10" }, { checkOut: "2026-06-09" },
+      { occupancy: { adults: 0 } }, { occupancy: { adults: 1.5 } }, { occupancy: { adults: 2, childAges: [18] } },
+      { mealPlan: undefined }, { mealPlan: "RO" }, { note: "x".repeat(2_001) },
+      { hotelId: "11111111-1111-4111-8111-111111111111" }, { source: { type: "test" } }, { sendOffer: false },
+    ];
+    for (const [index, input] of invalidInputs.entries()) {
+      const response = await formIntake(app, owner.token, `invalid-form-${index}`, input);
+      expect(response.statusCode, JSON.stringify(input)).toBe(400);
+    }
+    for (const key of [undefined, " ", "x".repeat(156)]) {
+      expect((await app.inject({ method: "POST", url: "/v1/inquiries/form", headers: { ...auth(owner.token), ...(key === undefined ? {} : { "idempotency-key": key }) }, payload: formPayload() })).statusCode).toBe(400);
+    }
+    expect(repositories.automation.inquiries.size).toBe(0);
+    expect(repositories.automation.offers.size).toBe(0);
+    expect(repositories.automation.deliveries.size).toBe(0);
+  });
 
   it("creates an independent reservation with copied offers without requiring a saved client or changing the original", async () => {
     const owner = await setupHotel(app, "duplicate-reservation@example.com", true);
@@ -71,7 +177,7 @@ describe("public intake and proposal automation", () => {
     expect(repositories.automation.offers.size).toBe(2);
   });
 
-  it("saves copied offers without contacts and sends the edited prices only when explicitly requested", async () => {
+  it("saves copied offers for review and sends the edited prices only when explicitly requested", async () => {
     const owner = await setupHotel(app, "copy-offer-prices@example.com", false);
     const offers = [{ roomId: owner.roomId, planName: "Agreed by phone", totalCents: 27_099, note: "Breakfast included" }];
     const saved = await manualIntake(app, owner.token, "save-copied-offers", { offers });
@@ -81,10 +187,13 @@ describe("public intake and proposal automation", () => {
       guest: { name: "Guest", email: "guest@example.com" }, offers, sendOffer: true,
     });
     expect(sent.statusCode, sent.body).toBe(201);
-    expect(sent.json().data).toMatchObject({ deliveriesScheduled: 1, attentionReason: null });
+    expect(sent.json().data).toMatchObject({ deliveriesScheduled: 2, attentionReason: null });
     const snapshot = [...repositories.automation.offers.values()].find(({ inquiryId }) => inquiryId === sent.json().data.inquiryId)!.snapshot;
     expect(snapshot.options).toEqual([expect.objectContaining({ totalCents: 27_099, note: "Breakfast included", pricingSource: "staff" })]);
-    expect([...repositories.automation.deliveries.values()]).toEqual([expect.objectContaining({ recipient: "guest@example.com", state: "scheduled" })]);
+    expect([...repositories.automation.deliveries.values()]).toEqual(expect.arrayContaining([
+      expect.objectContaining({ channel: "email", recipient: "guest@example.com", state: "scheduled" }),
+      expect.objectContaining({ channel: "whatsapp", recipient: "+393331234567", state: "scheduled" }),
+    ]));
   });
 
   it("rejects copied offers from another hotel or rooms that cannot accommodate the edited guests", async () => {
@@ -116,7 +225,7 @@ describe("public intake and proposal automation", () => {
     const sent = await send("six-choices", originalOffer.id);
     expect(sent.statusCode, sent.body).toBe(201);
     const request = sent.json().data.inquiry;
-    expect(request).toMatchObject({ id: inquiryId, reservationNumber, note: "Late arrival", attentionReason: null });
+    expect(request).toMatchObject({ id: inquiryId, reservationNumber, note: "", attentionReason: null });
     expect(request.offers).toHaveLength(6);
     expect(request.offers.map(({ status }: { status: string }) => status)).toEqual(Array(6).fill("available"));
     expect(repositories.automation.inquiries.size).toBe(1);
@@ -142,7 +251,7 @@ describe("public intake and proposal automation", () => {
     const page = await app.inject({ method: "GET", url: `/proposal/${token}` });
     expect(page.body.match(/class="option-card"/g)).toHaveLength(6);
     expect(page.body).toContain("Updated price");
-    expect(page.body).toContain("123.45");
+    expect(page.body).toContain("123,45");
     expect(repositories.automation.inquiries.get(inquiryId)?.reservationNumber).toBe(reservationNumber);
     expect(repositories.automation.inquiries.size).toBe(1);
   });
@@ -189,7 +298,7 @@ describe("public intake and proposal automation", () => {
     expect(page.statusCode).toBe(200);
     expect(page.body).toContain('id="expired-title"');
     expect(page.body).toContain('href="https://hotel.example/"');
-    expect(page.body).toContain("Make a new booking &amp; check availability");
+    expect(page.body).toContain("Nuova prenotazione e disponibilità");
     expect(page.body).not.toContain("<form");
     const staleSubmit = await app.inject({ method: "POST", url: `/proposal/${token}/accept`, payload: { option: 0 } });
     expect(staleSubmit.statusCode).toBe(303);
@@ -219,7 +328,7 @@ describe("public intake and proposal automation", () => {
   it("adds offers to a manually recorded phone request without creating another reservation", async () => {
     const owner = await setupHotel(app, "phone-offers@example.com", false);
     const created = await app.inject({ method: "POST", url: "/v1/inquiries", headers: { ...auth(owner.token), "idempotency-key": "phone" }, payload: {
-      guest: { name: "Phone guest", email: "guest@example.com" }, checkIn: "2027-01-10", checkOut: "2027-01-12",
+      guest: { name: "Phone guest", email: "guest@example.com", phone: "+393331234567" }, checkIn: "2027-01-10", checkOut: "2027-01-12",
       occupancy: { adults: 2, childAges: [] }, mealPlan: "HB", receivedVia: "phone", note: "Agreed €250 with dinner", sendOffer: false,
     } });
     expect(created.statusCode).toBe(201);
@@ -233,7 +342,7 @@ describe("public intake and proposal automation", () => {
     expect(repositories.automation.offers.size).toBe(1);
   });
 
-  it("saves a phone enquiry without guest contacts or website setup and does not send an offer by default", async () => {
+  it("saves a phone enquiry with both contacts before website setup and does not send an offer by default", async () => {
     const owner = await setupHotel(app, "manual-owner@example.com", true);
     await app.inject({ method: "PUT", url: "/v1/hotel/intake-settings", headers: auth(owner.token), payload: { allowedOrigins: [] } });
     const response = await manualIntake(app, owner.token, "called-reception");
@@ -242,7 +351,7 @@ describe("public intake and proposal automation", () => {
     const result = response.json().data;
     expect(result.reservationNumber).toMatch(/^[1-9]\d*$/);
     const stored = repositories.automation.inquiries.get(result.inquiryId)!;
-    expect(stored).toMatchObject({ guestName: "Phone Guest", guestEmail: null, guestPhone: null,
+    expect(stored).toMatchObject({ guestName: "Phone Guest", guestEmail: "guest@example.com", guestPhone: "+393331234567",
       mealPlan: "BB", note: "Late arrival", source: { type: "manual", receivedVia: "phone" } });
     expect(stored.source.createdByUserId).toEqual(expect.any(String));
     expect(repositories.automation.offers.size).toBe(0);
@@ -259,6 +368,19 @@ describe("public intake and proposal automation", () => {
     expect(response.statusCode).toBe(201);
     expect(response.json().data).toMatchObject({ automated: false, attentionReason: "manual_review", deliveriesScheduled: 0 });
     expect(repositories.automation.inquiries.get(response.json().data.inquiryId)?.source.receivedVia).toBe("walk_in");
+  });
+
+  it.each(["website", "email", "whatsapp"])("keeps the %s channel when staff save and reopen a request", async (receivedVia) => {
+    const owner = await setupHotel(app, `manual-${receivedVia}@example.com`, false);
+    const response = await manualIntake(app, owner.token, `via-${receivedVia}`, { receivedVia });
+    expect(response.statusCode, response.body).toBe(201);
+    expect(response.json().data).toMatchObject({ deliveriesScheduled: 0, attentionReason: "manual_review" });
+    const id = response.json().data.inquiryId as string;
+    expect(repositories.automation.inquiries.get(id)?.source).toMatchObject({ type: "manual", receivedVia });
+    const detail = await app.inject({ method: "GET", url: `/v1/inquiries/${id}`, headers: auth(owner.token) });
+    expect(detail.json().data.inquiry.receivedVia).toBe(receivedVia);
+    const dashboard = await app.inject({ method: "GET", url: "/v1/dashboard", headers: auth(owner.token) });
+    expect(dashboard.json().data.inquiries).toEqual([expect.objectContaining({ id, receivedVia })]);
   });
 
   it("prepares and queues an offer only when staff explicitly selects sending", async () => {
@@ -303,7 +425,7 @@ describe("public intake and proposal automation", () => {
     expect(new Set(responses.map((response) => response.json().data.reservationNumber)).size).toBe(1);
     expect(repositories.automation.inquiries.size).toBe(1);
     expect(repositories.automation.offers.size).toBe(1);
-    expect(repositories.automation.deliveries.size).toBe(1);
+    expect(repositories.automation.deliveries.size).toBe(2);
     await intake(app, owner.publicKey, "same-call");
     expect(repositories.automation.inquiries.size).toBe(2);
   });
@@ -320,18 +442,41 @@ describe("public intake and proposal automation", () => {
     expect(repositories.automation.inquiries.size).toBe(2);
   });
 
+  it.each([false, true])("requires email and an international phone number even when sendOffer is %s", async (sendOffer) => {
+    const owner = await setupHotel(app, "manual-required-contacts@example.com", true);
+    const guests = [
+      { name: "Guest" },
+      { name: "Guest", email: "guest@example.com" },
+      { name: "Guest", phone: "+393331234567" },
+      { name: "Guest", email: null, phone: "+393331234567" },
+      { name: "Guest", email: "guest@example.com", phone: null },
+      { name: "Guest", email: "", phone: "+393331234567" },
+      { name: "Guest", email: "guest@example.com", phone: "" },
+      { name: "Guest", email: "guest@example.com", phone: "3331234567" },
+      { name: "Guest", email: "invalid", phone: "+393331234567" },
+    ];
+    for (const [index, guest] of guests.entries()) {
+      const response = await app.inject({ method: "POST", url: "/v1/inquiries", headers: { ...auth(owner.token), "idempotency-key": `missing-contact-${index}` }, payload: { ...manualPayload(), guest, sendOffer } });
+      expect(response.statusCode, JSON.stringify(guest)).toBe(400);
+      expect(response.json().error.details).toEqual(expect.arrayContaining([expect.objectContaining({ path: expect.stringMatching(/^guest\.(email|phone)$/) })]));
+    }
+    expect(repositories.automation.inquiries.size).toBe(0);
+    expect(repositories.automation.offers.size).toBe(0);
+    expect(repositories.automation.deliveries.size).toBe(0);
+  });
+
   it("validates manual request dates, board, occupancy, contacts and trusted metadata before saving", async () => {
     const owner = await setupHotel(app, "manual-validation@example.com", true);
     const invalidInputs = [
       { guest: { name: " " } }, { guest: { name: "Guest", email: "invalid" } },
       { guest: { name: "Guest", phone: "123" } }, { guest: { name: "Guest", createdByUserId: "forged" } },
-      { sendOffer: true }, { sendOffer: true, guest: { name: "Guest", phone: "12345" } },
+      { sendOffer: true, guest: { name: "Guest", email: null, phone: null } }, { sendOffer: true, guest: { name: "Guest", phone: "12345" } },
       { checkIn: "2026-02-30" }, { checkOut: "2026-06-10" },
       { checkOut: "2026-06-09" }, { mealPlan: undefined }, { mealPlan: "bb" }, { mealPlan: "RO" },
       { occupancy: { adults: 0 } }, { occupancy: { adults: 1.5 } },
       { occupancy: { adults: 51 } }, { occupancy: { adults: 2, childAges: [18] } },
       { occupancy: { adults: 2, childAges: Array(21).fill(4) } },
-      { receivedVia: "website" }, { sendOffer: "true" }, { hotelId: "11111111-1111-4111-8111-111111111111" },
+      { receivedVia: "unsupported" }, { sendOffer: "true" }, { hotelId: "11111111-1111-4111-8111-111111111111" },
       { source: { type: "website" } }, { note: "x".repeat(2_001) },
     ];
     for (const [index, input] of invalidInputs.entries()) {
@@ -360,7 +505,7 @@ describe("public intake and proposal automation", () => {
     expect(detail.headers["cache-control"]).toBe("private, no-store");
     expect(detail.json().data.inquiry).toMatchObject({ id, reservationNumber: original.reservationNumber,
       guestName: original.guestName, guestEmail: original.guestEmail, guestPhone: original.guestPhone,
-      note: "Quiet room, please", occupancy: original.occupancy, createdAt: "2020-01-01T12:00:00.000Z",
+      note: "Quiet room, please", receivedVia: "website", occupancy: original.occupancy, createdAt: "2020-01-01T12:00:00.000Z",
       offerSummary: { roomName: "Camera Deluxe", totalCents: 20_000 }, workflowState: "new",
     });
     const summaries = await app.inject({ method: "POST", url: "/v1/inquiries/summaries", headers: auth(owner.token), payload: { inquiryIds: [id, id] } });
@@ -425,7 +570,11 @@ describe("public intake and proposal automation", () => {
     expect(widgetCreation).toBeGreaterThan(adapterBranch);
   });
 
-  it("captures an existing form submit and maps its fields without replacing the form", async () => {
+  it.each([
+    ["", "", "it"],
+    ["en-GB", "", "en-GB"],
+    ["en-GB", "it-IT", "it-IT"],
+  ])("captures an existing form with guest language %s / %s → %s", async (scriptLanguage, fieldLanguage, expectedLanguage) => {
     const response = await app.inject({ method: "GET", url: "/embed.js" });
     const fields: Record<string, { value: string; type?: string }> = {
       "#arrival": { value: "2026-08-10" },
@@ -433,6 +582,7 @@ describe("public intake and proposal automation", () => {
       "#guest": { value: "Giulia Bianchi" },
       "#mail": { value: "giulia@example.com" },
       "#phone": { value: "+393331112222" },
+      "#language": { value: fieldLanguage },
       "#adults": { value: "2" },
       "#ages": { value: "4, 9" },
       "#board": { value: "HB" },
@@ -467,6 +617,8 @@ describe("public intake and proposal automation", () => {
         name: "#guest",
         email: "#mail",
         phone: "#phone",
+        language: scriptLanguage,
+        guestLanguage: "#language",
         adults: "#adults",
         childAges: "#ages",
         mealPlan: "#board",
@@ -475,7 +627,7 @@ describe("public intake and proposal automation", () => {
     };
     const documentStub = {
       currentScript: script,
-      documentElement: { lang: "it" },
+      documentElement: { lang: "en-GB" },
       querySelector: (selector: string) => selector === "#booking-form" ? form : null,
     };
     const requests: Array<{ url: string; init: { body: string; headers: Record<string, string> } }> = [];
@@ -506,7 +658,7 @@ describe("public intake and proposal automation", () => {
     expect(requests[0]?.url).toBe("https://api.example.com/v1/public/hotels/11111111-1111-4111-8111-111111111111/inquiries");
     expect(requests[0]?.init.headers["Idempotency-Key"]).toBe("request-id");
     expect(JSON.parse(requests[0]?.init.body ?? "{}")).toMatchObject({
-      guest: { name: "Giulia Bianchi", email: "giulia@example.com", phone: "+393331112222", language: "it" },
+      guest: { name: "Giulia Bianchi", email: "giulia@example.com", phone: "+393331112222", language: expectedLanguage },
       checkIn: "2026-08-10",
       checkOut: "2026-08-13",
       occupancy: { adults: 2, childAges: [4, 9] },
@@ -515,7 +667,7 @@ describe("public intake and proposal automation", () => {
       source: { type: "existing_form", page: "https://hotel.example/booking", widgetVersion: "v1" },
     });
     expect(submitButton.disabled).toBe(false);
-    expect(status).toMatchObject({ dataset: { state: "success" }, textContent: "Request sent. You will receive our offer shortly." });
+    expect(status).toMatchObject({ dataset: { state: "success" }, textContent: "Request sent. The hotel will review your message before sending an offer." });
     expect(dispatched).toEqual(["hotel-inquiry:sending", "hotel-inquiry:success"]);
   });
 
@@ -578,16 +730,84 @@ describe("public intake and proposal automation", () => {
     expect(repositories.automation.inquiries.size).toBe(0);
   });
 
-  it("rejects acceptance of an option whose board differs from the request", async () => {
+  it("rejects acceptance of an option with an invalid board", async () => {
     const owner = await setupHotel(app, "mismatch@example.com", true);
     const response = await intake(app, owner.publicKey, "mismatch");
     const token = (response.json().data.proposalUrl as string).split("/").at(-1)!;
     const offer = [...repositories.automation.offers.values()][0]!;
     const options = offer.snapshot.options as Array<Record<string, unknown>>;
-    options[0]!.mealPlan = "HB";
+    options[0]!.mealPlan = "AI";
     const accepted = await app.inject({ method: "POST", url: `/v1/public/offers/${token}/accept`, payload: { option: 0 } });
     expect(accepted.statusCode).toBe(422);
     expect(offer.acceptedAt).toBeNull();
+  });
+
+  it.each([
+    { state: "scheduled" as const, attemptCount: 0, lastErrorCode: null },
+    { state: "processing" as const, attemptCount: 0, lastErrorCode: null },
+    { state: "scheduled" as const, attemptCount: 0, lastErrorCode: "EMAIL_CONNECTION_NOT_READY" },
+    { state: "scheduled" as const, attemptCount: 2, lastErrorCode: "SMTP_UNAVAILABLE" },
+  ])("preserves sending metadata in new reservation summaries: $state / $lastErrorCode", async (sending) => {
+    const owner = await setupHotel(app, "sending-details@example.com", true);
+    const created = await app.inject({ method: "POST", url: `/v1/public/hotels/${owner.publicKey}/inquiries`,
+      headers: { origin, "idempotency-key": "sending-details" }, payload: {
+        guest: { name: "Sending Guest", email: "sending@example.com", phone: "+393331234567" },
+        checkIn: "2026-06-10", checkOut: "2026-06-12", occupancy: { adults: 2, childAges: [] }, mealPlan: "BB", note: "",
+      } });
+    const inquiryId = created.json().data.inquiryId as string;
+    for (const delivery of repositories.automation.deliveries.values()) {
+      repositories.automation.deliveries.set(delivery.id, { ...delivery, ...sending });
+    }
+    const expected = { workflowState: "new", channelDetails: { email: sending, whatsapp: sending } };
+    const dashboard = await app.inject({ method: "GET", url: "/v1/dashboard", headers: auth(owner.token) });
+    expect(dashboard.json().data.inquiries[0]).toMatchObject(expected);
+    const detail = await app.inject({ method: "GET", url: `/v1/inquiries/${inquiryId}`, headers: auth(owner.token) });
+    expect(detail.json().data.inquiry).toMatchObject(expected);
+  });
+
+  it.each([
+    { state: "scheduled" as const, attemptCount: 0, lastErrorCode: null },
+    { state: "processing" as const, attemptCount: 0, lastErrorCode: null },
+    { state: "scheduled" as const, attemptCount: 0, lastErrorCode: "EMAIL_CONNECTION_NOT_READY" },
+    { state: "scheduled" as const, attemptCount: 2, lastErrorCode: "SMTP_UNAVAILABLE" },
+  ])("moves unprocessed $state / $lastErrorCode requests to errors at exactly 15 minutes", async (sending) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-09T10:00:00Z"));
+    const owner = await setupHotel(app, "sending-timeout@example.com", true);
+    const created = await app.inject({ method: "POST", url: `/v1/public/hotels/${owner.publicKey}/inquiries`,
+      headers: { origin, "idempotency-key": "sending-timeout" }, payload: {
+        guest: { name: "Sending Guest", email: "sending@example.com", phone: "+393331234567" },
+        checkIn: "2026-11-10", checkOut: "2026-11-12", occupancy: { adults: 2, childAges: [] }, mealPlan: "BB", note: "",
+      } });
+    expect(created.json().data.automated).toBe(true);
+    const inquiryId = created.json().data.inquiryId as string;
+    const inquiry = repositories.automation.inquiries.get(inquiryId)!;
+    const offer = [...repositories.automation.offers.values()][0]!;
+    const deadline = offer.createdAt.getTime() + AUTOMATIC_SENDING_TIMEOUT_MS;
+    // A new offer gets its own window even on an older reservation.
+    repositories.automation.inquiries.set(inquiryId, { ...inquiry, createdAt: new Date(Date.now() - 2 * 60 * 60_000) });
+    for (const delivery of repositories.automation.deliveries.values()) {
+      repositories.automation.deliveries.set(delivery.id, { ...delivery, ...sending, updatedAt: new Date(deadline - 1) });
+    }
+    const dashboard = async (status: string) => (await app.inject({ method: "GET", url: `/v1/dashboard?status=${status}`, headers: auth(owner.token) })).json().data;
+    vi.setSystemTime(deadline - 1);
+    const pending = await dashboard("new");
+    expect(pending.counts).toMatchObject({ new: 1, needsAttention: 0 });
+    expect(pending.inquiries[0]).toMatchObject({ workflowState: "new", attentionReason: null, processingDeadlineAt: new Date(deadline).toISOString() });
+    expect(pending.nextProcessingDeadlineAt).toBe(new Date(deadline).toISOString());
+    vi.setSystemTime(deadline);
+    const errors = await dashboard("attention");
+    expect(errors.counts).toMatchObject({ new: 0, needsAttention: 1 });
+    expect(errors.pagination.total).toBe(1);
+    expect(errors.inquiries[0]).toMatchObject({ id: inquiryId, workflowState: "needs_attention", attentionReason: AUTOMATIC_SENDING_TIMEOUT_REASON, channelStates: { email: sending.state } });
+    expect(errors.nextProcessingDeadlineAt).toBeNull();
+    expect((await dashboard("new")).inquiries).toEqual([]);
+    const detail = await app.inject({ method: "GET", url: `/v1/inquiries/${inquiryId}`, headers: auth(owner.token) });
+    expect(detail.json().data.inquiry).toMatchObject({ workflowState: "needs_attention", attentionReason: AUTOMATIC_SENDING_TIMEOUT_REASON });
+    // A late successful send clears the derived timeout; a second channel may still be pending.
+    const email = [...repositories.automation.deliveries.values()].find(({ channel }) => channel === "email")!;
+    repositories.automation.deliveries.set(email.id, { ...email, state: "provider_accepted", processedAt: new Date() });
+    expect((await dashboard("waiting")).inquiries[0]).toMatchObject({ workflowState: "offer_sent", attentionReason: null, processingDeadlineAt: null });
   });
 
   it("creates one immutable offer and fake deliveries without persisting the raw token", async () => {
@@ -733,7 +953,7 @@ describe("public intake and proposal automation", () => {
     expect(acceptedPage.statusCode).toBe(200);
     expect(acceptedPage.body).not.toContain("<form");
     expect(acceptedPage.body).toContain('class="confirmation"');
-    expect(acceptedPage.body).toContain("You will receive the booking confirmation soon from Hotel owner@example.com.");
+    expect(acceptedPage.body).toContain("Riceverà presto la conferma della prenotazione da Hotel owner@example.com.");
     expect(acceptedPage.body).not.toContain("payment link");
 
     const noGetAccept = await app.inject({ method: "GET", url: `/v1/public/offers/${rawToken}/accept` });
@@ -881,7 +1101,7 @@ function intake(app: FastifyInstance, publicKey: string, key: string, requestOri
       checkOut: "2026-06-12",
       occupancy: { adults: 2, childAges: [] },
         mealPlan,
-      note: "Late arrival",
+      note: "",
       source: { widgetVersion: "v1" },
     },
   });
@@ -891,9 +1111,21 @@ function auth(token: string): Record<string, string> {
   return { authorization: `Bearer ${token}` };
 }
 
+function formPayload(overrides: Record<string, unknown> = {}) {
+  return { guest: { name: "Form Guest", email: "guest@example.com", phone: "+393331234567", language: "en-GB" },
+    checkIn: "2026-06-10", checkOut: "2026-06-12", occupancy: { adults: 2, childAges: [7] },
+    mealPlan: "BB", note: "", ...overrides };
+}
+
+function formIntake(app: FastifyInstance, token: string, key: string, overrides: Record<string, unknown> = {}) {
+  return app.inject({ method: "POST", url: "/v1/inquiries/form", headers: { ...auth(token), "idempotency-key": key }, payload: formPayload(overrides) });
+}
+
 function manualPayload(overrides: Record<string, unknown> = {}) {
-  return { guest: { name: "Phone Guest" }, checkIn: "2026-06-10", checkOut: "2026-06-12",
-    occupancy: { adults: 2, childAges: [] }, mealPlan: "BB", note: "Late arrival", ...overrides };
+  const guest = { name: "Phone Guest", email: "guest@example.com", phone: "+393331234567" };
+  return { guest, checkIn: "2026-06-10", checkOut: "2026-06-12",
+    occupancy: { adults: 2, childAges: [] }, mealPlan: "BB", note: "Late arrival", ...overrides,
+    ...(overrides.guest && typeof overrides.guest === "object" ? { guest: { ...guest, ...overrides.guest } } : {}) };
 }
 
 function manualIntake(app: FastifyInstance, token: string, key: string, overrides: Record<string, unknown> = {}) {

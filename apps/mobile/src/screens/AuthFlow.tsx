@@ -1,3 +1,5 @@
+import { t, translateLabel, locale } from "../i18n";
+import { LanguageSelector } from "../i18n/LanguageSelector";
 import { useState } from "react";
 import {
   ActivityIndicator,
@@ -62,7 +64,7 @@ export function AuthFlow({ initialUser, onAuthenticated, onDemo, onSocialAuth }:
   const submitSocial = async (provider: SocialAuthProvider) => {
     setRequestError(null);
     if (!onSocialAuth) {
-      setRequestError(`${provider === "google" ? "Google" : "Apple"} sign-in is not connected to the backend yet. Continue with email and password.`);
+      setRequestError(t("{{v0}} sign-in is not connected to the backend yet. Continue with email and password.", { v0: provider === "google" ? "Google" : "Apple" }));
       return;
     }
 
@@ -156,21 +158,21 @@ export function AuthFlow({ initialUser, onAuthenticated, onDemo, onSocialAuth }:
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.glow} />
+        <View style={{ alignSelf: "flex-end", marginBottom: 12 }}><LanguageSelector /></View>
         <View style={styles.brandMark} accessibilityLabel="Hotel">
           <BedDouble size={30} color={theme.colors.onAction} strokeWidth={2.2} />
         </View>
         <View style={styles.welcomeCopy}>
-          <Text style={styles.eyebrow}>HOTEL · STAFF</Text>
-          <Text style={styles.welcomeTitle}>Every request —{`\n`}under control</Text>
+          <Text style={styles.eyebrow}>{t("HOTEL · STAFF")}</Text>
+          <Text style={styles.welcomeTitle}>{t("Every request —")}{`\n`}{t("under control")}</Text>
           <Text style={styles.welcomeText}>
-            Receive enquiries, send offers and confirm availability from your phone.
-          </Text>
+            {t("Receive enquiries, send offers and confirm availability from your phone.")}{" "}</Text>
         </View>
 
         <View style={styles.featureList}>
-          <Feature icon={Sparkles} title="Automatic offers" />
-          <Feature icon={BellRing} title="Only important notifications" />
-          <Feature icon={Building2} title="Your hotel settings" />
+          <Feature icon={Sparkles} title={t("Automatic offers")} />
+          <Feature icon={BellRing} title={t("Only important notifications")} />
+          <Feature icon={Building2} title={t("Your hotel settings")} />
         </View>
 
         <View style={styles.welcomeActions}>
@@ -189,14 +191,14 @@ export function AuthFlow({ initialUser, onAuthenticated, onDemo, onSocialAuth }:
               onPress={() => void submitSocial("apple")}
             />
           ) : null}
-          <View style={styles.authDivider} accessibilityLabel="Or continue with email and password">
+          <View style={styles.authDivider} accessibilityLabel={t("Or continue with email and password")}>
             <View style={styles.authDividerLine} />
-            <Text style={styles.authDividerText}>OR USE EMAIL</Text>
+            <Text style={styles.authDividerText}>{t("OR USE EMAIL")}</Text>
             <View style={styles.authDividerLine} />
           </View>
-          <Button disabled={socialLoading !== null} onPress={() => openAccount("register")}>Create account with email</Button>
-          <Button disabled={socialLoading !== null} variant="secondary" icon={LogIn} onPress={() => openAccount("login")}>Sign in with password</Button>
-          <Button disabled={socialLoading !== null} variant="tertiary" onPress={() => onDemo(mockProfile)}>Open demo without an account</Button>
+          <Button disabled={socialLoading !== null} onPress={() => openAccount("register")}>{t("Create account with email")}</Button>
+          <Button disabled={socialLoading !== null} variant="secondary" icon={LogIn} onPress={() => openAccount("login")}>{t("Sign in with password")}</Button>
+          <Button disabled={socialLoading !== null} variant="tertiary" onPress={() => onDemo(mockProfile)}>{t("Open demo without an account")}</Button>
         </View>
       </ScrollView>
     );
@@ -209,9 +211,10 @@ export function AuthFlow({ initialUser, onAuthenticated, onDemo, onSocialAuth }:
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
+        <View style={{ alignSelf: "flex-end", marginBottom: 12 }}><LanguageSelector authenticated={Boolean(user)} /></View>
         <View
           style={styles.progressRow}
-          accessibilityLabel={step === "hotel" ? "Hotel profile" : mode === "login" ? "Sign in" : "Step 1 of 2"}
+          accessibilityLabel={step === "hotel" ? t("Hotel profile") : mode === "login" ? t("Sign in") : "Step 1 of 2"}
         >
           <View style={styles.progressActive} />
           {mode === "register" || step === "hotel" ? (
@@ -222,7 +225,7 @@ export function AuthFlow({ initialUser, onAuthenticated, onDemo, onSocialAuth }:
         {!initialUser ? (
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Back"
+            accessibilityLabel={t("Back")}
             disabled={loading}
             onPress={() => {
               setRequestError(null);
@@ -230,35 +233,35 @@ export function AuthFlow({ initialUser, onAuthenticated, onDemo, onSocialAuth }:
             }}
             style={styles.backButton}
           >
-            <Text style={styles.backLabel}>← Back</Text>
+            <Text style={styles.backLabel}>{t("← Back")}</Text>
           </Pressable>
         ) : null}
 
         {step === "account" ? (
           <>
             <View style={styles.formHeader}>
-              <Text style={uiStyles.h1}>{mode === "login" ? "Welcome back" : "Your account"}</Text>
+              <Text style={uiStyles.h1}>{mode === "login" ? t("Welcome back") : t("Your account")}</Text>
               <Text style={uiStyles.body}>
                 {mode === "login"
-                  ? "Sign in to continue managing requests."
-                  : "Create a secure login to manage your hotel requests."}
+                  ? t("Sign in to continue managing requests.")
+                  : t("Create a secure login to manage your hotel requests.")}
               </Text>
             </View>
             {requestError ? <InlineState tone="danger">{requestError}</InlineState> : null}
             <View style={styles.fields}>
               {mode === "register" ? (
                 <Field
-                  label="Name"
-                  placeholder="For example, Maria"
+                  label={t("Name")}
+                  placeholder={t("For example, Maria")}
                   autoCapitalize="words"
                   value={name}
                   onChangeText={setName}
                   editable={!loading}
-                  error={submitted && name.trim().length < 2 ? "Enter your name" : undefined}
+                  error={submitted && name.trim().length < 2 ? t("Enter your name") : undefined}
                 />
               ) : null}
               <Field
-                label="Work email"
+                label={t("Work email")}
                 placeholder="name@hotel.it"
                 keyboardType="email-address"
                 autoCapitalize="none"
@@ -266,25 +269,25 @@ export function AuthFlow({ initialUser, onAuthenticated, onDemo, onSocialAuth }:
                 value={email}
                 onChangeText={setEmail}
                 editable={!loading}
-                error={submitted && !email.includes("@") ? "Check the email address" : undefined}
+                error={submitted && !email.includes("@") ? t("Check the email address") : undefined}
               />
               <Field
-                label="Password"
-                placeholder={mode === "register" ? "At least 10 characters" : "Your password"}
+                label={t("Password")}
+                placeholder={mode === "register" ? t("At least 10 characters") : t("Your password")}
                 secureTextEntry
                 value={password}
                 onChangeText={setPassword}
                 editable={!loading}
                 error={
                   submitted && password.length < (mode === "register" ? 10 : 1)
-                    ? mode === "register" ? "Use at least 10 characters" : "Enter your password"
+                    ? mode === "register" ? t("Use at least 10 characters") : t("Enter your password")
                     : undefined
                 }
-                helper={mode === "register" ? "Do not reuse your hotel email password" : undefined}
+                helper={mode === "register" ? t("Do not reuse your hotel email password") : undefined}
               />
             </View>
             <Button onPress={() => void submitAccount()} loading={loading}>
-              {mode === "login" ? "Sign in" : "Create account"}
+              {mode === "login" ? t("Sign in") : t("Create account")}
             </Button>
             <Button
               variant="tertiary"
@@ -295,65 +298,64 @@ export function AuthFlow({ initialUser, onAuthenticated, onDemo, onSocialAuth }:
                 setRequestError(null);
               }}
             >
-              {mode === "login" ? "No account? Create one" : "Already have an account? Sign in"}
+              {mode === "login" ? t("No account? Create one") : t("Already have an account? Sign in")}
             </Button>
           </>
         ) : (
           <>
             <View style={styles.formHeader}>
-              <Text style={uiStyles.h1}>Tell us about your hotel</Text>
-              <Text style={uiStyles.body}>These details will be used in offers sent to guests.</Text>
+              <Text style={uiStyles.h1}>{t("Tell us about your hotel")}</Text>
+              <Text style={uiStyles.body}>{t("These details will be used in offers sent to guests.")}</Text>
             </View>
             {requestError ? <InlineState tone="danger">{requestError}</InlineState> : null}
 
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="Add hotel logo"
+              accessibilityLabel={t("Add hotel logo")}
               disabled={loading}
-              onPress={() => Alert.alert("Logo", "Image upload will be connected to storage.")}
+              onPress={() => Alert.alert(t("Logo"), t("Image upload will be connected to storage."))}
               style={({ pressed }) => [styles.logoUpload, pressed && { opacity: 0.72 }]}
             >
               <View style={styles.logoUploadIcon}><Upload size={22} color={theme.colors.action} /></View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.logoUploadTitle}>Add logo</Text>
-                <Text style={styles.logoUploadText}>PNG or JPG · up to 5 MB</Text>
+                <Text style={styles.logoUploadTitle}>{t("Add logo")}</Text>
+                <Text style={styles.logoUploadText}>{t("PNG or JPG · up to 5 MB")}</Text>
               </View>
             </Pressable>
 
             <View style={styles.fields}>
               <Field
-                label="Hotel name"
+                label={t("Hotel name")}
                 placeholder="Casa Aurelia"
                 value={hotelName}
                 onChangeText={setHotelName}
                 editable={!loading}
-                error={submitted && hotelName.trim().length < 2 ? "Enter the hotel name" : undefined}
+                error={submitted && hotelName.trim().length < 2 ? t("Enter the hotel name") : undefined}
               />
               <Field
-                label="City"
+                label={t("City")}
                 placeholder="Florence"
                 value={city}
                 onChangeText={setCity}
                 editable={!loading}
-                error={submitted && city.trim().length < 2 ? "Enter the city" : undefined}
+                error={submitted && city.trim().length < 2 ? t("Enter the city") : undefined}
               />
               <Field
-                label="Country code"
+                label={t("Country code")}
                 placeholder="IT"
                 autoCapitalize="characters"
                 maxLength={2}
                 value={countryCode}
                 onChangeText={setCountryCode}
                 editable={!loading}
-                error={submitted && !/^[A-Za-z]{2}$/.test(countryCode.trim()) ? "Enter a two-letter code, for example IT" : undefined}
-                helper="ISO country code"
+                error={submitted && !/^[A-Za-z]{2}$/.test(countryCode.trim()) ? t("Enter a two-letter code, for example IT") : undefined}
+                helper={t("ISO country code")}
               />
             </View>
 
-            <InlineState tone="success">EUR, Europe/Rome and English are selected for the first setup</InlineState>
+            <InlineState tone="success">{t("EUR, Europe/Rome and English are selected for the first setup")}</InlineState>
             <Button onPress={() => void submitHotel()} icon={Check} loading={loading}>
-              Create hotel profile
-            </Button>
+              {t("Create hotel profile")}{" "}</Button>
           </>
         )}
       </ScrollView>
@@ -365,7 +367,7 @@ function Feature({ icon: Icon, title }: { icon: typeof Sparkles; title: string }
   return (
     <View style={styles.feature}>
       <View style={styles.featureIcon}><Icon size={20} color={theme.colors.action} /></View>
-      <Text style={styles.featureLabel}>{title}</Text>
+      <Text style={styles.featureLabel}>{translateLabel(title)}</Text>
       <Check size={18} color={theme.colors.success} />
     </View>
   );
@@ -383,11 +385,11 @@ function SocialButton({
   onPress: () => void;
 }) {
   const apple = provider === "apple";
-  const label = apple ? "Continue with Apple" : "Continue with Google";
+  const label = apple ? t("Continue with Apple") : t("Continue with Google");
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={label}
+      accessibilityLabel={translateLabel(label)}
       accessibilityState={{ disabled, busy: loading }}
       disabled={disabled}
       onPress={onPress}
@@ -403,7 +405,7 @@ function SocialButton({
       ) : (
         <View style={styles.socialContent}>
           {apple ? <AppleLogo /> : <GoogleLogo />}
-          <Text style={[styles.socialLabel, apple ? styles.appleLabel : styles.googleLabel]}>{label}</Text>
+          <Text style={[styles.socialLabel, apple ? styles.appleLabel : styles.googleLabel]}>{translateLabel(label)}</Text>
         </View>
       )}
     </Pressable>

@@ -1,17 +1,20 @@
 import { z } from "zod";
 import { isoDateSchema } from "./common.js";
+import { DEFAULT_GUEST_LANGUAGE } from "./languages.js";
 import { mealPlanSchema, occupancySchema } from "./entities.js";
 import { MAX_RESERVATION_OFFERS, reservationOfferInputSchema } from "./offers.js";
 
-export const manualRequestSourceSchema = z.enum(["phone", "walk_in", "other"]);
+export const manualRequestSourceSchema = z.enum(["phone", "walk_in", "website", "email", "whatsapp", "other"]);
 export type ManualRequestSource = z.infer<typeof manualRequestSourceSchema>;
 
 export const manualInquiryInputSchema = z.object({
   guest: z.object({
     name: z.string().trim().min(1, "Enter the guest’s name.").max(160),
-    email: z.email("Enter a valid email address.").max(320).nullable().default(null),
-    phone: z.string().trim().min(5, "Enter a valid phone number.").max(50).nullable().default(null),
-    language: z.string().trim().min(2).max(16).default("it"),
+    email: z.email("Enter a valid email address.").max(320),
+    phone: z.string({ error: "Enter the guest’s phone number." }).trim().min(1, "Enter the guest’s phone number.").max(50)
+      .refine((phone) => !phone || /^\+[1-9]\d{6,14}$/.test(phone.replace(/[\s().-]/g, "").replace(/^00/, "+")),
+        "Include the country code, e.g. +39 333 1234567."),
+    language: z.string().trim().min(2).max(16).default(DEFAULT_GUEST_LANGUAGE),
   }).strict(),
   checkIn: isoDateSchema,
   checkOut: isoDateSchema,
@@ -26,11 +29,6 @@ export const manualInquiryInputSchema = z.object({
   offers: z.array(reservationOfferInputSchema).min(1).max(MAX_RESERVATION_OFFERS).optional(),
 }).strict().refine(({ checkIn, checkOut }) => checkIn < checkOut, {
   message: "Check-out must be after check-in.", path: ["checkOut"],
-}).refine(({ sendOffer, guest }) => !sendOffer || guest.email !== null || guest.phone !== null, {
-  message: "Add an email or WhatsApp number to send an offer.", path: ["guest", "email"],
-}).refine(({ sendOffer, guest }) => !sendOffer || guest.phone === null
-  || /^\+[1-9]\d{6,14}$/.test(guest.phone.replace(/[\s().-]/g, "").replace(/^00/, "+")), {
-  message: "Include a valid country code for WhatsApp, e.g. +39 333 123 4567.", path: ["guest", "phone"],
 });
 
 export type ManualInquiryInput = z.infer<typeof manualInquiryInputSchema>;

@@ -1,3 +1,4 @@
+import { locale as uiLocale, t, translateLabel, getLanguage } from "../i18n";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -62,16 +63,16 @@ export function WhatsAppAdminScreen({ onBack }: { onBack?: () => void }) {
       return [session.hotelName, session.city, session.phoneNumber, session.pushName, session.contactEmail]
         .some((value) => value?.toLowerCase().includes(needle));
     });
-  }, [filter, query, snapshot]);
+  }, [filter, query, snapshot, getLanguage()]);
 
   const restart = (session: PlatformWhatsAppSession) => {
     Alert.alert(
-      "Restart WhatsApp session?",
-      `This safely restarts ${session.hotelName}'s WAHA session. The hotel may need to scan its QR code again.`,
+      t("Restart WhatsApp session?"),
+      t("This safely restarts {{v0}}'s WAHA session. The hotel may need to scan its QR code again.", { v0: session.hotelName }),
       [
-        { text: "Cancel", style: "cancel" },
+        { text: t("Cancel"), style: "cancel" },
         {
-          text: "Restart",
+          text: t("Restart"),
           onPress: () => void (async () => {
             setRestarting(session.hotelId);
             setError(null);
@@ -82,7 +83,7 @@ export function WhatsAppAdminScreen({ onBack }: { onBack?: () => void }) {
                 sessions: current.sessions.map((item) => item.hotelId === updated.hotelId ? updated : item),
               } : current);
             } catch {
-              setError(`Could not restart ${session.hotelName}. The incident was recorded on the connection.`);
+              setError(t("Could not restart {{v0}}. The incident was recorded on the connection.", { v0: session.hotelName }));
             } finally {
               setRestarting(null);
             }
@@ -96,23 +97,23 @@ export function WhatsAppAdminScreen({ onBack }: { onBack?: () => void }) {
     <View style={uiStyles.screen}>
       <View style={styles.topBar}>
         {onBack ? (
-          <Pressable accessibilityRole="button" accessibilityLabel="Back" onPress={onBack} style={styles.backButton}>
+          <Pressable accessibilityRole="button" accessibilityLabel={t("Back")} onPress={onBack} style={styles.backButton}>
             <ChevronLeft size={24} color={theme.colors.text} />
           </Pressable>
         ) : (
           <View style={[styles.backButton, styles.supportMark]}><MessageCircle size={21} color={theme.colors.action} /></View>
         )}
         <View style={{ flex: 1 }}>
-          <Text style={uiStyles.h2}>WhatsApp support</Text>
-          <Text style={uiStyles.caption}>All hotel phones · live WAHA status</Text>
+          <Text style={uiStyles.h2}>{t("WhatsApp support")}</Text>
+          <Text style={uiStyles.caption}>{t("All hotel phones · live WAHA status")}</Text>
         </View>
-        <Pressable accessibilityRole="button" accessibilityLabel="Refresh" onPress={() => void load(true)} style={styles.backButton}>
+        <Pressable accessibilityRole="button" accessibilityLabel={t("Refresh")} onPress={() => void load(true)} style={styles.backButton}>
           <RefreshCw size={20} color={theme.colors.action} />
         </Pressable>
       </View>
 
       {loading ? (
-        <View style={styles.center}><ActivityIndicator color={theme.colors.action} /><Text style={uiStyles.caption}>Checking WAHA sessions…</Text></View>
+        <View style={styles.center}><ActivityIndicator color={theme.colors.action} /><Text style={uiStyles.caption}>{t("Checking WAHA sessions…")}</Text></View>
       ) : (
         <FlatList
           data={sessions}
@@ -121,19 +122,19 @@ export function WhatsAppAdminScreen({ onBack }: { onBack?: () => void }) {
           contentContainerStyle={styles.content}
           ListHeaderComponent={
             <View style={styles.headerContent}>
-              {error ? <InlineState tone="danger">{error}</InlineState> : null}
-              {snapshot && !snapshot.provider.configured ? <InlineState tone="warning">WAHA is not configured on the API server</InlineState> : null}
-              {snapshot?.provider.configured && !snapshot.provider.reachable ? <InlineState tone="danger">WAHA is unreachable · {snapshot.provider.errorCode}</InlineState> : null}
+              {error ? <InlineState tone="danger">{translateLabel(error)}</InlineState> : null}
+              {snapshot && !snapshot.provider.configured ? <InlineState tone="warning">{t("WAHA is not configured on the API server")}</InlineState> : null}
+              {snapshot?.provider.configured && !snapshot.provider.reachable ? <InlineState tone="danger">{t("WAHA is unreachable ·")}{" "}{snapshot.provider.errorCode}</InlineState> : null}
               {snapshot ? <Summary snapshot={snapshot} /> : null}
               <View style={styles.searchWrap}>
                 <Search size={18} color={theme.colors.textMuted} />
                 <TextInput
                   value={query}
                   onChangeText={setQuery}
-                  placeholder="Hotel, phone, email…"
+                  placeholder={t("Hotel, phone, email…")}
                   placeholderTextColor={theme.colors.textMuted}
                   style={styles.searchInput}
-                  accessibilityLabel="Search WhatsApp sessions"
+                  accessibilityLabel={t("Search WhatsApp sessions")}
                 />
               </View>
               <View style={styles.filters}>
@@ -143,7 +144,7 @@ export function WhatsAppAdminScreen({ onBack }: { onBack?: () => void }) {
                   </Pressable>
                 ))}
               </View>
-              <Text style={styles.resultCount}>{sessions.length} shown</Text>
+              <Text style={styles.resultCount}>{sessions.length} {" "}{t("shown")}</Text>
             </View>
           }
           renderItem={({ item }) => (
@@ -155,7 +156,7 @@ export function WhatsAppAdminScreen({ onBack }: { onBack?: () => void }) {
               onRestart={() => restart(item)}
             />
           )}
-          ListEmptyComponent={<View style={styles.empty}><MessageCircle size={28} color={theme.colors.textMuted} /><Text style={styles.emptyTitle}>No matching hotel phones</Text><Text style={uiStyles.caption}>Change the filter or search query.</Text></View>}
+          ListEmptyComponent={<View style={styles.empty}><MessageCircle size={28} color={theme.colors.textMuted} /><Text style={styles.emptyTitle}>{t("No matching hotel phones")}</Text><Text style={uiStyles.caption}>{t("Change the filter or search query.")}</Text></View>}
         />
       )}
     </View>
@@ -164,12 +165,12 @@ export function WhatsAppAdminScreen({ onBack }: { onBack?: () => void }) {
 
 function Summary({ snapshot }: { snapshot: PlatformWhatsAppSnapshot }) {
   const items = [
-    { label: "Connected", value: snapshot.counts.connected, tone: theme.colors.success },
-    { label: "Attention", value: snapshot.counts.attention, tone: theme.colors.danger },
-    { label: "Connecting", value: snapshot.counts.connecting, tone: theme.colors.warning },
-    { label: "Not connected", value: snapshot.counts.disconnected, tone: theme.colors.textMuted },
+    { label: t("Connected"), value: snapshot.counts.connected, tone: theme.colors.success },
+    { label: t("Attention"), value: snapshot.counts.attention, tone: theme.colors.danger },
+    { label: t("Connecting"), value: snapshot.counts.connecting, tone: theme.colors.warning },
+    { label: t("Not connected"), value: snapshot.counts.disconnected, tone: theme.colors.textMuted },
   ];
-  return <View style={styles.summary}>{items.map((item) => <View key={item.label} style={styles.summaryCard}><Text style={[styles.summaryValue, { color: item.tone }]}>{item.value}</Text><Text style={styles.summaryLabel}>{item.label}</Text></View>)}</View>;
+  return <View style={styles.summary}>{items.map((item) => <View key={item.label} style={styles.summaryCard}><Text style={[styles.summaryValue, { color: item.tone }]}>{item.value}</Text><Text style={styles.summaryLabel}>{translateLabel(item.label)}</Text></View>)}</View>;
 }
 
 function SessionRow({ session, expanded, restarting, onToggle, onRestart }: {
@@ -186,22 +187,22 @@ function SessionRow({ session, expanded, restarting, onToggle, onRestart }: {
       <Pressable onPress={onToggle} accessibilityRole="button" accessibilityState={{ expanded }} style={styles.sessionMain}>
         <View style={[styles.statusIcon, { backgroundColor: status.background }]}><StatusIcon size={20} color={status.color} /></View>
         <View style={{ flex: 1, minWidth: 0 }}>
-          <View style={styles.hotelLine}><Text numberOfLines={1} style={styles.hotelName}>{session.hotelName}</Text><View style={[styles.statusPill, { backgroundColor: status.background }]}><Text style={[styles.statusText, { color: status.color }]}>{status.label}</Text></View></View>
-          <Text style={styles.phone}>{session.phoneNumber ? `+${session.phoneNumber}` : "No phone linked"}{session.pushName ? ` · ${session.pushName}` : ""}</Text>
-          <Text style={styles.meta}>{session.city} · {session.providerStatus} · sent {formatWhen(session.lastSuccessfulMessageAt)}</Text>
+          <View style={styles.hotelLine}><Text numberOfLines={1} style={styles.hotelName}>{session.hotelName}</Text><View style={[styles.statusPill, { backgroundColor: status.background }]}><Text style={[styles.statusText, { color: status.color }]}>{translateLabel(status.label)}</Text></View></View>
+          <Text style={styles.phone}>{session.phoneNumber ? `+${session.phoneNumber}` : t("No phone linked")}{session.pushName ? ` · ${session.pushName}` : ""}</Text>
+          <Text style={styles.meta}>{session.city} · {session.providerStatus} {" "}{t("· sent")}{" "}{formatWhen(session.lastSuccessfulMessageAt)}</Text>
         </View>
         {expanded ? <ChevronUp size={19} color={theme.colors.textMuted} /> : <ChevronDown size={19} color={theme.colors.textMuted} />}
       </Pressable>
       {expanded ? (
         <View style={styles.details}>
-          <Detail label="Hotel contact" value={session.contactEmail ?? session.contactPhone ?? "Not provided"} />
-          <Detail label="WAHA session" value={session.sessionName ?? "Not created"} />
-          <Detail label="Engine" value={session.engine ?? "Unknown"} />
-          <Detail label="Message capping" value={cappingLabel(session)} danger={Boolean(session.messageCapping && session.messageCapping.status !== "NONE")} />
-          <Detail label="Last check" value={formatWhen(session.lastCheckedAt)} />
-          <Detail label="Last failed send" value={formatWhen(session.lastFailedMessageAt)} />
-          <Detail label="Last error" value={session.lastErrorCode ?? "None"} danger={Boolean(session.lastErrorCode)} />
-          {session.configured ? <Button variant="secondary" icon={RefreshCw} loading={restarting} onPress={onRestart}>Restart session</Button> : <InlineState tone="warning">The hotel must open Connections and scan its QR code</InlineState>}
+          <Detail label={t("Hotel contact")} value={session.contactEmail ?? session.contactPhone ?? t("Not provided")} />
+          <Detail label={t("WAHA session")} value={session.sessionName ?? t("Not created")} />
+          <Detail label={t("Engine")} value={session.engine ?? t("Unknown")} />
+          <Detail label={t("Message capping")} value={cappingLabel(session)} danger={Boolean(session.messageCapping && session.messageCapping.status !== "NONE")} />
+          <Detail label={t("Last check")} value={formatWhen(session.lastCheckedAt)} />
+          <Detail label={t("Last failed send")} value={formatWhen(session.lastFailedMessageAt)} />
+          <Detail label={t("Last error")} value={session.lastErrorCode ?? t("None")} danger={Boolean(session.lastErrorCode)} />
+          {session.configured ? <Button variant="secondary" icon={RefreshCw} loading={restarting} onPress={onRestart}>{t("Restart session")}</Button> : <InlineState tone="warning">{t("The hotel must open Connections and scan its QR code")}</InlineState>}
         </View>
       ) : null}
     </View>
@@ -209,18 +210,18 @@ function SessionRow({ session, expanded, restarting, onToggle, onRestart }: {
 }
 
 function Detail({ label, value, danger = false }: { label: string; value: string; danger?: boolean }) {
-  return <View style={styles.detailRow}><Text style={styles.detailLabel}>{label}</Text><Text selectable style={[styles.detailValue, danger && { color: theme.colors.danger }]}>{value}</Text></View>;
+  return <View style={styles.detailRow}><Text style={styles.detailLabel}>{translateLabel(label)}</Text><Text selectable style={[styles.detailValue, danger && { color: theme.colors.danger }]}>{value}</Text></View>;
 }
 
 function healthStyle(health: PlatformWhatsAppSession["health"]) {
-  if (health === "connected") return { label: "Connected", color: theme.colors.success, background: theme.colors.successTint };
-  if (health === "connecting") return { label: "Connecting", color: theme.colors.warning, background: theme.colors.warningTint };
-  if (health === "attention") return { label: "Attention", color: theme.colors.danger, background: theme.colors.dangerTint };
-  return { label: "Not connected", color: theme.colors.textMuted, background: theme.colors.surfaceMuted };
+  if (health === "connected") return { label: t("Connected"), color: theme.colors.success, background: theme.colors.successTint };
+  if (health === "connecting") return { label: t("Connecting"), color: theme.colors.warning, background: theme.colors.warningTint };
+  if (health === "attention") return { label: t("Attention"), color: theme.colors.danger, background: theme.colors.dangerTint };
+  return { label: t("Not connected"), color: theme.colors.textMuted, background: theme.colors.surfaceMuted };
 }
 
 function filterLabel(filter: Filter): string {
-  return filter === "all" ? "All" : healthStyle(filter).label;
+  return filter === "all" ? t("All") : healthStyle(filter).label;
 }
 
 function formatWhen(value: string | null): string {
@@ -229,16 +230,16 @@ function formatWhen(value: string | null): string {
   if (Number.isNaN(date.getTime())) return "unknown";
   const deltaMinutes = Math.round((Date.now() - date.getTime()) / 60_000);
   if (deltaMinutes < 1) return "now";
-  if (deltaMinutes < 60) return `${deltaMinutes}m ago`;
-  if (deltaMinutes < 1_440) return `${Math.floor(deltaMinutes / 60)}h ago`;
-  return date.toLocaleDateString();
+  if (deltaMinutes < 60) return t("{{v0}}m ago", { v0: deltaMinutes });
+  if (deltaMinutes < 1_440) return t("{{v0}}h ago", { v0: Math.floor(deltaMinutes / 60) });
+  return date.toLocaleDateString(uiLocale());
 }
 
 function cappingLabel(session: PlatformWhatsAppSession): string {
   const capping = session.messageCapping;
-  if (!capping) return "Not reported";
+  if (!capping) return t("Not reported");
   const usage = capping.usedQuota !== null && capping.totalQuota !== null ? ` · ${capping.usedQuota}/${capping.totalQuota}` : "";
-  const reset = capping.cycleEnd ? ` · resets ${new Date(capping.cycleEnd * 1_000).toLocaleString()}` : "";
+  const reset = capping.cycleEnd ? t(" · resets {{v0}}", { v0: new Date(capping.cycleEnd * 1_000).toLocaleString(uiLocale()) }) : "";
   return `${capping.status}${usage}${reset}`;
 }
 

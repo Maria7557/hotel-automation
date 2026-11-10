@@ -1,3 +1,4 @@
+import type { OfferExtraLine } from "@hotel/contracts";
 export type OfferPageState = "active" | "expired" | "accepted" | "revoked";
 
 export type OfferSnapshot = Readonly<{
@@ -19,6 +20,7 @@ export type OfferSnapshot = Readonly<{
   }>;
   guestSnapshot: Readonly<{
     name: string;
+    language?: string;
     checkIn: string;
     checkOut: string;
     mealPlan: "BB" | "HB" | "FB";
@@ -57,6 +59,17 @@ export type OfferSnapshot = Readonly<{
     }>[];
     totalCents: number;
     note?: string;
+    description?: string;
+    checkIn?: string;
+    checkOut?: string;
+    occupancy?: Readonly<{ adults: number; childAges: readonly number[] }>;
+    accommodationCents?: number;
+    extras?: readonly Readonly<OfferExtraLine>[];
+    discountPercent?: number;
+    discountCents?: number;
+    depositPercent?: number;
+    depositCents?: number;
+    cancellationPolicy?: string;
   }>[];
 }>;
 

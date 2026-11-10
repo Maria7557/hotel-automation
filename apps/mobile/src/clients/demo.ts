@@ -1,4 +1,5 @@
 import { mockDashboard } from "../api/mock";
+import { DEFAULT_GUEST_LANGUAGE } from "@hotel/contracts";
 import type { ClientFilterOptions, ClientFilters, ClientInput, ClientProfile, ClientHistory, ClientPage, HotelRequest } from "../api/types";
 
 const requestLinks = new Map<string, string>();
@@ -14,7 +15,7 @@ export function demoAddRequestClient(id: string) {
   if (requestLinks.has(id)) return demoGetClient(requestLinks.get(id)!);
   const request = mockDashboard.requests.find((r) => r.id === id);
   if (!request) throw new Error("Request was not found.");
-  const client = demoCreateClient({ name: request.guestName, email: request.email.recipient ?? `${id}@example.com`, phone: request.whatsapp.recipient ?? null, locale: "en", notes: "" }).client;
+  const client = demoCreateClient({ name: request.guestName, email: request.email.recipient ?? `${id}@example.com`, phone: request.whatsapp.recipient ?? null, locale: request.locale ?? DEFAULT_GUEST_LANGUAGE, notes: "" }).client;
   client.source = "inquiry";
   client.firstInquiryAt ??= request.receivedAt;
   client.lastInquiryAt = request.receivedAt;
@@ -24,6 +25,16 @@ export function demoAddRequestClient(id: string) {
 }
 for (const request of mockDashboard.requests.slice(0, 2)) demoAddRequestClient(request.id);
 export function demoClientStatuses(ids: string[]) { return ids.map((inquiryId) => ({ inquiryId, inContacts: requestLinks.has(inquiryId), clientId: requestLinks.get(inquiryId) ?? null })); }
+export function demoLinkRequestClient(inquiryId: string, clientId: string) {
+  if (requestLinks.has(inquiryId)) return;
+  const request = mockDashboard.requests.find(({ id }) => id === inquiryId);
+  if (!request) throw new Error("Request was not found.");
+  const client = demoGetClient(clientId);
+  requestLinks.set(inquiryId, clientId);
+  client.firstInquiryAt ??= request.receivedAt;
+  client.lastInquiryAt = request.receivedAt;
+  client.requestCount++;
+}
 // Demo fixtures implement the API contract without making reservation-detail requests.
 export function demoClientFilterOptions(): ClientFilterOptions {
   return {

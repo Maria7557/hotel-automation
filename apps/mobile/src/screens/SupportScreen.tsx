@@ -1,3 +1,4 @@
+import { t, translateLabel } from "../i18n";
 import { Alert, Linking, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { ArrowUpRight, Clock3, Mail, MessageCircle, Phone, Send, type LucideIcon } from "lucide-react-native";
 import { theme } from "@hotel/design";
@@ -28,31 +29,31 @@ const methods: ContactMethod[] = [
 export function SupportScreen() {
   const open = async (method: ContactMethod) => {
     if (!method.url) {
-      Alert.alert(`${method.title} is not connected yet`, `Contact us at ${supportEmail}.`, [
-        { text: "Cancel", style: "cancel" },
-        { text: "Open email", onPress: () => void Linking.openURL(`mailto:${supportEmail}`) },
+      Alert.alert(t("{{v0}} is not connected yet", { v0: method.title }), t("Contact us at {{v0}}.", { v0: supportEmail }), [
+        { text: t("Cancel"), style: "cancel" },
+        { text: t("Open email"), onPress: () => void Linking.openURL(`mailto:${supportEmail}`) },
       ]);
       return;
     }
     try {
       await Linking.openURL(method.url);
     } catch {
-      Alert.alert("Could not open this channel", `Contact us at ${supportEmail}.`);
+      Alert.alert(t("Could not open this channel"), t("Contact us at {{v0}}.", { v0: supportEmail }));
     }
   };
 
   return <View style={uiStyles.screen}>
     <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
       <View style={styles.header}>
-        <Text style={uiStyles.h1}>Support</Text>
-        <View style={styles.replyPill}><Clock3 size={15} color={theme.colors.success} /><Text style={styles.replyText}>~5 min</Text></View>
+        <Text style={uiStyles.h1}>{t("Support")}</Text>
+        <View style={styles.replyPill}><Clock3 size={15} color={theme.colors.success} /><Text style={styles.replyText}>{t("~5 min")}</Text></View>
       </View>
       <View style={styles.grid}>
         {methods.map((method) => {
           const Icon = method.icon;
-          return <Pressable key={method.id} accessibilityRole="button" accessibilityLabel={method.title} onPress={() => void open(method)} style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}>
+          return <Pressable key={method.id} accessibilityRole="button" accessibilityLabel={translateLabel(method.title)} onPress={() => void open(method)} style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}>
             <View style={[styles.icon, { backgroundColor: method.background }]}><Icon size={24} color={method.color} /></View>
-            <Text style={styles.title}>{method.title}</Text>
+            <Text style={styles.title}>{translateLabel(method.title)}</Text>
             <ArrowUpRight size={19} color={theme.colors.textMuted} />
           </Pressable>;
         })}

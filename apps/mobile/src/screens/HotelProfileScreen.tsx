@@ -1,3 +1,4 @@
+import { t, translateLabel, getLanguage, locale } from "../i18n";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import {
@@ -125,71 +126,71 @@ export function HotelProfileScreen({
     <KeyboardAvoidingView style={uiStyles.screen} behavior={Platform.OS === "ios" ? "padding" : undefined}>
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
         <View style={styles.header}>
-          <Pressable accessibilityRole="button" accessibilityLabel="Back" onPress={onBack} style={({ pressed }) => [styles.back, pressed && styles.pressed]}>
+          <Pressable accessibilityRole="button" accessibilityLabel={t("Back")} onPress={onBack} style={({ pressed }) => [styles.back, pressed && styles.pressed]}>
             <ArrowLeft size={22} color={theme.colors.text} />
           </Pressable>
-          <Text style={styles.headerTitle}>Hotel profile</Text>
+          <Text style={styles.headerTitle}>{t("Hotel profile")}</Text>
           <View style={{ width: 44 }} />
         </View>
 
-        {error ? <InlineState tone="danger">{error}</InlineState> : null}
-        {demo ? <InlineState tone="warning">Demo mode: changes are kept only until you exit</InlineState> : null}
+        {error ? <InlineState tone="danger">{translateLabel(error)}</InlineState> : null}
+        {demo ? <InlineState tone="warning">{t("Demo mode: changes are kept only until you exit")}</InlineState> : null}
         {loading || !profile ? (
-          <View style={styles.loading} accessibilityLabel="Loading hotel profile">
+          <View style={styles.loading} accessibilityLabel={t("Loading hotel profile")}>
             <ActivityIndicator size="large" color={theme.colors.action} />
-            <Text style={styles.loadingText}>Loading profile…</Text>
-            {error ? <Button variant="secondary" onPress={() => void load()}>Try again</Button> : null}
+            <Text style={styles.loadingText}>{t("Loading profile…")}</Text>
+            {error ? <Button variant="secondary" onPress={() => void load()}>{t("Try again")}</Button> : null}
           </View>
         ) : (
           <>
             <View style={styles.identityPreview}>
               <RemoteImage uri={logoUrl.trim()} variant="logo" fallback={<Building2 size={30} color={theme.colors.action} />} />
               <View style={{ flex: 1 }}>
-                <Text style={styles.previewName}>{name || "Hotel name"}</Text>
+                <Text style={styles.previewName}>{name || t("Hotel name")}</Text>
                 <Text style={styles.previewMeta}>{[city, countryCode.toUpperCase()].filter(Boolean).join(", ")}</Text>
               </View>
             </View>
 
             <View style={styles.section}>
-              <SectionTitle>Basic information</SectionTitle>
-              <Field label="Name" value={name} onChangeText={setName} editable={!saving} error={submitted && name.trim().length < 2 ? "Enter a name" : undefined} />
+              <SectionTitle>{t("Basic information")}</SectionTitle>
+              <Field label={t("Name")} value={name} onChangeText={setName} editable={!saving} error={submitted && name.trim().length < 2 ? t("Enter a name") : undefined} />
               <View style={styles.fieldRow}>
                 <View style={styles.fieldHalf}>
                   <SelectField
-                    label="Country"
+                    label={t("Country")}
                     value={`${selectedCountry.name} · ${selectedCountry.code}`}
                     icon={Globe2}
                     disabled={saving}
-                    error={submitted && !/^[A-Za-z]{2}$/.test(countryCode.trim()) ? "Select a country" : undefined}
+                    error={submitted && !/^[A-Za-z]{2}$/.test(countryCode.trim()) ? t("Select a country") : undefined}
                     onPress={() => setActiveSelector("country")}
                   />
                 </View>
-                <View style={styles.fieldHalf}><Field label="Locale" value={locale} onChangeText={setLocale} autoCapitalize="none" editable={!saving} helper="For example, en-GB" /></View>
+                <View style={styles.fieldHalf}><Field label={t("Locale")} value={locale} onChangeText={setLocale} autoCapitalize="none" editable={!saving} helper={t("For example, en-GB")} /></View>
               </View>
               <SelectField
-                label="City"
-                value={city || "Select a city"}
+                label={t("City")}
+                value={city || t("Select a city")}
                 placeholder={!city}
                 icon={MapPin}
                 disabled={saving || !selectedCountry}
-                error={submitted && city.trim().length < 2 ? "Select a city" : undefined}
+                error={submitted && city.trim().length < 2 ? t("Select a city") : undefined}
                 onPress={() => setActiveSelector("city")}
               />
-              <Field label="Description" value={description} onChangeText={setDescription} multiline numberOfLines={5} editable={!saving} style={styles.textArea} />
+              <Field label={t("Description")} value={description} onChangeText={setDescription} multiline numberOfLines={5} editable={!saving} style={styles.textArea} />
             </View>
 
             <View style={styles.section}>
-              <SectionTitle>Contact details</SectionTitle>
-              <Field label="Hotel email" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" editable={!saving} error={submitted && email.trim() && !email.includes("@") ? "Check the email address" : undefined} />
-              <Field label="Phone" value={phone} onChangeText={setPhone} keyboardType="phone-pad" editable={!saving} placeholder="+39 055 000 0000" />
-              <Field label="Website" value={website} onChangeText={setWebsite} keyboardType="url" autoCapitalize="none" editable={!saving} placeholder="https://hotel.example" error={submitted && invalidWebsite ? "Enter a complete URL starting with http:// or https://" : undefined} />
+              <SectionTitle>{t("Contact details")}</SectionTitle>
+              <Field label={t("Hotel email")} value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" editable={!saving} error={submitted && email.trim() && !email.includes("@") ? t("Check the email address") : undefined} />
+              <Field label={t("Phone")} value={phone} onChangeText={setPhone} keyboardType="phone-pad" editable={!saving} placeholder="+39 055 000 0000" />
+              <Field label={t("Website")} value={website} onChangeText={setWebsite} keyboardType="url" autoCapitalize="none" editable={!saving} placeholder="https://hotel.example" error={submitted && invalidWebsite ? t("Enter a complete URL starting with http:// or https://") : undefined} />
             </View>
 
             <View style={styles.section}>
-              <SectionTitle>Logo and photos</SectionTitle>
-              <Field label="Logo URL" value={logoUrl} onChangeText={setLogoUrl} keyboardType="url" autoCapitalize="none" editable={!saving} placeholder="https://…/logo.png" error={submitted && invalidLogo ? "Enter a complete image URL" : undefined} />
+              <SectionTitle>{t("Logo and photos")}</SectionTitle>
+              <Field label={t("Logo URL")} value={logoUrl} onChangeText={setLogoUrl} keyboardType="url" autoCapitalize="none" editable={!saving} placeholder="https://…/logo.png" error={submitted && invalidLogo ? t("Enter a complete image URL") : undefined} />
               <Field
-                label="Photo URLs"
+                label={t("Photo URLs")}
                 value={photoUrlsText}
                 onChangeText={setPhotoUrlsText}
                 autoCapitalize="none"
@@ -197,31 +198,31 @@ export function HotelProfileScreen({
                 multiline
                 numberOfLines={6}
                 style={styles.urlsArea}
-                helper="Up to 20 URLs, one per line or separated by commas"
-                error={submitted && invalidPhoto ? `Check this URL: ${invalidPhoto}` : submitted && photoUrls.length > 20 ? "You can add up to 20 photos" : undefined}
+                helper={t("Up to 20 URLs, one per line or separated by commas")}
+                error={submitted && invalidPhoto ? t("Check this URL: {{v0}}", { v0: invalidPhoto }) : submitted && photoUrls.length > 20 ? t("You can add up to 20 photos") : undefined}
               />
               {photoUrls.length ? (
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.gallery}>
                   {photoUrls.filter(isHttpUrl).map((url, index) => <RemoteImage key={`${url}-${index}`} uri={url} variant="photo" fallback={<ImageIcon size={23} color={theme.colors.textMuted} />} />)}
                 </ScrollView>
               ) : (
-                <View style={styles.noPhotos}><ImageIcon size={23} color={theme.colors.textMuted} /><Text style={styles.noPhotosText}>No photos added yet</Text></View>
+                <View style={styles.noPhotos}><ImageIcon size={23} color={theme.colors.textMuted} /><Text style={styles.noPhotosText}>{t("No photos added yet")}</Text></View>
               )}
             </View>
 
             <View style={styles.section}>
-              <SectionTitle>Offer terms</SectionTitle>
-              <Field label="Guest terms" value={termsText} onChangeText={setTermsText} multiline numberOfLines={6} editable={!saving} style={styles.textArea} placeholder="Availability is confirmed by the hotel…" />
+              <SectionTitle>{t("Offer terms")}</SectionTitle>
+              <Field label={t("Guest terms")} value={termsText} onChangeText={setTermsText} multiline numberOfLines={6} editable={!saving} style={styles.textArea} placeholder={t("Availability is confirmed by the hotel…")} />
             </View>
 
-            <Button onPress={() => void save()} loading={saving} icon={Check}>Save profile</Button>
+            <Button onPress={() => void save()} loading={saving} icon={Check}>{t("Save profile")}</Button>
           </>
         )}
       </ScrollView>
       <OptionModal
         visible={activeSelector === "country"}
-        title="Select country"
-        subtitle="Italy is prioritised for the initial market."
+        title={t("Select country")}
+        subtitle={t("Italy is prioritised for the initial market.")}
         selected={countryCode.toUpperCase()}
         options={countryOptions.map((country) => ({ value: country.code, label: country.name, meta: country.code }))}
         onClose={() => setActiveSelector(null)}
@@ -236,8 +237,8 @@ export function HotelProfileScreen({
       />
       <OptionModal
         visible={activeSelector === "city"}
-        title="Select city"
-        subtitle={`${selectedCountry.name} · offline list`}
+        title={t("Select city")}
+        subtitle={t("{{v0}} · offline list", { v0: selectedCountry.name })}
         selected={city}
         options={cityOptions.map((option) => ({ value: option, label: option }))}
         onClose={() => setActiveSelector(null)}
@@ -271,7 +272,7 @@ function SelectField({
 }) {
   return (
     <View style={styles.selectWrap}>
-      <Text style={styles.selectLabel}>{label}</Text>
+      <Text style={styles.selectLabel}>{translateLabel(label)}</Text>
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={`${label}: ${value}`}
@@ -284,7 +285,7 @@ function SelectField({
         <Text numberOfLines={1} style={[styles.selectValue, placeholder && styles.selectPlaceholder]}>{value}</Text>
         <ChevronDown size={18} color={theme.colors.textMuted} />
       </Pressable>
-      {error ? <Text style={styles.selectErrorText}>{error}</Text> : null}
+      {error ? <Text style={styles.selectErrorText}>{translateLabel(error)}</Text> : null}
     </View>
   );
 }
@@ -309,14 +310,14 @@ function OptionModal({
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose} statusBarTranslucent>
       <View style={styles.modalRoot}>
-        <Pressable accessibilityRole="button" accessibilityLabel="Close selector" onPress={onClose} style={StyleSheet.absoluteFill} />
+        <Pressable accessibilityRole="button" accessibilityLabel={t("Close selector")} onPress={onClose} style={StyleSheet.absoluteFill} />
         <View style={styles.sheet}>
           <View style={styles.sheetHeader}>
             <View style={{ flex: 1 }}>
-              <Text style={styles.sheetTitle}>{title}</Text>
-              <Text style={styles.sheetSubtitle}>{subtitle}</Text>
+              <Text style={styles.sheetTitle}>{translateLabel(title)}</Text>
+              <Text style={styles.sheetSubtitle}>{translateLabel(subtitle)}</Text>
             </View>
-            <Pressable accessibilityRole="button" accessibilityLabel="Close" onPress={onClose} style={({ pressed }) => [styles.closeButton, pressed && styles.pressed]}>
+            <Pressable accessibilityRole="button" accessibilityLabel={t("Close")} onPress={onClose} style={({ pressed }) => [styles.closeButton, pressed && styles.pressed]}>
               <X size={22} color={theme.colors.text} />
             </Pressable>
           </View>
@@ -332,7 +333,7 @@ function OptionModal({
                   style={({ pressed }) => [styles.option, isSelected && styles.optionSelected, pressed && styles.optionPressed]}
                 >
                   <View style={{ flex: 1 }}>
-                    <Text style={[styles.optionLabel, isSelected && styles.optionLabelSelected]}>{option.label}</Text>
+                    <Text style={[styles.optionLabel, isSelected && styles.optionLabelSelected]}>{translateLabel(option.label)}</Text>
                     {option.meta ? <Text style={styles.optionMeta}>{option.meta}</Text> : null}
                   </View>
                   {isSelected ? <Check size={20} color={theme.colors.action} /> : null}
@@ -384,12 +385,14 @@ const countries: CountryOption[] = [
 
 function getCountryOptions(currentCode: string, currentLocale: string, currentCity: string): CountryOption[] {
   const normalized = currentCode.trim().toUpperCase();
-  if (!normalized || countries.some((country) => country.code === normalized)) return countries;
+  const displayNames = new Intl.DisplayNames([getLanguage()], { type: "region" });
+  const translatedCountries = countries.map((country) => ({ ...country, name: displayNames.of(country.code) ?? country.name }));
+  if (!normalized || countries.some((country) => country.code === normalized)) return translatedCountries;
   return [
-    ...countries,
+    ...translatedCountries,
     {
       code: normalized,
-      name: `Current country (${normalized})`,
+      name: t("Current country ({{v0}})", { v0: normalized }),
       locale: currentLocale || "en-GB",
       cities: currentCity ? [currentCity] : [],
     },
@@ -401,7 +404,7 @@ function RemoteImage({ uri, variant, fallback }: { uri: string; variant: "logo" 
   useEffect(() => { setFailed(false); }, [uri]);
   const frameStyle = variant === "logo" ? styles.logoFrame : styles.photoFrame;
   if (!uri || failed || !isHttpUrl(uri)) return <View style={[frameStyle, styles.imageFallback]}>{fallback}</View>;
-  return <Image source={{ uri }} accessibilityLabel={variant === "logo" ? "Hotel logo" : "Hotel photo"} resizeMode="cover" onError={() => setFailed(true)} style={frameStyle} />;
+  return <Image source={{ uri }} accessibilityLabel={variant === "logo" ? t("Hotel logo") : t("Hotel photo")} resizeMode="cover" onError={() => setFailed(true)} style={frameStyle} />;
 }
 
 function parseUrlList(value: string): string[] {

@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 import * as AppleAuthentication from "expo-apple-authentication";
 import {
   GoogleOneTapSignIn,
@@ -21,7 +22,7 @@ async function signInWithGoogle(): Promise<string> {
   if (!webClientId) {
     throw new ApiError(
       "SOCIAL_AUTH_NOT_CONFIGURED",
-      "Google sign-in needs the Google Web client ID in the app configuration.",
+      t("Google sign-in needs the Google Web client ID in the app configuration."),
     );
   }
 
@@ -38,17 +39,17 @@ async function signInWithGoogle(): Promise<string> {
     response = await GoogleOneTapSignIn.presentExplicitSignIn();
   }
   if (isCancelledResponse(response)) {
-    throw new ApiError("SOCIAL_AUTH_CANCELLED", "Google sign-in was cancelled.");
+    throw new ApiError("SOCIAL_AUTH_CANCELLED", t("Google sign-in was cancelled."));
   }
   if (!isSuccessResponse(response) || !response.data.idToken) {
-    throw new ApiError("SOCIAL_AUTH_FAILED", "Google did not return a valid identity token.");
+    throw new ApiError("SOCIAL_AUTH_FAILED", t("Google did not return a valid identity token."));
   }
   return response.data.idToken;
 }
 
 async function signInWithApple(): Promise<string> {
   if (!(await AppleAuthentication.isAvailableAsync())) {
-    throw new ApiError("SOCIAL_AUTH_UNAVAILABLE", "Apple sign-in is not available on this device.");
+    throw new ApiError("SOCIAL_AUTH_UNAVAILABLE", t("Apple sign-in is not available on this device."));
   }
 
   try {
@@ -59,12 +60,12 @@ async function signInWithApple(): Promise<string> {
       ],
     });
     if (!credential.identityToken) {
-      throw new ApiError("SOCIAL_AUTH_FAILED", "Apple did not return a valid identity token.");
+      throw new ApiError("SOCIAL_AUTH_FAILED", t("Apple did not return a valid identity token."));
     }
     return credential.identityToken;
   } catch (error) {
     if (isErrorCode(error, "ERR_REQUEST_CANCELED")) {
-      throw new ApiError("SOCIAL_AUTH_CANCELLED", "Apple sign-in was cancelled.");
+      throw new ApiError("SOCIAL_AUTH_CANCELLED", t("Apple sign-in was cancelled."));
     }
     throw error;
   }

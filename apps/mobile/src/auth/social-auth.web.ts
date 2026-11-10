@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 import { ApiError } from "@/api/client";
 
 export type SocialAuthProvider = "google" | "apple";
@@ -38,7 +39,7 @@ export async function getSocialIdentityToken(provider: SocialAuthProvider): Prom
   if (provider === "apple") {
     throw new ApiError(
       "SOCIAL_AUTH_UNAVAILABLE",
-      "Apple sign-in is available in the iPhone app. Use Google or email on the web for now.",
+      t("Apple sign-in is available in the iPhone app. Use Google or email on the web for now."),
     );
   }
   return signInWithGoogle();
@@ -49,7 +50,7 @@ async function signInWithGoogle(): Promise<string> {
   if (!clientId) {
     throw new ApiError(
       "SOCIAL_AUTH_NOT_CONFIGURED",
-      "Google sign-in needs a Google Web client ID. Add it to the app configuration and redeploy.",
+      t("Google sign-in needs a Google Web client ID. Add it to the app configuration and redeploy."),
     );
   }
 
@@ -66,7 +67,7 @@ async function signInWithGoogle(): Promise<string> {
       client_id: clientId,
       callback: (response) => finish(() => response.credential
         ? resolve(response.credential)
-        : reject(new ApiError("SOCIAL_AUTH_FAILED", "Google did not return a valid identity token."))),
+        : reject(new ApiError("SOCIAL_AUTH_FAILED", t("Google did not return a valid identity token.")))),
       auto_select: false,
       cancel_on_tap_outside: true,
       context: "signin",
@@ -79,7 +80,7 @@ async function signInWithGoogle(): Promise<string> {
         : notification.getSkippedReason();
       finish(() => reject(new ApiError(
         "SOCIAL_AUTH_UNAVAILABLE",
-        `Google sign-in could not open (${reason}). Allow third-party sign-in or use email instead.`,
+        t("Google sign-in could not open ({{v0}}). Allow third-party sign-in or use email instead.", { v0: reason }),
       )));
     });
   });
@@ -94,10 +95,10 @@ function loadGoogleIdentityServices(): Promise<GoogleIdentityServices> {
     const script = existing ?? document.createElement("script");
     const handleLoad = () => window.google
       ? resolve(window.google)
-      : reject(new ApiError("SOCIAL_AUTH_UNAVAILABLE", "Google sign-in did not load correctly."));
+      : reject(new ApiError("SOCIAL_AUTH_UNAVAILABLE", t("Google sign-in did not load correctly.")));
     const handleError = () => reject(new ApiError(
       "SOCIAL_AUTH_UNAVAILABLE",
-      "Google sign-in could not be loaded. Check the network and try again.",
+      t("Google sign-in could not be loaded. Check the network and try again."),
     ));
 
     script.addEventListener("load", handleLoad, { once: true });

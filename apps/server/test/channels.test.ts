@@ -80,7 +80,9 @@ describe("message settings and channel connections", () => {
     expect(defaults.statusCode).toBe(200);
     expect(defaults.json().data.settings).toMatchObject({
       hotelId: owner.hotelId,
-      emailSubjectTemplate: "Your offer from {{hotel_name}}",
+      emailSubjectTemplate: "La sua offerta da {{hotel_name}}",
+      emailBodyTemplate: expect.stringContaining("Gentile {{guest_name}}"),
+      whatsappBodyTemplate: expect.stringContaining("Gentile {{guest_name}}"),
       allowedVariables: expect.arrayContaining(["guest_name", "offer_url"]),
     });
 

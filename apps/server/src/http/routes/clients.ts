@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { clientListQuerySchema } from "@hotel/contracts";
+import { DEFAULT_GUEST_LANGUAGE, clientListQuerySchema } from "@hotel/contracts";
 import { AppError } from "../../lib/errors.js";
 import type { ClientRepository } from "../../repositories/clients.js";
 import { clientIdentity, ensureClientIdentity } from "../../services/client-identity.js";
@@ -11,7 +11,7 @@ const inputSchema = z.object({
   name: z.string().trim().min(1).max(160),
   email: z.email().max(320).nullable().default(null),
   phone: z.string().trim().min(5).max(50).nullable().default(null),
-  locale: z.string().trim().min(2).max(16).default("en"),
+  locale: z.string().trim().min(2).max(16).default(DEFAULT_GUEST_LANGUAGE),
   notes: z.string().trim().max(2000).default(""),
 });
 const pageSchema = z.object({ cursor: z.uuid().optional() });

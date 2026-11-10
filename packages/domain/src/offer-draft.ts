@@ -64,6 +64,7 @@ export type OfferDraft = DeepReadonly<{
   };
   guestSnapshot: {
     name: string;
+    language: string;
     checkIn: string;
     checkOut: string;
     occupancy: Inquiry["occupancy"];
@@ -266,6 +267,7 @@ export function buildOfferDraft(input: BuildOfferDraftInput): BuildOfferDraftRes
       },
       guestSnapshot: {
         name: input.inquiry.guest.name,
+        language: input.inquiry.guest.language,
         checkIn: input.inquiry.checkIn,
         checkOut: input.inquiry.checkOut,
         occupancy: {

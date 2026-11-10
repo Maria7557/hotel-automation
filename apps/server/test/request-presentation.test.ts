@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { contactUrl, formatOccupancy, formatStay } from "../../mobile/src/requests/presentation.js";
+import { contactUrl, formatOccupancy, formatPaymentLinkWait, formatStay, requestWait } from "../../mobile/src/requests/presentation.js";
 
 describe("reservation summary formatting", () => {
   it("formats stays without timezone shifts, including month and year boundaries", () => {
@@ -17,5 +17,39 @@ describe("reservation summary formatting", () => {
     expect(contactUrl("whatsapp", "3331234567")).toBeNull();
     expect(contactUrl("email", "guest@example.com\nBcc:other@example.com")).toBeNull();
     expect(contactUrl("email")).toBeNull();
+  });
+});
+
+describe("waiting time on unfinished requests", () => {
+  const timestamps = { receivedAt: "2026-11-09T10:00:00Z", offerSentAt: "2026-11-09T10:15:00Z", acceptedAt: "2026-11-09T10:30:00Z" };
+  const now = Date.parse("2026-11-09T11:00:00Z");
+
+  it.each([
+    ["new", "1h 0m"],
+    ["attention", "1h 0m"],
+    ["payment", "30m"],
+    ["waiting", "45m"],
+  ] as const)("shows a live elapsed time for %s requests", (status, expected) => {
+    const wait = requestWait({ ...timestamps, status });
+    expect(wait).not.toBeNull();
+    expect(formatPaymentLinkWait(wait!.since, now)).toBe(expected);
+  });
+
+  it("keeps the timer visible when an unfinished request is missing its later workflow timestamp", () => {
+    for (const status of ["payment", "waiting"] as const) {
+      for (const missing of [null, "invalid timestamp"]) {
+        const wait = requestWait({ ...timestamps, status, acceptedAt: missing, offerSentAt: missing });
+        expect(formatPaymentLinkWait(wait!.since, now)).toBe("1h 0m");
+      }
+    }
+  });
+
+  it("shows a time immediately for a newly received request", () => {
+    const wait = requestWait({ status: "new", receivedAt: new Date(now).toISOString() });
+    expect(formatPaymentLinkWait(wait!.since, now)).toBe("<1m");
+  });
+
+  it("stops showing an action timer once our work is complete", () => {
+    expect(requestWait({ ...timestamps, status: "completed" })).toBeNull();
   });
 });

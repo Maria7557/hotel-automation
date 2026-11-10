@@ -18,8 +18,8 @@ function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
 }
 
-function publicUser(user: { id: string; email: string; displayName: string | null }): PublicUser {
-  return { id: user.id, email: user.email, displayName: user.displayName };
+function publicUser(user: PublicUser): PublicUser {
+  return { id: user.id, email: user.email, displayName: user.displayName, ...(user.uiLanguage ? { uiLanguage: user.uiLanguage } : {}) };
 }
 
 export class AuthService {
@@ -29,6 +29,10 @@ export class AuthService {
     private readonly sessionTtlDays: number,
     private readonly socialTokenVerifier: SocialTokenVerifier,
   ) {}
+
+  async updateLanguage(userId: string, uiLanguage: "en" | "it") {
+    await this.repository.updateUserLanguage(userId, uiLanguage);
+  }
 
   async register(input: { email: string; password: string; displayName: string | null }): Promise<AuthResult> {
     const email = normalizeEmail(input.email);

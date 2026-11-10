@@ -38,7 +38,7 @@ describe.skipIf(!databaseUrl)("reservation offers PostgreSQL concurrency", () =>
     const room = await app.inject({ method: "POST", url: "/v1/rooms", headers, payload: { name: "Double room", maxAdults: 2, maxChildren: 0, maxGuests: 2, beds: [], amenities: [], photoUrls: [] } });
     expect(room.statusCode, room.body).toBe(201);
     const created = await app.inject({ method: "POST", url: "/v1/inquiries", headers: { ...headers, "idempotency-key": randomUUID() }, payload: {
-      guest: { name: "Phone guest", email: "guest@example.com" }, checkIn: "2027-01-10", checkOut: "2027-01-12",
+      guest: { name: "Phone guest", email: "guest@example.com", phone: "+393331234567" }, checkIn: "2027-01-10", checkOut: "2027-01-12",
       occupancy: { adults: 2, childAges: [] }, mealPlan: "BB", note: "Discussed six prices", sendOffer: false,
     } });
     expect(created.statusCode, created.body).toBe(201);
@@ -50,8 +50,27 @@ describe.skipIf(!databaseUrl)("reservation offers PostgreSQL concurrency", () =>
       const [delivery] = await core.client`select payload from deliveries where offer_version_id = ${offerId} limit 1`;
       return unsealPrivateValue(delivery!.payload.proposalUrlCiphertext, env.AUTH_SECRET).split("/").at(-1)!;
     };
-    return { hotelId, inquiryId, reservationNumber, headers, send, tokenFor };
+    return { hotelId, roomId: room.json().data.room.id as string, inquiryId, reservationNumber, headers, send, tokenFor };
   }
+
+  it("persists extras and defaults and freezes a calculated alternative stay on the same reservation", async () => {
+    const context = await setup();
+    const extraId = randomUUID();
+    const settings = { extras: [{ id: extraId, name: "Parking", description: "Covered", chargeMode: "per_night", unitPriceCents: 1400, active: true, defaultSelected: true }], defaultDepositPercent: 30, cancellationPolicy: "Flexible cancellation" };
+    const saved = await app.inject({ method: "PUT", url: "/v1/offer-settings", headers: context.headers, payload: settings });
+    expect(saved.statusCode, saved.body).toBe(200);
+    const [stored] = await core.client`select settings from hotel_offer_settings where hotel_id = ${context.hotelId}`;
+    expect(stored!.settings).toEqual(settings);
+    const rate = await app.inject({ method: "POST", url: `/v1/rooms/${context.roomId}/rates`, headers: context.headers, payload: { planCode: "standard", planName: "Standard", mealPlan: "HB", start: "2027-01-01", endInclusive: "2027-12-31", nightlyBaseCents: 15000 } });
+    expect(rate.statusCode, rate.body).toBe(201);
+    const sent = await app.inject({ method: "POST", url: `/v1/inquiries/${context.inquiryId}/offers`, headers: { ...context.headers, "idempotency-key": randomUUID() }, payload: { baseOfferId: null, offers: [{ roomId: context.roomId, planCode: "standard", pricingMode: "automatic", mealPlan: "HB", checkIn: "2027-02-01", checkOut: "2027-02-04", quotedTotalCents: 49200 }] } });
+    expect(sent.statusCode, sent.body).toBe(201);
+    expect(sent.json().data.inquiry.offers[0]).toMatchObject({ totalCents: 49200, depositCents: 14760, extras: [{ quantity: 3, totalCents: 4200 }] });
+    const token = await context.tokenFor(sent.json().data.inquiry.currentOfferId);
+    expect((await app.inject({ method: "POST", url: `/v1/public/offers/${token}/accept` })).statusCode).toBe(200);
+    const [stay] = await core.client`select reservation_number::text, check_in::text, check_out::text, meal_plan, occupancies from inquiries where id = ${context.inquiryId}`;
+    expect(stay).toMatchObject({ reservation_number: context.reservationNumber, check_in: "2027-02-01", check_out: "2027-02-04", meal_plan: "HB", occupancies: [{ adults: 2, childrenAges: [] }] });
+  });
 
   it("retries sending concurrently without creating another reservation, offer set, or delivery", async () => {
     const context = await setup();
@@ -64,7 +83,7 @@ describe.skipIf(!databaseUrl)("reservation offers PostgreSQL concurrency", () =>
       (select count(*)::int from inquiries where hotel_id = ${context.hotelId}) as reservations,
       (select count(*)::int from offer_versions where inquiry_id = ${context.inquiryId}) as offers,
       (select count(*)::int from deliveries where inquiry_id = ${context.inquiryId}) as deliveries`;
-    expect(counts).toEqual({ reservations: 1, offers: 1, deliveries: 1 });
+    expect(counts).toEqual({ reservations: 1, offers: 1, deliveries: 2 });
   });
 
   it("allows only one concurrent choice and prevents later editing or switching", async () => {

@@ -88,7 +88,6 @@ export class DeliveryWorker {
         proposalUrl,
         channel: delivery.channel as "email" | "whatsapp",
         settings: job.settings,
-        locale: job.hotel.locale,
       });
 
       if (delivery.channel === "email") {

@@ -15,6 +15,7 @@ import {
   varchar,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
+import type { OfferSettings } from "@hotel/contracts";
 
 const timestamps = {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -47,6 +48,7 @@ export const users = pgTable(
     id: uuid("id").primaryKey().defaultRandom(),
     email: varchar("email", { length: 320 }).notNull(),
     displayName: varchar("display_name", { length: 120 }),
+    uiLanguage: varchar("ui_language", { length: 2 }).$type<"en" | "it">(),
     passwordHash: text("password_hash"),
     googleSubject: varchar("google_subject", { length: 255 }),
     appleSubject: varchar("apple_subject", { length: 255 }),
@@ -103,9 +105,17 @@ export const hotelMessageSettings = pgTable("hotel_message_settings", {
   hotelId: uuid("hotel_id")
     .primaryKey()
     .references(() => hotels.id, { onDelete: "cascade" }),
+  templateLanguage: varchar("template_language", { length: 2 }).$type<"en" | "it">().notNull().default("it"),
+  translations: jsonb("translations").$type<Partial<Record<"en" | "it", { emailSubjectTemplate: string; emailBodyTemplate: string; whatsappBodyTemplate: string }>>>().notNull().default({}),
   emailSubjectTemplate: varchar("email_subject_template", { length: 160 }).notNull(),
   emailBodyTemplate: text("email_body_template").notNull(),
   whatsappBodyTemplate: text("whatsapp_body_template").notNull(),
+  ...timestamps,
+});
+
+export const hotelOfferSettings = pgTable("hotel_offer_settings", {
+  hotelId: uuid("hotel_id").primaryKey().references(() => hotels.id, { onDelete: "cascade" }),
+  settings: jsonb("settings").$type<OfferSettings>().notNull(),
   ...timestamps,
 });
 

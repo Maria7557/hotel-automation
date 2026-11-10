@@ -1,3 +1,4 @@
+import { t, translateLabel } from "../i18n";
 import { createContext, memo, useCallback, useContext, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import { AlertCircle, Info, UserPlus } from "lucide-react-native";
@@ -21,7 +22,7 @@ export function RequestClientStatusProvider({ demo, children }: { demo: boolean;
 
 export function useRequestClient(inquiryId: string) {
   const context = useContext(Context);
-  if (!context) throw new Error("Contact status provider is required.");
+  if (!context) throw new Error(t("Contact status provider is required."));
   const { store, demo } = context;
   const subscribe = useCallback((callback: () => void) => store.subscribe(inquiryId, callback), [store, inquiryId]);
   const get = useCallback(() => store.get(inquiryId), [store, inquiryId]);
@@ -39,26 +40,26 @@ export const RequestClientStatus = memo(function RequestClientStatus({ inquiryId
     setBusy(true); setError(null);
     try {
       const client = demo ? demoAddRequestClient(inquiryId) : await apiClient.addRequestClient(inquiryId);
-      if (!client) throw new Error("Request was not found.");
+      if (!client) throw new Error(t("Request was not found."));
       store.markPresent(inquiryId, client.id);
-    } catch (e) { setError(e instanceof Error ? e.message : "Could not add client. Try again."); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("Could not add client. Try again.")); }
     finally { setBusy(false); }
   };
   if (status === "loading" || status === "present") return null;
-  if (status === "error") return <Pressable accessibilityRole="button" accessibilityLabel="Failed to load client status. Retry" onPress={(e) => { e.stopPropagation(); store.retry(inquiryId); }} style={styles.badge}>
-    <AlertCircle size={theme.controls.actionIconSize} style={actionStyles.icon} color={theme.colors.danger} /><Text style={styles.label}>Failed to load client status</Text>
+  if (status === "error") return <Pressable accessibilityRole="button" accessibilityLabel={t("Failed to load client status. Retry")} onPress={(e) => { e.stopPropagation(); store.retry(inquiryId); }} style={styles.badge}>
+    <AlertCircle size={theme.controls.actionIconSize} style={actionStyles.icon} color={theme.colors.danger} /><Text style={styles.label}>{t("Failed to load client status")}</Text>
   </Pressable>;
   return <View style={styles.wrap}>
     <View style={styles.row}>
-      <Pressable accessibilityRole="button" accessibilityLabel="Add client to contacts" accessibilityHint="Client is not in the clients list yet" accessibilityState={{ disabled: busy, busy }} disabled={busy} hitSlop={theme.controls.helperHitSlop} onPress={(e) => { e.stopPropagation(); void add(); }} style={({ pressed }) => [styles.add, (pressed || busy) && { opacity: 0.6 }]}>
+      <Pressable accessibilityRole="button" accessibilityLabel={t("Add client to contacts")} accessibilityHint={t("Client is not in the clients list yet")} accessibilityState={{ disabled: busy, busy }} disabled={busy} hitSlop={theme.controls.helperHitSlop} onPress={(e) => { e.stopPropagation(); void add(); }} style={({ pressed }) => [styles.add, (pressed || busy) && { opacity: 0.6 }]}>
         {busy ? <ActivityIndicator size="small" style={actionStyles.helperIcon} color={theme.colors.danger} /> : <UserPlus size={theme.controls.helperIconSize} style={actionStyles.helperIcon} color={theme.colors.danger} />}
-        <Text style={styles.addLabel}>Add client to contacts</Text>
+        <Text style={styles.addLabel}>{t("Add client to contacts")}</Text>
       </Pressable>
-      <Tooltip content="Client is not in the clients list yet">{({ triggerProps, visible, toggle }) => <Pressable {...triggerProps} accessibilityRole="button" accessibilityLabel="Why add this client?" accessibilityState={{ expanded: visible }} hitSlop={theme.controls.helperHitSlop} onPress={(e) => { e.stopPropagation(); toggle(); }} style={styles.info}>
+      <Tooltip content={t("Client is not in the clients list yet")}>{({ triggerProps, visible, toggle }) => <Pressable {...triggerProps} accessibilityRole="button" accessibilityLabel={t("Why add this client?")} accessibilityState={{ expanded: visible }} hitSlop={theme.controls.helperHitSlop} onPress={(e) => { e.stopPropagation(); toggle(); }} style={styles.info}>
         <Info size={theme.controls.helperIconSize} color={theme.colors.helperIcon} />
       </Pressable>}</Tooltip>
     </View>
-    {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
+    {error ? <Text accessibilityRole="alert" style={styles.error}>{translateLabel(error)}</Text> : null}
   </View>;
 });
 const styles = StyleSheet.create({

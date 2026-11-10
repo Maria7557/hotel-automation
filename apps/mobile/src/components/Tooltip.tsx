@@ -1,3 +1,4 @@
+import { t, getLanguage } from "../i18n";
 import { createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ComponentRef, type ReactNode } from "react";
 import { Platform, Pressable, StyleSheet, Text, View, type PressableProps } from "react-native";
 import { theme } from "@hotel/design";
@@ -67,7 +68,7 @@ export function TooltipProvider({ children }: { children: ReactNode }) {
     };
   }, [active, dismiss]);
 
-  const value = useMemo(() => ({ activeId: active?.id, show, dismiss }), [active?.id, show, dismiss]);
+  const value = useMemo(() => ({ activeId: active?.id, show, dismiss }), [active?.id, show, dismiss, getLanguage()]);
   const maxWidth = Math.min(280, Math.max(0, bounds.width - gutter * 2));
   const width = size.width || maxWidth;
   const { height } = size;
@@ -78,7 +79,7 @@ export function TooltipProvider({ children }: { children: ReactNode }) {
     <View ref={host} style={styles.host} onLayout={() => dismiss()}>
       {children}
       {active ? <View pointerEvents="box-none" style={styles.layer}>
-        {Platform.OS !== "web" ? <Pressable accessibilityRole="button" accessibilityLabel="Dismiss tooltip" onPress={() => dismiss()} style={StyleSheet.absoluteFill} /> : null}
+        {Platform.OS !== "web" ? <Pressable accessibilityRole="button" accessibilityLabel={t("Dismiss tooltip")} onPress={() => dismiss()} style={StyleSheet.absoluteFill} /> : null}
         <View
           key={active.id}
           pointerEvents={height ? "auto" : "none"}
@@ -91,7 +92,7 @@ export function TooltipProvider({ children }: { children: ReactNode }) {
           onLayout={(event) => { const { width, height } = event.nativeEvent.layout; setSize({ width, height }); }}
           style={[styles.anchor, { maxWidth, left: Math.max(gutter, Math.min(bounds.x - width / 2, bounds.width - width - gutter)), top: Math.max(gutter, top), paddingBottom: above ? gap : 0, paddingTop: above ? 0 : gap, opacity: height ? 1 : 0 }]}
         >
-          <View style={styles.bubble}><Text style={styles.text}>{active.content}</Text></View>
+          <View style={styles.bubble}><Text style={styles.text}>{t(active.content)}</Text></View>
         </View>
       </View> : null}
     </View>
@@ -133,7 +134,7 @@ export function Tooltip({ content, children }: { content: string; children: (pro
       toggle: () => { if (interaction.current.opened) dismiss(id); else { interaction.current.opened = true; open(); } },
       triggerProps: {
         "aria-describedby": visible ? id : undefined,
-        accessibilityHint: content,
+        accessibilityHint: t(content),
         onHoverIn: enter,
         onHoverOut: leave,
         onFocus: () => { interaction.current.focused = true; open(); },

@@ -5,13 +5,14 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { createApp } from "../src/app.js";
 import { createDatabase } from "../src/db/client.js";
 import { createPostgresRepositories } from "../src/repositories/postgres.js";
+import { AUTOMATIC_SENDING_TIMEOUT_REASON } from "@hotel/contracts";
 
 const databaseUrl = process.env.DASHBOARD_TEST_DATABASE_URL;
 const env = { AUTH_SECRET: "dashboard-test-secret-that-is-at-least-32-characters", SESSION_TTL_DAYS: 30, corsOrigins: [] };
 const auth = (token: string) => ({ authorization: `Bearer ${token}` });
 type Owner = { token: string; id: string; userId: string; dayStart: Date };
 type Page = {
-  counts: { total: number; new: number; offerSent: number; requiresConfirmation: number; requiresConfirmationTotalCents: number; needsAttention: number; failedDeliveries: number };
+  counts: { total: number; new: number; offerSent: number; requiresConfirmation: number; requiresConfirmationTotalCents: number; needsAttention: number };
   pagination: { page: number; limit: number; total: number };
   inquiries: Array<{ id: string; reservationNumber: string; guestName: string; workflowState: string; offerSentAt: string | null; acceptedAt: string | null }>;
 };
@@ -48,12 +49,13 @@ describe.skipIf(!databaseUrl)("dashboard PostgreSQL pagination", () => {
     return result;
   }
   async function seed(owner: Owner, count: number, status: "new" | "waiting" | "payment" | "completed" | "attention" = "new", offset = 0) {
+    const baseTime = status === "new" ? Math.max(owner.dayStart.getTime(), Date.now() - 5 * 60_000) : owner.dayStart.getTime();
     const rows = Array.from({ length: count }, (_, index) => ({
       id: randomUUID(), hotel_id: owner.id, idempotency_key: randomUUID(), guest_name: `${status} Guest ${index}`,
       guest_email: `${status}${index}@example.com`, locale: "it", check_in: "2027-01-10", check_out: "2027-01-12",
       occupancies: JSON.stringify([{ adults: 2, childrenAges: [] }]), meal_plan: "HB",
       // Pairs share a timestamp so the ID tie-breaker is exercised across page boundaries.
-      created_at: new Date(owner.dayStart.getTime() + (offset + Math.floor(index / 2)) * 1000),
+      created_at: new Date(baseTime + (offset + Math.floor(index / 2)) * 1000),
       closed_at: status === "completed" ? new Date() : null,
       attention_reason: status === "attention" ? "manual_review" : null,
     }));
@@ -140,6 +142,35 @@ describe.skipIf(!databaseUrl)("dashboard PostgreSQL pagination", () => {
     const refilled = await page(hotel, { status: "payment", page: "2" });
     expect(refilled.pagination).toEqual({ page: 1, limit: 30, total: 30 });
     expect(refilled.inquiries).toHaveLength(30);
+  });
+
+  it("keeps SQL filters, counts, and detail summaries consistent for overdue automatic sending", async () => {
+    const hotel = await owner();
+    const pending = await seed(hotel, 3);
+    const [fresh, queued, processing] = pending;
+    for (const [inquiry, state] of [[queued!, "scheduled"], [processing!, "processing"]] as const) {
+      const offerId = randomUUID();
+      await core.client`insert into offer_versions (id, hotel_id, inquiry_id, version, state, public_token_hash, snapshot, expires_at, created_at)
+        values (${offerId}, ${hotel.id}, ${inquiry.id}, 1, 'active', ${randomUUID()}, '{"options":[]}'::jsonb,
+          now() + interval '7 days', now() - interval '16 minutes')`;
+      await core.client`update inquiries set current_offer_id = ${offerId} where id = ${inquiry.id}`;
+      await core.client`insert into deliveries (hotel_id, inquiry_id, offer_version_id, kind, channel, state, idempotency_key, recipient, payload)
+        values (${hotel.id}, ${inquiry.id}, ${offerId}, 'offer', 'email', ${state}, ${randomUUID()}, ${inquiry.guest_email}, '{}'::jsonb)`;
+    }
+    const newPage = await page(hotel, { status: "new" });
+    expect(newPage.counts).toMatchObject({ new: 1, needsAttention: 2 });
+    expect(newPage.inquiries.map(({ id }) => id)).toEqual([fresh!.id]);
+    const errors = await page(hotel, { status: "attention" });
+    expect(errors.pagination.total).toBe(2);
+    expect(errors.inquiries).toEqual(expect.arrayContaining([queued, processing].map((inquiry) => expect.objectContaining({ id: inquiry!.id, workflowState: "needs_attention", attentionReason: AUTOMATIC_SENDING_TIMEOUT_REASON }))));
+    for (const inquiry of [queued!, processing!]) {
+      const detail = await app.inject({ method: "GET", url: `/v1/inquiries/${inquiry.id}`, headers: auth(hotel.token) });
+      expect(detail.json().data.inquiry).toMatchObject({ workflowState: "needs_attention", attentionReason: AUTOMATIC_SENDING_TIMEOUT_REASON });
+    }
+    // Creating a new offer version restarts the window; the old delivery does not decide its status.
+    await core.client`insert into offer_versions (hotel_id, inquiry_id, version, state, public_token_hash, snapshot, expires_at)
+      values (${hotel.id}, ${queued!.id}, 2, 'active', ${randomUUID()}, '{"options":[]}'::jsonb, now() + interval '7 days')`;
+    expect((await page(hotel, { status: "new" })).inquiries.map(({ id }) => id)).toContain(queued!.id);
   });
 
   it("validates paging, sorting, and filters and treats search wildcards literally", async () => {

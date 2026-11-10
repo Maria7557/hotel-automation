@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
+import { z } from "zod";
 
 import { errors } from "../../lib/errors.js";
 import type { AuthService } from "../../services/auth.js";
@@ -33,6 +34,12 @@ export async function registerAuthRoutes(
   app.get("/v1/auth/session", { preHandler: authenticate }, async (request) => {
     if (!request.currentUser) throw errors.unauthorized();
     return { data: { user: request.currentUser } };
+  });
+
+  app.patch("/v1/auth/preferences", { preHandler: authenticate }, async (request) => {
+    const { uiLanguage } = z.object({ uiLanguage: z.enum(["en", "it"]) }).parse(request.body);
+    await authService.updateLanguage(request.currentUser!.id, uiLanguage);
+    return { data: { uiLanguage } };
   });
 
   app.post("/v1/auth/logout", { preHandler: authenticate }, async (request, reply) => {

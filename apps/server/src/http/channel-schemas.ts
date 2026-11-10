@@ -37,13 +37,19 @@ function messageTemplate(maxLength: number, singleLine = false) {
     });
 }
 
-export const messageSettingsInputSchema = z.object({
+const templatesSchema = z.object({
   emailSubjectTemplate: messageTemplate(160, true),
   emailBodyTemplate: messageTemplate(5_000),
   whatsappBodyTemplate: messageTemplate(2_000),
 });
 
+export const messageSettingsInputSchema = templatesSchema.extend({
+  templateLanguage: z.enum(["en", "it"]).optional(),
+  translations: z.partialRecord(z.enum(["en", "it"]), templatesSchema).optional(),
+});
+
 export const previewSampleSchema = z.object({
+  language: z.enum(["en", "it"]).optional(),
   guestName: z.string().trim().min(1).max(160).default("Mario Rossi"),
   checkIn: z.iso.date().default("2027-06-10"),
   checkOut: z.iso.date().default("2027-06-12"),

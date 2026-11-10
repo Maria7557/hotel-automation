@@ -13,7 +13,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@hotel/design": "file:../design"
+    "@hotel/design": "file:../design",
+    "@hotel/i18n": "file:../i18n"
   },
   "devDependencies": {
     "typescript": "^5.9.3",

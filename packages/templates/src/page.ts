@@ -1,7 +1,9 @@
+import { translate, resolveLanguage } from "@hotel/i18n";
 import { copyFor, formatGuests, formatMoney, formatStay, languageFor } from "./content.js";
 import { escapeHtml, requireAcceptActionPath, safeImageUrl, safeWebsiteUrl } from "./security.js";
 import type { OfferSnapshot, PageRenderContext } from "./types.js";
 import { renderBoardBadge, renderOfferBoardBadge } from "./board.js";
+import { renderOfferDetails, snapshotForOption } from "./offer-details.js";
 
 function statusText(context: PageRenderContext): string {
   const copy = copyFor(context.locale);
@@ -75,14 +77,14 @@ function roomDetails(option: OfferSnapshot["options"][number], locale?: string):
 
   if (snapshot?.maxGuests) details.push(copy.upToGuests(snapshot.maxGuests));
   for (const bed of snapshot?.beds ?? []) {
-    details.push(`${titleCase(bed.type)} × ${bed.count}`);
+    details.push(`${translate(resolveLanguage(locale, "it"), ({ single: "Single bed", double: "Double bed", queen: "Queen bed", king: "King bed", sofa_bed: "Sofa bed", "sofa bed": "Sofa bed", bunk: "Bunk bed", crib: "Cot" } as Record<string, string>)[bed.type] ?? titleCase(bed.type))} × ${bed.count}`);
   }
 
   const detailMarkup = details.length
     ? `<span class="room-facts">${details.map((detail) => `<span>${escapeHtml(detail)}</span>`).join("")}</span>`
     : "";
   const amenities = snapshot?.amenities?.length
-    ? `<span class="amenities" aria-label="${escapeHtml(copy.amenities)}">${snapshot.amenities.map((amenity) => `<span>${escapeHtml(amenity)}</span>`).join("")}</span>`
+    ? `<span class="amenities" aria-label="${escapeHtml(copy.amenities)}">${snapshot.amenities.map((amenity) => `<span>${escapeHtml(translate(resolveLanguage(locale, "it"), amenity))}</span>`).join("")}</span>`
     : "";
 
   return `${detailMarkup}${amenities}`;
@@ -106,8 +108,8 @@ function optionCards(snapshot: OfferSnapshot, context: PageRenderContext): strin
           <strong class="room-name">${escapeHtml(option.roomName)}</strong>
           ${description ? `<span class="description">${escapeHtml(description)}</span>` : ""}
           ${roomDetails(option, context.locale)}
-          <span class="plan">${escapeHtml(option.planName)}</span>${option.note ? `\n          <span class="description">${escapeHtml(option.note)}</span>` : ""}
-          <span class="plan">${escapeHtml(copy.offerStatuses[context.state === "active" ? "available" : context.state === "accepted" && selectedIndex === index ? "accepted" : "expired"])}</span>
+          <span class="plan">${escapeHtml(option.planName)}</span>${renderOfferDetails(snapshot, option, context.locale)}${option.note ? `\n          <span class="description">${escapeHtml(option.note)}</span>` : ""}
+          <span class="plan">${escapeHtml(copy.offerStatuses[context.state === "active" ? "available" : context.state === "accepted" && selectedIndex === index ? "accepted" : "expired"])}</span>${context.state === "active" ? `\n          <span class="description">${escapeHtml(copy.activeNote)}</span>` : ""}
           <span class="price"><small>${escapeHtml(copy.perStay)}</small>${escapeHtml(formatMoney(option.totalCents, context.locale))}</span>
         </label>
       </article>`;
@@ -116,6 +118,7 @@ function optionCards(snapshot: OfferSnapshot, context: PageRenderContext): strin
 }
 
 export function renderPublicOfferPage(snapshot: OfferSnapshot, context: PageRenderContext): string {
+  context = { ...context, locale: context.locale ?? snapshot.guestSnapshot.language ?? "it" };
   const copy = copyFor(context.locale);
   const action = requireAcceptActionPath(context.acceptActionPath);
   const lang = languageFor(context.locale);
@@ -133,11 +136,13 @@ export function renderPublicOfferPage(snapshot: OfferSnapshot, context: PageRend
       : `<div class="offer-list">${cards}</div>`;
   const board = `<div style="margin:16px 0">${renderOfferBoardBadge(snapshot, context.locale)}</div>`;
   const staySummary = `${board}<dl class="summary"><div class="stay"><dt>${escapeHtml(copy.stay)}</dt><dd>${escapeHtml(formatStay(snapshot, context.locale))}</dd></div><div><dt>${escapeHtml(copy.guests)}</dt><dd>${escapeHtml(formatGuests(snapshot, context.locale))}</dd></div><div class="nights"><dt>${escapeHtml(copy.lengthOfStay)}</dt><dd>${escapeHtml(copy.nights(stayLength(snapshot)))}</dd></div></dl>`;
+  const acceptedOption = snapshot.options[context.selectedOptionIndex ?? 0];
+  const acceptedSnapshot = snapshotForOption(snapshot, acceptedOption);
   const acceptedContent = `<section class="confirmation" aria-labelledby="confirmation-title">
     <span class="confirmation-icon" aria-hidden="true">✓</span>
     <h1 id="confirmation-title">${escapeHtml(copy.acceptedTitle(snapshot.guestSnapshot.name))}</h1>
-    ${board}
-    <div class="accepted-stay"><span>${escapeHtml(copy.stay)}</span><strong>${escapeHtml(formatStay(snapshot, context.locale))}</strong></div>
+    <div style="margin:16px 0">${renderOfferBoardBadge(acceptedSnapshot, context.locale)}</div>
+    <div class="accepted-stay"><span>${escapeHtml(copy.stay)}</span><strong>${escapeHtml(formatStay(acceptedSnapshot, context.locale))}</strong>${acceptedOption ? `<strong>${escapeHtml(acceptedOption.roomName)} · ${escapeHtml(acceptedOption.planName)}</strong><strong>${escapeHtml(formatMoney(acceptedOption.totalCents, context.locale))}</strong>${renderOfferDetails(snapshot, acceptedOption, context.locale)}` : ""}</div>
     <p class="confirmation-next">${escapeHtml(copy.acceptedNext(snapshot.hotelSnapshot.name))}</p>
   </section>`;
   const standardContent = `<p class="eyebrow">${escapeHtml(copy.pageEyebrow)}</p>
@@ -145,7 +150,7 @@ export function renderPublicOfferPage(snapshot: OfferSnapshot, context: PageRend
   ${staySummary}
   <p class="status ${context.state}">${escapeHtml(statusText(context))}</p>
   <h2>${escapeHtml(snapshot.hotelSnapshot.name)}</h2>
-  ${formOrCards}`;
+  ${formOrCards.replace(/(<form[^>]*>)/, `$1<input type="hidden" name="lang" value="${lang}">`)}`;
 
   return `<!doctype html>
 <html lang="${lang}">
@@ -157,12 +162,14 @@ export function renderPublicOfferPage(snapshot: OfferSnapshot, context: PageRend
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https:; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'">
   <title>${escapeHtml(copy.title(snapshot.hotelSnapshot.name))}</title>
   <style>
+    .offer-details{display:grid;gap:8px;font-size:14px;color:#4a4a4a;white-space:pre-line}
     .booking-link{display:block;margin-top:24px;padding:16px 20px;background:#1769ff;color:#fff;border-radius:12px;text-align:center;text-decoration:none;font-weight:600}
     :root{--primary:#1769ff;--primary-tint:#edf3fc;--text:#202020;--muted:#4a4a4a;--line:#e5e5e5;--surface:#fff;--background:#f1f1f1;--warning:#fff1d9;--success:#e4f5ed;--success-strong:#178457;--danger:#fce7e8;--radius:16px}
     *{box-sizing:border-box}body{margin:0;background:var(--background);color:var(--text);font-family:Poppins,Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:16px;line-height:1.5}main{width:min(100%,720px);margin:0 auto;padding:24px 20px 48px}.test-banner{margin:0 0 20px;padding:12px 16px;border-radius:12px;background:var(--warning);font-size:13px;font-weight:700;text-align:center}.brand{display:flex;align-items:center;gap:12px;margin-bottom:32px}.logo{width:48px;height:48px;object-fit:contain;border-radius:12px}.brand-name{font-size:18px;font-weight:600}.eyebrow{margin:0 0 8px;color:var(--primary);font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase}h1{margin:0;font-size:28px;line-height:34px}h2{margin:32px 0 16px;font-size:20px;line-height:24px}.summary{display:grid;grid-template-columns:1fr 1fr;gap:16px 12px;margin-top:24px;padding:20px;background:var(--surface);border-radius:var(--radius)}.summary .stay{grid-column:1/-1}.summary div{display:grid;gap:2px}.summary dt{color:var(--muted);font-size:12px}.summary dd{margin:0;font-weight:600}.summary .nights dd{color:var(--primary);font-size:22px;font-weight:800;line-height:1.2}.status{margin:20px 0 0;padding:16px;border-radius:12px;background:var(--primary-tint);font-weight:500}.status.expired{background:var(--warning)}.status.accepted{background:var(--success)}.status.revoked{background:var(--danger)}.offer-form,.offer-list{display:grid;gap:16px}.option-card{display:block;overflow:hidden;background:var(--surface);border:2px solid transparent;border-radius:var(--radius)}.option-card:has(input:checked){border-color:var(--primary)}.room-gallery{display:grid;gap:0;background:var(--surface)}.room-hero{position:relative;display:block;overflow:hidden;background:var(--line)}.room-hero img{display:block;width:100%;aspect-ratio:4/3;object-fit:cover;transition:transform .2s ease}.room-hero:hover img{transform:scale(1.02)}.gallery-count{position:absolute;right:12px;bottom:12px;padding:6px 10px;border-radius:999px;background:rgba(20,20,20,.78);color:#fff;font-size:12px;font-weight:700}.room-thumbnails{display:flex;gap:8px;overflow-x:auto;padding:8px;scroll-snap-type:x mandatory;scrollbar-width:thin}.room-thumb{flex:0 0 84px;overflow:hidden;border:2px solid transparent;border-radius:8px;scroll-snap-align:start}.room-thumb.is-active{border-color:var(--primary)}.room-thumb img{display:block;width:100%;aspect-ratio:4/3;object-fit:cover}.photo-lightbox{display:none;position:fixed;z-index:1000;inset:0;place-items:center;padding:16px}.photo-lightbox:target{display:grid}.photo-backdrop{position:absolute;inset:0;background:rgba(10,14,20,.94)}.photo-stage{position:relative;z-index:1;display:grid;width:min(100%,1100px);max-height:calc(100vh - 32px);overflow:hidden;border-radius:14px;background:#101318;box-shadow:0 24px 80px rgba(0,0,0,.5)}.photo-stage>img{display:block;width:100%;max-height:calc(100vh - 96px);object-fit:contain}.photo-toolbar{display:flex;justify-content:space-between;gap:16px;padding:14px 18px;color:#fff;font-size:14px}.photo-close,.photo-nav{position:absolute;display:grid;place-items:center;color:#fff;text-decoration:none;background:rgba(0,0,0,.62);backdrop-filter:blur(6px)}.photo-close{top:12px;right:12px;width:42px;height:42px;border-radius:50%;font-size:28px}.photo-nav{top:50%;width:46px;height:64px;border-radius:10px;font-size:42px;line-height:1;transform:translateY(-50%)}.photo-prev{left:12px}.photo-next{right:12px}.option-content{display:grid;gap:10px;padding:20px;cursor:pointer}.option-select{display:flex;align-items:center;gap:8px;color:var(--primary);font-size:14px;font-weight:600}.option-select input{width:20px;height:20px;accent-color:var(--primary)}.room-name{font-size:20px;line-height:24px}.description{color:var(--muted);font-size:14px}.room-facts,.amenities{display:flex;flex-wrap:wrap;gap:8px}.room-facts span,.amenities span{padding:5px 9px;border-radius:999px;background:#f3f5f7;color:var(--muted);font-size:12px}.amenities span{background:var(--primary-tint);color:#24518b}.plan{display:grid;gap:2px;padding-top:4px;color:var(--muted);font-size:14px}.plan strong{color:var(--text);font-size:14px}.price{display:flex;align-items:end;justify-content:space-between;gap:12px;margin-top:6px;padding-top:14px;border-top:1px solid var(--line);font-size:22px;font-weight:700}.price small{color:var(--muted);font-size:12px;font-weight:400}button{width:100%;min-height:54px;border:0;border-radius:12px;background:var(--primary);color:#fff;font:600 14px Poppins,Inter,sans-serif;cursor:pointer}button:focus-visible,input:focus-visible,a:focus-visible{outline:3px solid #202020;outline-offset:3px}.empty{padding:20px;background:var(--surface);border-radius:var(--radius)}.confirmation{padding:32px 20px;border-radius:24px;background:var(--surface);box-shadow:0 18px 48px rgba(26,39,58,.08);text-align:center}.confirmation-icon{display:grid;width:72px;height:72px;margin:0 auto 22px;place-items:center;border-radius:50%;background:var(--success);color:var(--success-strong);font-size:36px;font-weight:800}.accepted-stay{display:grid;gap:4px;margin:24px 0 0;padding:18px;border-radius:14px;background:#f7f8fa;text-align:left}.accepted-stay span{color:var(--muted);font-size:12px}.accepted-stay strong{font-size:16px}.confirmation-next{margin:20px 0 0;color:var(--muted);font-size:16px}@media(min-width:640px){main{padding-top:40px}.summary{grid-template-columns:1.6fr .8fr .6fr;align-items:end}.summary .stay{grid-column:auto}.room-hero img{aspect-ratio:16/9}.room-thumb{flex-basis:104px}.confirmation{padding:40px}}
   </style>
 </head>
 <body><main>
+  <nav aria-label="${lang === "it" ? "Lingua" : "Language"}" style="display:flex;justify-content:flex-end;gap:16px;margin-bottom:16px"><a href="?${context.testMode && context.state === "accepted" ? "accepted=1&" : ""}lang=en" lang="en" ${lang === "en" ? 'aria-current="true"' : ""}>English</a><a href="?${context.testMode && context.state === "accepted" ? "accepted=1&" : ""}lang=it" lang="it" ${lang === "it" ? 'aria-current="true"' : ""}>Italiano</a></nav>
   ${context.testMode ? `<p class="test-banner">${escapeHtml(copy.testMode)}</p>\n  ` : ""}<header class="brand">${logoUrl ? `<img class="logo" src="${escapeHtml(logoUrl)}" alt="">` : ""}<span class="brand-name">${escapeHtml(snapshot.hotelSnapshot.name)}</span></header>
   ${context.state === "accepted" ? acceptedContent : context.state === "expired" || context.state === "revoked" ? expiredContent : standardContent}
 </main></body>

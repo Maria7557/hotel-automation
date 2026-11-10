@@ -1,6 +1,6 @@
 module.exports = ({ config }) => {
   const iosUrlScheme = process.env.EXPO_PUBLIC_GOOGLE_IOS_URL_SCHEME?.trim();
-  const plugins = [...(config.plugins ?? [])];
+  const plugins = [...(config.plugins ?? []), ["expo-localization", { supportedLocales: ["en", "it"], supportsRTL: false }]];
 
   // Google native sign-in requires the reversed iOS OAuth client ID during prebuild.
   // Keeping this conditional lets the web app run before production OAuth credentials exist.

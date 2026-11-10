@@ -1,3 +1,4 @@
+import { resolveLanguage, translate, type Language } from "@hotel/i18n";
 import type { NotificationRepository } from "../repositories/types.js";
 import type { MealPlan } from "@hotel/contracts";
 
@@ -60,11 +61,12 @@ export class NotificationService {
 
   async notify(event: NotificationEvent): Promise<void> {
     const targets = await this.repository.listTargetsForHotel(event.hotelId);
-    const content = notificationContent(event);
     const messages: PushMessage[] = [];
     const emailTasks: Promise<void>[] = [];
 
     for (const target of targets) {
+      const language = resolveLanguage(target.user.uiLanguage);
+      const content = notificationContent(event, language);
       const pushEnabled = event.type !== "inquiry"
         || Boolean(event.attentionReason)
         || (target.preferences?.pushAllRequests ?? false);
@@ -87,8 +89,8 @@ export class NotificationService {
       ) {
         emailTasks.push(this.mailer.send({
           to: target.preferences.emailAddress,
-          subject: `${event.mealPlan} · New request: ${event.guestName}`,
-          text: `${event.mealPlan} · ${event.guestName}\n${event.checkIn} — ${event.checkOut}${event.attentionReason ? `\nNeeds attention: ${event.attentionReason}` : ""}`,
+          subject: `${event.mealPlan} · ${translate(language, "New request: {{v0}}", { v0: event.guestName })}`,
+          text: `${event.mealPlan} · ${event.guestName}\n${event.checkIn} — ${event.checkOut}${event.attentionReason ? `\n${translate(language, "Needs attention: {{v0}}", { v0: event.attentionReason })}` : ""}`,
         }));
       }
     }
@@ -103,15 +105,15 @@ export class NotificationService {
   }
 }
 
-function notificationContent(event: NotificationEvent): { title: string; body: string } {
+function notificationContent(event: NotificationEvent, language: Language): { title: string; body: string } {
   if (event.type === "payment") {
-    return { title: `${event.mealPlan} · Guest accepted`, body: `${event.guestName} is waiting for confirmation and payment.` };
+    return { title: `${event.mealPlan} · ${translate(language, "Guest accepted")}`, body: translate(language, "{{v0}} is waiting for confirmation and payment.", { v0: event.guestName }) };
   }
   if (event.type === "error") {
-    return { title: "Action required", body: `${event.guestName}: ${event.message}` };
+    return { title: translate(language, "Action required"), body: `${event.guestName}: ${translate(language, event.message)}` };
   }
   if (event.attentionReason) {
-    return { title: `${event.mealPlan} · New request needs attention`, body: `${event.guestName}: review ${event.mealPlan} rates, dates and room.` };
+    return { title: `${event.mealPlan} · ${translate(language, "New request needs attention")}`, body: translate(language, "{{v0}}: review {{v1}} rates, dates and room.", { v0: event.guestName, v1: event.mealPlan }) };
   }
-  return { title: `${event.mealPlan} · New request`, body: `${event.guestName} · ${event.checkIn} — ${event.checkOut}` };
+  return { title: `${event.mealPlan} · ${translate(language, "New request")}`, body: `${event.guestName} · ${event.checkIn} — ${event.checkOut}` };
 }

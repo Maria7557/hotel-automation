@@ -46,6 +46,25 @@ describe("delivery worker repository claim", () => {
 });
 
 describe("DeliveryWorker", () => {
+  it.each([
+    { language: undefined, greeting: "Gentile Anna," },
+    { language: "it", greeting: "Gentile Anna," },
+    { language: "en-GB", greeting: "Hello Anna," },
+  ])("delivers in the guest language with an Italian default ($language)", async ({ language, greeting }) => {
+    const repositories = createMemoryRepositories();
+    const { hotel, offer } = seedDelivery(repositories, "whatsapp");
+    hotel.locale = "en-GB";
+    if (language) Object.assign(offer.snapshot.guestSnapshot as object, { language });
+    connectWaha(repositories, hotel.id);
+    const fetchMock = wahaFetch(async () => new Response(JSON.stringify({ id: "language-message" }), {
+      status: 201, headers: { "content-type": "application/json" },
+    }));
+    await createWorker(repositories, fetchMock).processNext(now);
+    const sent = (fetchMock.mock.calls as unknown as Array<[string | URL, RequestInit?]>)
+      .find(([url]) => String(url).endsWith("/api/sendText"));
+    expect(JSON.parse(String(sent?.[1]?.body)).text).toContain(greeting);
+  });
+
   it("leaves a delivery scheduled without consuming an attempt when the connection is missing", async () => {
     const repositories = createMemoryRepositories();
     const { delivery } = seedDelivery(repositories, "whatsapp");

@@ -1,6 +1,7 @@
-import type { DashboardPagination, DashboardQuery, MealPlan } from "@hotel/contracts";
+import type { DashboardPagination, DashboardQuery, MealPlan, OfferSettings } from "@hotel/contracts";
 
 export type UserRecord = {
+  uiLanguage?: "en" | "it" | null;
   id: string;
   email: string;
   displayName: string | null;
@@ -9,7 +10,7 @@ export type UserRecord = {
   appleSubject: string | null;
 };
 
-export type PublicUser = Pick<UserRecord, "id" | "email" | "displayName">;
+export type PublicUser = Pick<UserRecord, "id" | "email" | "displayName" | "uiLanguage">;
 
 export type SocialProvider = "google" | "apple";
 
@@ -97,6 +98,7 @@ export type RatePeriodUpdate = Partial<RatePeriodCreate>;
 export type RateOverlap = Pick<RatePeriodProfile, "id" | "start" | "endExclusive">;
 
 export interface AuthRepository {
+  updateUserLanguage(userId: string, uiLanguage: "en" | "it"): Promise<void>;
   findUserByEmail(email: string): Promise<UserRecord | null>;
   createUser(input: { email: string; displayName: string | null; passwordHash: string }): Promise<UserRecord>;
   findOrCreateSocialUser(input: {
@@ -219,12 +221,13 @@ export type DashboardCounts = {
   requiresConfirmation: number;
   requiresConfirmationTotalCents: number;
   needsAttention: number;
-  failedDeliveries: number;
 };
 
 export type DashboardPageFacts = DashboardFacts & {
   counts: DashboardCounts;
   pagination: DashboardPagination;
+  nextProcessingDeadlineAt: Date | null;
+  evaluatedAt: Date;
 };
 
 export type ReservationOffersCreate = {
@@ -237,6 +240,8 @@ export type ReservationOffersCreate = {
 };
 
 export interface AutomationRepository {
+  findOfferSettingsForHotel(hotelId: string): Promise<OfferSettings | null>;
+  saveOfferSettingsForUser(userId: string, settings: OfferSettings): Promise<OfferSettings | null>;
   findPublicHotelByKey(publicKey: string): Promise<HotelProfile | null>;
   findPublicHotelWebsite(hotelId: string): Promise<string | null>;
   listCatalogForHotel(hotelId: string): Promise<{ rooms: RoomProfile[]; ratePeriods: RatePeriodProfile[] }>;
@@ -321,7 +326,10 @@ export interface NotificationRepository {
   listTargetsForHotel(hotelId: string): Promise<NotificationTarget[]>;
 }
 
+export type MessageTemplates = { emailSubjectTemplate: string; emailBodyTemplate: string; whatsappBodyTemplate: string };
 export type MessageSettings = {
+  templateLanguage?: "en" | "it" | undefined;
+  translations?: Partial<Record<"en" | "it", MessageTemplates>> | undefined;
   hotelId: string;
   emailSubjectTemplate: string;
   emailBodyTemplate: string;
@@ -332,7 +340,7 @@ export type MessageSettings = {
 
 export type MessageSettingsUpdate = Pick<
   MessageSettings,
-  "emailSubjectTemplate" | "emailBodyTemplate" | "whatsappBodyTemplate"
+  "emailSubjectTemplate" | "emailBodyTemplate" | "whatsappBodyTemplate" | "templateLanguage" | "translations"
 >;
 
 export type ConnectionKind = "google" | "microsoft" | "smtp" | "waha";

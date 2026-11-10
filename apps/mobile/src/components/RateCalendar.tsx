@@ -1,3 +1,4 @@
+import { locale as uiLocale, t, translateLabel, getLanguage } from "../i18n";
 import { useMemo, useState } from "react";
 import { Pressable, StyleSheet, Text, useWindowDimensions, View } from "react-native";
 import { ChevronLeft, ChevronRight } from "lucide-react-native";
@@ -29,7 +30,7 @@ export function RateCalendar({
   const [visibleMonth, setVisibleMonth] = useState(() => monthStart(selectedStart ?? todayIso()));
   const interactive = Boolean(onRangeChange);
 
-  const activeRates = useMemo(() => rates.filter((rate) => rate.active), [rates]);
+  const activeRates = useMemo(() => rates.filter((rate) => rate.active), [rates, getLanguage()]);
   const months = [visibleMonth, addMonths(visibleMonth, 1)];
 
   const selectDate = (date: string) => {
@@ -54,7 +55,7 @@ export function RateCalendar({
       <View style={styles.calendarHeader}>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Show previous months"
+          accessibilityLabel={t("Show previous months")}
           disabled={disabled}
           onPress={() => setVisibleMonth((current) => addMonths(current, -1))}
           style={({ pressed }) => [styles.monthButton, pressed && styles.pressed]}
@@ -62,13 +63,13 @@ export function RateCalendar({
           <ChevronLeft size={21} color={theme.colors.text} />
         </Pressable>
         <View style={styles.legend}>
-          <LegendSwatch style={styles.legendCovered} label="Rate set" />
-          <LegendSwatch style={styles.legendMissing} label="No rate" />
-          {interactive ? <LegendSwatch style={styles.legendSelected} label="Selected" /> : null}
+          <LegendSwatch style={styles.legendCovered} label={t("Rate set")} />
+          <LegendSwatch style={styles.legendMissing} label={t("No rate")} />
+          {interactive ? <LegendSwatch style={styles.legendSelected} label={t("Selected")} /> : null}
         </View>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Show next months"
+          accessibilityLabel={t("Show next months")}
           disabled={disabled}
           onPress={() => setVisibleMonth((current) => addMonths(current, 1))}
           style={({ pressed }) => [styles.monthButton, pressed && styles.pressed]}
@@ -97,8 +98,8 @@ export function RateCalendar({
           {selectedStart
             ? selectedEndInclusive
               ? `${formatLongDate(selectedStart)} — ${formatLongDate(selectedEndInclusive)}`
-              : "Now choose the last night in the period."
-            : "Choose the first night, then the last night."}
+              : t("Now choose the last night in the period.")
+            : t("Choose the first night, then the last night.")}
         </Text>
       ) : null}
     </View>
@@ -130,7 +131,7 @@ function Month({
       <Text style={styles.monthTitle}>{formatMonth(month)}</Text>
       <View style={styles.weekRow}>
         {weekdayLabels.map((label, index) => (
-          <Text key={label} style={[styles.weekday, index > 4 && styles.weekend]}>{label}</Text>
+          <Text key={label} style={[styles.weekday, index > 4 && styles.weekend]}>{translateLabel(label)}</Text>
         ))}
       </View>
       <View style={styles.daysGrid}>
@@ -148,7 +149,7 @@ function Month({
             <Pressable
               key={date}
               accessibilityRole={interactive ? "button" : undefined}
-              accessibilityLabel={`${formatLongDate(date)}${rate ? `, ${formatCalendarPrice(rate.nightlyBaseCents)} per night` : ", no rate"}`}
+              accessibilityLabel={`${formatLongDate(date)}${rate ? t(", {{v0}} per night", { v0: formatCalendarPrice(rate.nightlyBaseCents) }) : ", no rate"}`}
               accessibilityState={interactive ? { disabled: unavailable, selected } : undefined}
               disabled={!interactive || unavailable}
               onPress={() => onSelect(date)}
@@ -169,7 +170,7 @@ function Month({
                   selected && styles.dayPriceSelected,
                 ]}
               >
-                {rate ? formatCalendarPrice(rate.nightlyBaseCents) : "No rate"}
+                {rate ? formatCalendarPrice(rate.nightlyBaseCents) : t("No rate")}
               </Text>
             </Pressable>
           );
@@ -180,7 +181,7 @@ function Month({
 }
 
 function LegendSwatch({ style, label }: { style: object; label: string }) {
-  return <View style={styles.legendItem}><View style={[styles.legendSwatch, style]} /><Text style={styles.legendText}>{label}</Text></View>;
+  return <View style={styles.legendItem}><View style={[styles.legendSwatch, style]} /><Text style={styles.legendText}>{translateLabel(label)}</Text></View>;
 }
 
 function monthCells(month: string): Array<string | null> {
@@ -224,13 +225,13 @@ function isoDate(year: number, month: number, day: number): string {
 }
 function todayIso(): string { return new Date().toISOString().slice(0, 10); }
 function formatMonth(date: string): string {
-  return new Intl.DateTimeFormat("en-GB", { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(`${date}T00:00:00Z`));
+  return new Intl.DateTimeFormat(uiLocale(), { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(`${date}T00:00:00Z`));
 }
 function formatLongDate(date: string): string {
-  return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }).format(new Date(`${date}T00:00:00Z`));
+  return new Intl.DateTimeFormat(uiLocale(), { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }).format(new Date(`${date}T00:00:00Z`));
 }
 function formatCalendarPrice(cents: number): string {
-  return new Intl.NumberFormat("en-GB", { style: "currency", currency: "EUR", maximumFractionDigits: cents % 100 === 0 ? 0 : 2 }).format(cents / 100);
+  return new Intl.NumberFormat(uiLocale(), { style: "currency", currency: "EUR", maximumFractionDigits: cents % 100 === 0 ? 0 : 2 }).format(cents / 100);
 }
 
 const styles = StyleSheet.create({

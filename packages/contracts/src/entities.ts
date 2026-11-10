@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { DEFAULT_GUEST_LANGUAGE } from "./languages.js";
 import {
   currencySchema,
   idSchema,
@@ -123,7 +124,7 @@ export const inquirySchema = z
       name: z.string().trim().min(1).max(160),
       email: z.email().nullable().default(null),
       phone: z.string().trim().min(5).max(40).nullable().default(null),
-      language: z.string().trim().min(2).max(12).default("it"),
+      language: z.string().trim().min(2).max(12).default(DEFAULT_GUEST_LANGUAGE),
     }),
     checkIn: isoDateSchema,
     checkOut: isoDateSchema,
@@ -175,6 +176,7 @@ export const offerVersionSchema = z.object({
   }),
   guestSnapshot: z.object({
     name: z.string().trim().min(1).max(160),
+    language: z.string().trim().min(2).max(16).default(DEFAULT_GUEST_LANGUAGE),
     checkIn: isoDateSchema,
     checkOut: isoDateSchema,
     occupancy: occupancySchema,

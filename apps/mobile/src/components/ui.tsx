@@ -1,3 +1,4 @@
+import { t, translateLabel } from "../i18n";
 import type { ReactNode } from "react";
 import {
   ActivityIndicator,
@@ -11,11 +12,12 @@ import {
 } from "react-native";
 import { AlertCircle, CheckCircle2, Clock3, type LucideIcon } from "lucide-react-native";
 import { theme } from "@hotel/design";
+import { actionStyles } from "./actionStyles";
 
 type ButtonProps = {
   children: ReactNode;
   onPress: () => void;
-  variant?: "primary" | "secondary" | "tertiary";
+  variant?: "primary" | "secondary" | "tertiary" | "create";
   disabled?: boolean;
   loading?: boolean;
   icon?: LucideIcon;
@@ -32,6 +34,7 @@ export function Button({
   accessibilityHint,
 }: ButtonProps) {
   const blocked = disabled || loading;
+  const filled = variant === "primary" || variant === "create";
   return (
     <Pressable
       accessibilityRole="button"
@@ -44,28 +47,30 @@ export function Button({
         variant === "primary" && styles.buttonPrimary,
         variant === "secondary" && styles.buttonSecondary,
         variant === "tertiary" && styles.buttonTertiary,
-        pressed && !blocked && styles.buttonPressed,
+        variant === "create" && styles.buttonCreate,
+        pressed && !blocked && (variant === "create" ? styles.createPressed : styles.buttonPressed),
         blocked && styles.buttonDisabled,
       ]}
     >
       {loading ? (
-        <ActivityIndicator color={variant === "primary" ? theme.colors.onAction : theme.colors.action} />
+        <ActivityIndicator color={filled ? theme.colors.onAction : theme.colors.action} />
       ) : (
         <View style={styles.buttonContent}>
           {Icon ? (
             <Icon
               size={theme.controls.actionIconSize}
               strokeWidth={2}
-              color={variant === "primary" ? theme.colors.onAction : theme.colors.action}
+              color={filled ? theme.colors.onAction : theme.colors.action}
             />
           ) : null}
           <Text
             style={[
               styles.buttonLabel,
-              variant === "primary" ? styles.buttonLabelPrimary : styles.buttonLabelSecondary,
+              variant === "create" && styles.buttonCreateLabel,
+              filled ? styles.buttonLabelPrimary : styles.buttonLabelSecondary,
             ]}
           >
-            {children}
+            {translateLabel(children)}
           </Text>
         </View>
       )}
@@ -82,17 +87,17 @@ type FieldProps = TextInputProps & {
 export function Field({ label, error, helper, style, ...inputProps }: FieldProps) {
   return (
     <View style={styles.fieldWrap}>
-      <Text style={styles.fieldLabel}>{label}</Text>
+      <Text style={styles.fieldLabel}>{translateLabel(label)}</Text>
       <TextInput
         {...inputProps}
-        accessibilityLabel={label}
-        accessibilityHint={error ?? helper}
+        accessibilityLabel={translateLabel(label)}
+        accessibilityHint={error ? t(error) : helper ? t(helper) : undefined}
         style={[styles.field, error ? styles.fieldError : undefined, style]}
         placeholderTextColor={theme.colors.textMuted}
         selectionColor={theme.colors.action}
       />
-      {error ? <Text style={styles.errorText}>{error}</Text> : null}
-      {!error && helper ? <Text style={styles.helperText}>{helper}</Text> : null}
+      {error ? <Text style={styles.errorText}>{translateLabel(error)}</Text> : null}
+      {!error && helper ? <Text style={styles.helperText}>{translateLabel(helper)}</Text> : null}
     </View>
   );
 }
@@ -100,7 +105,7 @@ export function Field({ label, error, helper, style, ...inputProps }: FieldProps
 export function SectionTitle({ children, action }: { children: ReactNode; action?: ReactNode }) {
   return (
     <View style={styles.sectionTitleRow}>
-      <Text style={styles.sectionTitle}>{children}</Text>
+      <Text style={styles.sectionTitle}>{translateLabel(children)}</Text>
       {action}
     </View>
   );
@@ -118,8 +123,8 @@ export function EmptyState({
       <View style={styles.emptyIcon}>
         <Clock3 size={24} color={theme.colors.action} />
       </View>
-      <Text style={styles.emptyTitle}>{title}</Text>
-      <Text style={styles.emptyDescription}>{description}</Text>
+      <Text style={styles.emptyTitle}>{translateLabel(title)}</Text>
+      <Text style={styles.emptyDescription}>{translateLabel(description)}</Text>
     </View>
   );
 }
@@ -148,7 +153,7 @@ export function InlineState({
   return (
     <View style={[styles.inlineState, { backgroundColor }]}>
       <Icon size={18} color={color} />
-      <Text style={[styles.inlineStateText, { color }]}>{children}</Text>
+      <Text style={[styles.inlineStateText, { color }]}>{translateLabel(children)}</Text>
     </View>
   );
 }
@@ -179,6 +184,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: theme.spacing[5],
   },
   buttonPrimary: { backgroundColor: theme.colors.action },
+  buttonCreate: { ...actionStyles.control, backgroundColor: theme.colors.action },
+  buttonCreateLabel: { ...actionStyles.label },
+  createPressed: { opacity: 0.7 },
   buttonSecondary: {
     backgroundColor: theme.colors.surface,
     borderWidth: 1.5,

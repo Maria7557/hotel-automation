@@ -1,3 +1,4 @@
+import { t, translateLabel } from "../i18n";
 import { useEffect, useState } from "react";
 import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from "react-native";
 import { ArrowLeft, Bell, Check, Mail } from "lucide-react-native";
@@ -80,52 +81,52 @@ export function NotificationSettingsScreen({ onBack, demo }: { onBack: () => voi
 
   return <View style={uiStyles.screen}>
     <View style={styles.topBar}>
-      <Pressable accessibilityRole="button" accessibilityLabel="Back" onPress={onBack} style={styles.back}><ArrowLeft size={22} color={theme.colors.text} /></Pressable>
-      <Text style={styles.topTitle}>Notifications</Text>
+      <Pressable accessibilityRole="button" accessibilityLabel={t("Back")} onPress={onBack} style={styles.back}><ArrowLeft size={22} color={theme.colors.text} /></Pressable>
+      <Text style={styles.topTitle}>{t("Notifications")}</Text>
       <View style={styles.backSpacer} />
     </View>
     <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
       {loading ? <ActivityIndicator color={theme.colors.action} /> : null}
-      {error ? <InlineState tone="danger">{error}</InlineState> : null}
-      {saved ? <InlineState tone="success">Saved</InlineState> : null}
+      {error ? <InlineState tone="danger">{translateLabel(error)}</InlineState> : null}
+      {saved ? <InlineState tone="success">{t("Saved")}</InlineState> : null}
 
       {settings ? <>
         <View style={styles.section}>
-          <SectionTitle>Phone</SectionTitle>
+          <SectionTitle>{t("Phone")}</SectionTitle>
           <View style={styles.card}>
             <View style={styles.row}>
               <View style={styles.icon}><Bell size={20} color={theme.colors.action} /></View>
-              <View style={styles.rowText}><Text style={styles.title}>Payments & errors</Text></View>
-              <View style={styles.required}><Check size={16} color={theme.colors.success} /><Text style={styles.requiredText}>Always on</Text></View>
+              <View style={styles.rowText}><Text style={styles.title}>{t("Payments & errors")}</Text></View>
+              <View style={styles.required}><Check size={16} color={theme.colors.success} /><Text style={styles.requiredText}>{t("Always on")}</Text></View>
             </View>
             <View style={[styles.row, styles.divider]}>
-              <View style={styles.rowText}><Text style={styles.title}>All incoming requests</Text></View>
+              <View style={styles.rowText}><Text style={styles.title}>{t("All incoming requests")}</Text></View>
               <Switch value={pushAllRequests} onValueChange={setPushAllRequests} trackColor={{ false: theme.colors.border, true: theme.colors.action }} />
             </View>
             <Pressable disabled={connecting || Platform.OS === "web"} onPress={() => void connectPhone()} style={({ pressed }) => [styles.deviceButton, pressed && styles.pressed, Platform.OS === "web" && styles.disabled]}>
               {connecting ? <ActivityIndicator color={theme.colors.action} /> : settings.pushDeviceRegistered ? <Check size={18} color={theme.colors.success} /> : <Bell size={18} color={theme.colors.action} />}
-              <Text style={styles.deviceButtonText}>{settings.pushDeviceRegistered ? "This phone is connected" : Platform.OS === "web" ? "Connect in the mobile app" : "Enable on this phone"}</Text>
+              <Text style={styles.deviceButtonText}>{settings.pushDeviceRegistered ? t("This phone is connected") : Platform.OS === "web" ? t("Connect in the mobile app") : t("Enable on this phone")}</Text>
             </Pressable>
           </View>
         </View>
 
         <View style={styles.section}>
-          <SectionTitle>Email</SectionTitle>
+          <SectionTitle>{t("Email")}</SectionTitle>
           <View style={styles.card}>
             <View style={styles.row}>
               <View style={styles.icon}><Mail size={20} color={theme.colors.action} /></View>
-              <View style={styles.rowText}><Text style={styles.title}>Incoming requests</Text></View>
+              <View style={styles.rowText}><Text style={styles.title}>{t("Incoming requests")}</Text></View>
               <Switch value={emailIncomingRequests} onValueChange={setEmailIncomingRequests} trackColor={{ false: theme.colors.border, true: theme.colors.action }} />
             </View>
             {emailIncomingRequests ? <View style={[styles.emailField, styles.divider]}>
-              <Text style={styles.label}>Notification email</Text>
+              <Text style={styles.label}>{t("Notification email")}</Text>
               <TextInput value={emailAddress} onChangeText={setEmailAddress} keyboardType="email-address" autoCapitalize="none" autoCorrect={false} placeholder="manager@hotel.com" style={styles.input} />
             </View> : null}
           </View>
         </View>
 
         <Pressable disabled={saving} onPress={() => void save()} style={({ pressed }) => [styles.save, pressed && styles.pressed, saving && styles.disabled]}>
-          {saving ? <ActivityIndicator color={theme.colors.onAction} /> : <Text style={styles.saveText}>Save</Text>}
+          {saving ? <ActivityIndicator color={theme.colors.onAction} /> : <Text style={styles.saveText}>{t("Save")}</Text>}
         </Pressable>
       </> : null}
     </ScrollView>
@@ -144,7 +145,7 @@ const demoSettings: NotificationSettings = {
 
 function messageFor(error: unknown): string {
   if (error instanceof ApiError) return error.message;
-  return error instanceof Error ? error.message : "Could not update notifications.";
+  return error instanceof Error ? error.message : t("Could not update notifications.");
 }
 
 const styles = StyleSheet.create({

@@ -3,5 +3,7 @@ export * from "./common.js";
 export * from "./entities.js";
 export * from "./clients.js";
 export * from "./inquiries.js";
+export * from "./languages.js";
+export * from "./inquiry-form.js";
 export * from "./offers.js";
 export * from "./dashboard.js";

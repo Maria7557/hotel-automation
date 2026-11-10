@@ -1,3 +1,4 @@
+import { t, translateLabel, getLanguage } from "../i18n";
 import { BoardSelector } from "@/components/BoardBadge";
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -66,7 +67,7 @@ export function SiteIntegrationScreen({
     return () => clearTimeout(timeout);
   }, [copied]);
 
-  const origins = useMemo(() => parseOrigins(originsText), [originsText]);
+  const origins = useMemo(() => parseOrigins(originsText), [originsText, getLanguage()]);
   const validationError = validateOrigins(origins);
   const dirty = originsText !== savedOriginsText;
   const apiOrigin = demo ? "https://api.example.com" : getApiOrigin();
@@ -105,7 +106,7 @@ export function SiteIntegrationScreen({
         : await apiClient.updateIntakeSettings(origins);
       applySettings(next);
       onSaved(next);
-      setNotice(demo ? "Demo settings were updated locally. Nothing was sent to the server." : "Allowed websites saved.");
+      setNotice(demo ? t("Demo settings were updated locally. Nothing was sent to the server.") : t("Allowed websites saved."));
     } catch (nextError) {
       setError(authErrorMessage(nextError));
     } finally {
@@ -130,31 +131,31 @@ export function SiteIntegrationScreen({
   return (
     <KeyboardAvoidingView style={uiStyles.screen} behavior={Platform.OS === "ios" ? "padding" : undefined}>
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-        <ScreenHeader title="Website form" onBack={onBack} />
-        <Text style={styles.lead}>Every enquiry must include BB, HB or FB. Connect your website’s board field, or use our ready-made form.</Text>
-        {demo ? <InlineState tone="warning">Demo mode: settings and embed code are local; no API requests are made</InlineState> : null}
-        {error ? <InlineState tone="danger">{error}</InlineState> : null}
-        {notice ? <InlineState tone="success">{notice}</InlineState> : null}
+        <ScreenHeader title={t("Website form")} onBack={onBack} />
+        <Text style={styles.lead}>{t("Every enquiry must include BB, HB or FB. Connect your website’s board field, or use our ready-made form.")}</Text>
+        {demo ? <InlineState tone="warning">{t("Demo mode: settings and embed code are local; no API requests are made")}</InlineState> : null}
+        {error ? <InlineState tone="danger">{translateLabel(error)}</InlineState> : null}
+        {notice ? <InlineState tone="success">{translateLabel(notice)}</InlineState> : null}
 
         {loading ? (
           <View style={styles.loading}>
             <ActivityIndicator size="large" color={theme.colors.action} />
-            <Text style={styles.loadingText}>Loading website settings…</Text>
+            <Text style={styles.loadingText}>{t("Loading website settings…")}</Text>
           </View>
         ) : !settings ? (
           <View style={styles.loadFailure}>
             <Globe2 size={28} color={theme.colors.textMuted} />
-            <Text style={styles.loadFailureTitle}>Settings were not loaded</Text>
-            <Text style={styles.loadFailureText}>Real errors are never replaced with demo data.</Text>
-            <Button variant="secondary" onPress={() => void load()}>Try again</Button>
+            <Text style={styles.loadFailureTitle}>{t("Settings were not loaded")}</Text>
+            <Text style={styles.loadFailureText}>{t("Real errors are never replaced with demo data.")}</Text>
+            <Button variant="secondary" onPress={() => void load()}>{t("Try again")}</Button>
           </View>
         ) : (
           <>
             <View style={styles.section}>
-              <SectionTitle>Allowed websites</SectionTitle>
-              <Text style={styles.helper}>One exact origin per line, up to 20. Enter only the scheme, domain and optional port.</Text>
+              <SectionTitle>{t("Allowed websites")}</SectionTitle>
+              <Text style={styles.helper}>{t("One exact origin per line, up to 20. Enter only the scheme, domain and optional port.")}</Text>
               <Field
-                label="Allowed origins"
+                label={t("Allowed origins")}
                 placeholder={"https://hotel.it\nhttps://www.hotel.it"}
                 value={originsText}
                 onChangeText={(value) => { setOriginsText(value); setError(null); setNotice(null); }}
@@ -164,7 +165,7 @@ export function SiteIntegrationScreen({
                 numberOfLines={6}
                 editable={!saving}
                 error={validationError ?? undefined}
-                helper="Do not include /path, ?query, #fragment or a trailing slash."
+                helper={t("Do not include /path, ?query, #fragment or a trailing slash.")}
                 style={styles.originsField}
               />
               <View style={styles.exampleRow}>
@@ -173,12 +174,12 @@ export function SiteIntegrationScreen({
                 <Text style={styles.exampleBad}>not https://hotel.it/booking</Text>
               </View>
               <Button icon={Check} loading={saving} disabled={!dirty} onPress={() => void save()}>
-                {dirty ? "Save websites" : "Websites saved"}
+                {dirty ? t("Save websites") : t("Websites saved")}
               </Button>
             </View>
 
             <View style={styles.section}>
-              <SectionTitle>Integration method</SectionTitle>
+              <SectionTitle>{t("Integration method")}</SectionTitle>
               <View style={styles.modeRow} accessibilityRole="tablist">
                 <Pressable
                   accessibilityRole="tab"
@@ -186,9 +187,9 @@ export function SiteIntegrationScreen({
                   onPress={() => { setIntegrationMode("widget"); setCopied(false); }}
                   style={[styles.modeOption, integrationMode === "widget" && styles.modeOptionActive]}
                 >
-                  <Text style={styles.modeEyebrow}>MODE 1</Text>
-                  <Text style={[styles.modeTitle, integrationMode === "widget" && styles.modeTitleActive]}>Ready-made form</Text>
-                  <Text style={styles.modeText}>Preview and insert our complete form</Text>
+                  <Text style={styles.modeEyebrow}>{t("MODE 1")}</Text>
+                  <Text style={[styles.modeTitle, integrationMode === "widget" && styles.modeTitleActive]}>{t("Ready-made form")}</Text>
+                  <Text style={styles.modeText}>{t("Preview and insert our complete form")}</Text>
                 </Pressable>
                 <Pressable
                   accessibilityRole="tab"
@@ -196,74 +197,74 @@ export function SiteIntegrationScreen({
                   onPress={() => { setIntegrationMode("adapter"); setCopied(false); }}
                   style={[styles.modeOption, integrationMode === "adapter" && styles.modeOptionActive]}
                 >
-                  <Text style={styles.modeEyebrow}>MODE 2</Text>
-                  <Text style={[styles.modeTitle, integrationMode === "adapter" && styles.modeTitleActive]}>Existing WordPress / CMS form</Text>
-                  <Text style={styles.modeText}>Keep its design and original submit</Text>
+                  <Text style={styles.modeEyebrow}>{t("MODE 2")}</Text>
+                  <Text style={[styles.modeTitle, integrationMode === "adapter" && styles.modeTitleActive]}>{t("Existing WordPress / CMS form")}</Text>
+                  <Text style={styles.modeText}>{t("Keep its design and original submit")}</Text>
                 </Pressable>
               </View>
               {integrationMode === "adapter" ? (
                 <>
-                  <InlineState tone="success">Your current form stays exactly as it is. Its original action still runs, while the adapter sends a copy of each valid enquiry to this CRM.</InlineState>
+                  <InlineState tone="success">{t("Your current form stays exactly as it is. Its original action still runs, while the adapter sends a copy of each valid enquiry to this CRM.")}</InlineState>
                   <View style={styles.flowCard}>
-                    <FlowStep number="1" title="Find the form" detail="Set data-form to its CSS selector, for example #booking-form." />
-                    <FlowStep number="2" title="Map existing fields" detail="Match each data-* selector to the field names or IDs already in the CMS." />
-                    <FlowStep number="3" title="Mirror every submit" detail="The original WordPress/CMS action continues normally while a copy is posted to the secure CRM intake endpoint." />
+                    <FlowStep number="1" title={t("Find the form")} detail={t("Set data-form to its CSS selector, for example #booking-form.")} />
+                    <FlowStep number="2" title={t("Map existing fields")} detail={t("Match each data-* selector to the field names or IDs already in the CMS.")} />
+                    <FlowStep number="3" title={t("Mirror every submit")} detail={t("The original WordPress/CMS action continues normally while a copy is posted to the secure CRM intake endpoint.")} />
                   </View>
                 </>
               ) : (
                 <View style={styles.previewSection}>
                   <View style={styles.previewHeader}>
                     <View style={{ flex: 1 }}>
-                      <Text style={styles.previewTitle}>Live form preview</Text>
-                      <Text style={styles.previewHelp}>This is the complete form inserted by the widget script.</Text>
+                      <Text style={styles.previewTitle}>{t("Live form preview")}</Text>
+                      <Text style={styles.previewHelp}>{t("This is the complete form inserted by the widget script.")}</Text>
                     </View>
                     <View style={styles.deviceSwitch}>
-                      <DeviceButton device="desktop" label="Desktop" active={previewDevice === "desktop"} onPress={() => setPreviewDevice("desktop")} />
-                      <DeviceButton device="mobile" label="Mobile" active={previewDevice === "mobile"} onPress={() => setPreviewDevice("mobile")} />
+                      <DeviceButton device="desktop" label={t("Desktop")} active={previewDevice === "desktop"} onPress={() => setPreviewDevice("desktop")} />
+                      <DeviceButton device="mobile" label={t("Mobile")} active={previewDevice === "mobile"} onPress={() => setPreviewDevice("mobile")} />
                     </View>
                   </View>
                   <WidgetPreview device={previewDevice} />
                 </View>
               )}
-              {!apiOrigin ? <InlineState tone="danger">EXPO_PUBLIC_API_URL is missing or invalid, so the embed code cannot be created.</InlineState> : null}
-              {!settings.publicKey ? <InlineState tone="danger">The server did not return the hotel public key. Refresh the profile or contact an administrator.</InlineState> : null}
+              {!apiOrigin ? <InlineState tone="danger">{t("EXPO_PUBLIC_API_URL is missing or invalid, so the embed code cannot be created.")}</InlineState> : null}
+              {!settings.publicKey ? <InlineState tone="danger">{t("The server did not return the hotel public key. Refresh the profile or contact an administrator.")}</InlineState> : null}
               <View style={styles.codeCard}>
                 <View style={styles.codeHeading}>
                   <View style={styles.codeIcon}><Code2 size={20} color={theme.colors.action} /></View>
-                  <Text style={styles.codeTitle}>{integrationMode === "adapter" ? "Existing form adapter" : "Form widget"}</Text>
+                  <Text style={styles.codeTitle}>{integrationMode === "adapter" ? t("Existing form adapter") : t("Form widget")}</Text>
                 </View>
-                <Text selectable accessibilityLabel="Website integration code" style={styles.codeText}>{snippet || "Code is not available yet"}</Text>
+                <Text selectable accessibilityLabel={t("Website integration code")} style={styles.codeText}>{snippet || t("Code is not available yet")}</Text>
                 <Button
                   variant="secondary"
                   icon={copied ? ClipboardCheck : Copy}
                   disabled={!snippet}
                   onPress={() => void copySnippet()}
                 >
-                  {copied ? "Copied" : "Copy code"}
+                  {copied ? t("Copied") : t("Copy code")}
                 </Button>
               </View>
-              {copied ? <InlineState tone="success">Code copied to the clipboard</InlineState> : null}
+              {copied ? <InlineState tone="success">{t("Code copied to the clipboard")}</InlineState> : null}
             </View>
 
             <View style={styles.installCard}>
               <View style={styles.stepNumber}><Text style={styles.stepNumberText}>1</Text></View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.installTitle}>{integrationMode === "adapter" ? "Match your form and fields" : "Paste it before the closing tag"}</Text>
+                <Text style={styles.installTitle}>{integrationMode === "adapter" ? t("Match your form and fields") : t("Paste it before the closing tag")}</Text>
                 <Text style={styles.installText}>
                   {integrationMode === "adapter"
-                    ? "Replace #booking-form and each [name='…'] selector in the code with the selectors already used by your website form. Map the required mealPlan field to BB, HB or FB. Optional child ages and message fields can be added with data-child-ages and data-note."
-                    : <>Open your website HTML template and add the copied script immediately before <Text style={styles.inlineCode}>{"</body>"}</Text>.</>}
+                    ? t("Replace #booking-form and each [name='…'] selector in the code with the selectors already used by your website form. Map the required mealPlan field to BB, HB or FB. Optional child ages and message fields can be added with data-child-ages and data-note.")
+                    : <>{t("Open your website HTML template and add the copied script immediately before")}{" "}<Text style={styles.inlineCode}>{"</body>"}</Text>.</>}
                 </Text>
               </View>
             </View>
             <View style={styles.installCard}>
               <View style={styles.stepNumber}><Text style={styles.stepNumberText}>2</Text></View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.installTitle}>{integrationMode === "adapter" ? "Add an optional status message" : "Check the exact origin"}</Text>
+                <Text style={styles.installTitle}>{integrationMode === "adapter" ? t("Add an optional status message") : t("Check the exact origin")}</Text>
                 <Text style={styles.installText}>
                   {integrationMode === "adapter"
-                    ? <>Add <Text style={styles.inlineCode}>data-hotel-inquiry-status</Text> to an empty element inside the form to show sending, success and error messages. The page must also match an allowed website above.</>
-                    : "The page address must match one of the origins above, or the server will reject the enquiry."}
+                    ? <>{t("Add")}{" "}<Text style={styles.inlineCode}>data-hotel-inquiry-status</Text> {" "}{t("to an empty element inside the form to show sending, success and error messages. The page must also match an allowed website above.")}</>
+                    : t("The page address must match one of the origins above, or the server will reject the enquiry.")}
                 </Text>
               </View>
             </View>
@@ -277,10 +278,10 @@ export function SiteIntegrationScreen({
 function ScreenHeader({ title, onBack }: { title: string; onBack: () => void }) {
   return (
     <View style={styles.header}>
-      <Pressable accessibilityRole="button" accessibilityLabel="Back" onPress={onBack} style={({ pressed }) => [styles.back, pressed && styles.pressed]}>
+      <Pressable accessibilityRole="button" accessibilityLabel={t("Back")} onPress={onBack} style={({ pressed }) => [styles.back, pressed && styles.pressed]}>
         <ArrowLeft size={22} color={theme.colors.text} />
       </Pressable>
-      <Text style={styles.headerTitle}>{title}</Text>
+      <Text style={styles.headerTitle}>{translateLabel(title)}</Text>
       <View style={{ width: 44 }} />
     </View>
   );
@@ -291,8 +292,8 @@ function FlowStep({ number, title, detail }: { number: string; title: string; de
     <View style={styles.flowRow}>
       <View style={styles.flowNumber}><Text style={styles.flowNumberText}>{number}</Text></View>
       <View style={{ flex: 1 }}>
-        <Text style={styles.flowTitle}>{title}</Text>
-        <Text style={styles.flowDetail}>{detail}</Text>
+        <Text style={styles.flowTitle}>{translateLabel(title)}</Text>
+        <Text style={styles.flowDetail}>{translateLabel(detail)}</Text>
       </View>
     </View>
   );
@@ -319,7 +320,7 @@ function DeviceButton({
       {device === "desktop"
         ? <Monitor size={15} color={active ? theme.colors.action : theme.colors.textMuted} />
         : <Smartphone size={15} color={active ? theme.colors.action : theme.colors.textMuted} />}
-      <Text style={[styles.deviceLabel, active && styles.deviceLabelActive]}>{label}</Text>
+      <Text style={[styles.deviceLabel, active && styles.deviceLabelActive]}>{translateLabel(label)}</Text>
     </Pressable>
   );
 }
@@ -330,23 +331,23 @@ function WidgetPreview({ device }: { device: "desktop" | "mobile" }) {
   return (
     <View style={styles.previewStage}>
       <View style={[styles.previewFrame, mobile && styles.previewFrameMobile]}>
-        <Text style={styles.installTitle}>Board basis</Text>
+        <Text style={styles.installTitle}>{t("Board basis")}</Text>
         <BoardSelector value={mealPlan} onChange={setMealPlan} />
         <View style={[styles.previewPair, mobile && styles.previewPairMobile]}>
-          <PreviewField label="Check-in" placeholder="dd/mm/yyyy" />
-          <PreviewField label="Check-out" placeholder="dd/mm/yyyy" />
+          <PreviewField label={t("Check-in")} placeholder={t("dd/mm/yyyy")} />
+          <PreviewField label={t("Check-out")} placeholder={t("dd/mm/yyyy")} />
         </View>
         <View style={[styles.previewPair, mobile && styles.previewPairMobile]}>
-          <PreviewField label="Full name" placeholder="Mario Rossi" />
-          <PreviewField label="Email" placeholder="mario@example.com" />
+          <PreviewField label={t("Full name")} placeholder="Mario Rossi" />
+          <PreviewField label={t("Email")} placeholder="mario@example.com" />
         </View>
         <View style={[styles.previewPair, mobile && styles.previewPairMobile]}>
-          <PreviewField label="Phone / WhatsApp" placeholder="+39 …" />
-          <PreviewField label="Adults" placeholder="2" />
+          <PreviewField label={t("Phone / WhatsApp")} placeholder="+39 …" />
+          <PreviewField label={t("Adults")} placeholder="2" />
         </View>
-        <PreviewField label="Child ages, separated by commas" placeholder="e.g. 4, 9" />
-        <PreviewField label="Message" placeholder="Optional message" tall />
-        <View style={styles.previewButton}><Text style={styles.previewButtonText}>Request availability</Text></View>
+        <PreviewField label={t("Child ages, separated by commas")} placeholder={t("e.g. 4, 9")} />
+        <PreviewField label={t("Message")} placeholder={t("Optional message")} tall />
+        <View style={styles.previewButton}><Text style={styles.previewButtonText}>{t("Request availability")}</Text></View>
       </View>
     </View>
   );
@@ -355,7 +356,7 @@ function WidgetPreview({ device }: { device: "desktop" | "mobile" }) {
 function PreviewField({ label, placeholder, tall = false }: { label: string; placeholder: string; tall?: boolean }) {
   return (
     <View style={styles.previewField}>
-      <Text style={styles.previewFieldLabel}>{label}</Text>
+      <Text style={styles.previewFieldLabel}>{translateLabel(label)}</Text>
       <View style={[styles.previewInput, tall && styles.previewInputTall]}>
         <Text style={styles.previewPlaceholder}>{placeholder}</Text>
       </View>
@@ -368,17 +369,17 @@ function parseOrigins(value: string): string[] {
 }
 
 function validateOrigins(origins: string[]): string | null {
-  if (origins.length > 20) return "You can add up to 20 websites.";
-  if (new Set(origins).size !== origins.length) return "Remove duplicate origins.";
+  if (origins.length > 20) return t("You can add up to 20 websites.");
+  if (new Set(origins).size !== origins.length) return t("Remove duplicate origins.");
   for (let index = 0; index < origins.length; index += 1) {
     const origin = origins[index]!;
     try {
       const url = new URL(origin);
       if (!["http:", "https:"].includes(url.protocol) || origin !== url.origin) {
-        return `Line ${index + 1}: keep only the scheme, domain and optional port.`;
+        return t("Line {{v0}}: keep only the scheme, domain and optional port.", { v0: index + 1 });
       }
     } catch {
-      return `Line ${index + 1}: enter a complete origin, for example https://hotel.it.`;
+      return t("Line {{v0}}: enter a complete origin, for example https://hotel.it.", { v0: index + 1 });
     }
   }
   return null;

@@ -1,16 +1,21 @@
+import { locale as uiLocale, getLanguage, t } from "../i18n";
 import { requestLabel } from "../requests/status";
-import { DASHBOARD_PAGE_SIZE, OFFER_VALIDITY_MS, dashboardQuerySchema, type DashboardQuery, type ReservationOffer, type SendReservationOffersInput } from "@hotel/contracts";
+import { AUTOMATIC_SENDING_TIMEOUT_MS, AUTOMATIC_SENDING_TIMEOUT_REASON } from "@hotel/contracts";
+import { DASHBOARD_PAGE_SIZE, OFFER_VALIDITY_MS, dashboardQuerySchema, type DashboardQuery, type InquiryFormInput, type OfferEditorData, type OfferQuote, type OfferSettings, type ReservationOffer, type SendReservationOffersInput } from "@hotel/contracts";
+import { demoOfferEditor, getDemoOfferSettings, prefillDemoOffers, quoteDemoOffer, saveDemoOfferSettings } from "./demo-offers";
 import type { ClientFilters, ClientFilterOptions, ClientPage, ClientHistory, ClientInput, ClientProfile, RequestClientStatus } from "./types";
 import { Platform } from "react-native";
 import * as SecureStore from "expo-secure-store";
-import { mockDashboard } from "./mock";
+import { mockDashboard, refreshDemoSendingStatuses } from "./mock";
 import type {
   AuthSession,
   DashboardSnapshot,
+  DeliverySummary,
   HotelProfile,
   HotelRequest,
   ManualInquiryInput,
   ManualInquiryResult,
+  ManualRequestSource,
   HotelProfileInput,
   HotelIntakeSettings,
   ConnectionStatus,
@@ -31,6 +36,8 @@ import type {
 } from "./types";
 
 const apiUrl = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, "");
+
+
 const sessionTokenKey = "hotel.session.token";
 const webCookieSession = "web-cookie-session";
 let volatileWebToken: string | null = null;
@@ -58,17 +65,11 @@ type ApiHotel = {
   allowedOrigins?: string[];
 };
 
-type ApiDeliveryState =
-  | "scheduled"
-  | "processing"
-  | "provider_accepted"
-  | "delivered"
-  | "failed"
-  | "unknown"
-  | "cancelled";
+type ApiDeliveryState = NonNullable<DeliverySummary["state"]>;
 
 type ApiDashboard = {
-  counts: { total: number; new: number; offerSent: number; requiresConfirmation: number; requiresConfirmationTotalCents: number; needsAttention: number; failedDeliveries: number };
+  nextProcessingDeadlineAt?: string | null;
+  counts: { total: number; new: number; offerSent: number; requiresConfirmation: number; requiresConfirmationTotalCents: number; needsAttention: number };
   pagination: DashboardSnapshot["pagination"];
   inquiries: Array<{
     id: string;
@@ -78,7 +79,7 @@ type ApiDashboard = {
     guestPhone: string | null;
     locale: string;
     note: string;
-    receivedVia?: "phone" | "walk_in" | "other" | null;
+    receivedVia?: ManualRequestSource | null;
     offerExpiresAt: string | null;
     offerSentAt: string | null;
     acceptedAt: string | null;
@@ -92,11 +93,12 @@ type ApiDashboard = {
     offers?: ReservationOffer[];
     channelStates: { email: ApiDeliveryState | null; whatsapp: ApiDeliveryState | null };
     channelDetails: {
-      email: { state: ApiDeliveryState; recipient: string; lastErrorCode: string | null; processedAt: string | null } | null;
-      whatsapp: { state: ApiDeliveryState; recipient: string; lastErrorCode: string | null; processedAt: string | null } | null;
+      email: { state: ApiDeliveryState; attemptCount?: number; recipient: string; lastErrorCode: string | null; processedAt: string | null } | null;
+      whatsapp: { state: ApiDeliveryState; attemptCount?: number; recipient: string; lastErrorCode: string | null; processedAt: string | null } | null;
     };
     workflowState: "new" | "offer_sent" | "requires_confirmation" | "payment_link_sent" | "needs_attention";
     attentionReason: string | null;
+    processingDeadlineAt?: string | null;
     createdAt: string;
   }>;
 };
@@ -156,6 +158,7 @@ async function apiRequest<T>(
   const baseUrl = requireApiUrl();
   const headers = new Headers(options.headers);
   headers.set("Accept", "application/json");
+  headers.set("Accept-Language", getLanguage());
   if (options.body) headers.set("Content-Type", "application/json");
   if (token && token !== webCookieSession) headers.set("Authorization", `Bearer ${token}`);
 
@@ -296,6 +299,11 @@ export const apiClient = {
       }
       throw error;
     }
+  },
+
+  async updateLanguage(uiLanguage: "en" | "it"): Promise<void> {
+    const token = await requireToken();
+    await apiRequest("/v1/auth/preferences", { method: "PATCH", body: JSON.stringify({ uiLanguage }) }, token);
   },
 
   async logout(): Promise<void> {
@@ -471,21 +479,21 @@ export const apiClient = {
     return response.data.settings;
   },
 
-  async previewMessage(channel: MessageChannel): Promise<MessagePreview> {
+  async previewMessage(channel: MessageChannel, language?: "en" | "it"): Promise<MessagePreview> {
     const token = await requireToken();
     const response = await apiRequest<{ data: { preview: MessagePreview } }>(
       "/v1/hotel/message-settings/preview",
-      { method: "POST", body: JSON.stringify({ channel }) },
+      { method: "POST", body: JSON.stringify({ channel, sample: { language } }) },
       token,
     );
     return response.data.preview;
   },
 
-  async testMessage(channel: MessageChannel, recipient: string): Promise<TestSendResult> {
+  async testMessage(channel: MessageChannel, recipient: string, language?: "en" | "it"): Promise<TestSendResult> {
     const token = await requireToken();
     const response = await apiRequest<{ data: TestSendResult }>(
       "/v1/hotel/message-settings/test-send",
-      { method: "POST", body: JSON.stringify({ channel, recipient }) },
+      { method: "POST", body: JSON.stringify({ channel, recipient, sample: { language } }) },
       token,
     );
     return response.data;
@@ -615,6 +623,17 @@ export const apiClient = {
     const token = await requireToken(); const response = await apiRequest<{ data: { connection: ConnectionStatus } }>("/v1/connections/mail/smtp", { method: "POST", body: JSON.stringify(input) }, token); return response.data.connection;
   },
 
+  async createFormRequest(input: InquiryFormInput, idempotencyKey: string, options: { demo?: boolean } = {}): Promise<ManualInquiryResult> {
+    if (options.demo) {
+      return this.createManualRequest({ ...input, guest: { ...input.guest, email: input.guest.email ?? "", phone: input.guest.phone ?? "" }, receivedVia: "website", sendOffer: !input.note.trim() }, `form:${idempotencyKey}`, options);
+    }
+    const token = await requireToken();
+    const response = await apiRequest<{ data: ManualInquiryResult }>("/v1/inquiries/form", {
+      method: "POST", headers: { "Idempotency-Key": idempotencyKey }, body: JSON.stringify(input),
+    }, token);
+    return response.data;
+  },
+
   async createManualRequest(input: ManualInquiryInput, idempotencyKey: string, options: { demo?: boolean } = {}): Promise<ManualInquiryResult> {
     if (options.demo) {
       const id = `manual:${idempotencyKey}`;
@@ -622,13 +641,13 @@ export const apiClient = {
       if (existing) return { inquiryId: id, reservationNumber: existing.reservationNumber, automated: false, attentionReason: "manual_review", deliveriesScheduled: 0, replayed: true };
       const reservationNumber = String(Math.max(0, ...mockDashboard.requests.map((request) => Number(request.reservationNumber))) + 1);
       const nights = nightsBetween(input.checkIn, input.checkOut);
-      const currentOfferId = input.offers?.length ? `00000000-0000-4000-8000-${reservationNumber.padStart(12, "0")}` : null;
+      const offerContext = { id, guestName: input.guest.name, checkIn: input.checkIn, checkOut: input.checkOut, occupancy: input.occupancy, mealPlan: input.mealPlan };
+      const choices = input.offers ?? (input.sendOffer ? demoOfferEditor(offerContext).suggestions.map(({ roomId, planCode }) => ({ roomId, planCode, note: "" })) : []);
+      const currentOfferId = choices.length ? `00000000-0000-4000-8000-${reservationNumber.padStart(12, "0")}` : null;
       const expiresAt = new Date(Date.now() + OFFER_VALIDITY_MS).toISOString();
-      const offers: ReservationOffer[] = input.offers?.map((offer, index) => ({
-        ...offer, id: `${currentOfferId}:${index}`,
-        roomName: mockDashboard.requests.flatMap((request) => request.offers ?? []).find(({ roomId }) => roomId === offer.roomId)?.roomName ?? "Room",
-        mealPlan: input.mealPlan, currency: "EUR", status: "available", expiresAt,
-      })) ?? [];
+      const offers: ReservationOffer[] = choices.map((offer, index) => ({
+        ...quoteDemoOffer(offerContext, offer), id: `${currentOfferId}:${index}`, status: "available", expiresAt,
+      }));
       const first = offers[0];
       mockDashboard.requests.unshift({
         id, reservationNumber, guestName: input.guest.name, mealPlan: input.mealPlan,
@@ -636,16 +655,16 @@ export const apiClient = {
         stayLabel: `${input.checkIn} — ${input.checkOut} · ${countLabel(nights, "night", "nights")}`,
         guestLabel: `${countLabel(input.occupancy.adults, "adult", "adults")}${input.occupancy.childAges.length ? ` · ${countLabel(input.occupancy.childAges.length, "child", "children")}` : ""}`,
         roomLabel: first?.roomName ?? "No offer created",
-        totalLabel: first ? new Intl.NumberFormat("en-GB", { style: "currency", currency: "EUR" }).format(first.totalCents / 100) : "—",
+        totalLabel: first ? new Intl.NumberFormat(uiLocale(), { style: "currency", currency: "EUR" }).format(first.totalCents / 100) : "—",
         totalCents: first?.totalCents ?? 0, currency: "EUR", currentOfferId, offers,
         offerExpiresAt: offers.length ? expiresAt : null,
         receivedAt: new Date().toISOString(), receivedVia: input.receivedVia,
-        status: "attention", statusLabel: requestLabel("attention"), attentionReason: "manual_review",
-        nextAction: "Review rates and request", note: input.note, locale: input.guest.language,
+        status: input.sendOffer && offers.length ? "new" : "attention", statusLabel: requestLabel(input.sendOffer && offers.length ? "new" : "attention"), attentionReason: input.sendOffer && offers.length ? null : "manual_review",
+        note: input.note, locale: input.guest.language,
         email: { status: "unused", ...(input.guest.email ? { recipient: input.guest.email } : {}) },
         whatsapp: { status: "unused", ...(input.guest.phone ? { recipient: input.guest.phone } : {}) },
       });
-      return { inquiryId: id, reservationNumber, automated: offers.length > 0, attentionReason: "manual_review", deliveriesScheduled: 0, replayed: false };
+      return { inquiryId: id, reservationNumber, automated: offers.length > 0, attentionReason: input.sendOffer && offers.length ? null : "manual_review", deliveriesScheduled: 0, replayed: false };
     }
     const token = await requireToken();
     const response = await apiRequest<{ data: ManualInquiryResult }>("/v1/inquiries", {
@@ -658,6 +677,7 @@ export const apiClient = {
     const query = dashboardQuerySchema.parse({ limit: DASHBOARD_PAGE_SIZE, ...parameters });
     if (options.demo) {
       await new Promise((resolve) => setTimeout(resolve, 240));
+      refreshDemoSendingStatuses();
       const requests = mockDashboard.requests;
       const reservationNumber = /^#?\s*(\d+)$/.exec(query.search)?.[1];
       const filtered = requests.filter((request) => (query.status === "all" || request.status === query.status) && (!query.search ||
@@ -667,14 +687,15 @@ export const apiClient = {
       const direction = query.sort === "asc" ? 1 : -1;
       filtered.sort((left, right) => direction * (Date.parse(left.receivedAt) - Date.parse(right.receivedAt) || left.id.localeCompare(right.id)));
       const page = Math.min(query.page, Math.max(1, Math.ceil(filtered.length / query.limit)));
-      return { ...mockDashboard, totalCount: requests.length,
+      return { totalCount: requests.length,
         newCount: requests.filter((request) => request.status === "new").length,
         waitingCount: requests.filter((request) => request.status === "waiting").length,
         attentionCount: requests.filter((request) => request.status === "attention").length,
         paymentPendingCount: requests.filter((request) => request.status === "payment").length,
         paymentPendingTotalCents: requests.filter((request) => request.status === "payment").reduce((total, request) => total + request.totalCents, 0),
-        failedDeliveryCount: requests.filter((request) => request.email.status === "failed" || request.whatsapp.status === "failed").length,
         pagination: { page, limit: query.limit, total: filtered.length },
+        nextProcessingDeadlineAt: requests.filter((request) => request.status === "new" && request.processingDeadlineAt)
+          .map((request) => request.processingDeadlineAt!).sort()[0] ?? null,
         requests: filtered.slice((page - 1) * query.limit, page * query.limit),
       };
     }
@@ -685,9 +706,10 @@ export const apiClient = {
   },
   async getRequest(id: string, options: { demo?: boolean } = {}): Promise<HotelRequest> {
     if (options.demo) {
+      refreshDemoSendingStatuses();
       const request = mockDashboard.requests.find((item) => item.id === id);
       if (!request) throw new ApiError("INQUIRY_NOT_FOUND", "Reservation was not found.");
-      return request;
+      return prefillDemoOffers(request);
     }
     const token = await requireToken();
     const response = await apiRequest<{ data: { inquiry: ApiDashboard["inquiries"][number] } }>(`/v1/inquiries/${encodeURIComponent(id)}`, {}, token);
@@ -703,13 +725,17 @@ export const apiClient = {
       if ((request.currentOfferId ?? null) !== input.baseOfferId) throw new ApiError("OFFERS_CHANGED", "Refresh the reservation before editing.");
       const expiresAt = new Date(Date.now() + OFFER_VALIDITY_MS).toISOString();
       const offers: ReservationOffer[] = input.offers.map((offer, index) => ({
-        ...offer, id: `${currentOfferId}:${index}`, roomName: request.offers?.find(({ roomId }) => roomId === offer.roomId)?.roomName ?? (request.roomLabel === "No offer created" ? "Deluxe Room" : request.roomLabel),
-        mealPlan: request.mealPlan, currency: request.currency, status: "available", expiresAt,
+        ...quoteDemoOffer(request, offer), id: `${currentOfferId}:${index}`, status: "available", expiresAt,
       }));
       const first = offers[0]!;
+      for (const channel of ["email", "whatsapp"] as const) {
+        const recipient = request[channel].recipient;
+        request[channel] = recipient ? { status: "pending", state: "scheduled", attemptCount: 0, recipient, lastErrorCode: null, processedAt: null } : { status: "unused" };
+      }
       Object.assign(request, { currentOfferId, offers, offerExpiresAt: expiresAt, roomLabel: first.roomName,
-        totalCents: first.totalCents, totalLabel: new Intl.NumberFormat("en-GB", { style: "currency", currency: first.currency }).format(first.totalCents / 100),
-        status: "new", statusLabel: requestLabel("new"), attentionReason: null, nextAction: undefined });
+        totalCents: first.totalCents, totalLabel: new Intl.NumberFormat(uiLocale(), { style: "currency", currency: first.currency }).format(first.totalCents / 100),
+        status: "new", statusLabel: requestLabel("new"), attentionReason: null, nextAction: undefined,
+        processingDeadlineAt: new Date(Date.now() + AUTOMATIC_SENDING_TIMEOUT_MS).toISOString() });
       return { ...request };
     }
     const token = await requireToken();
@@ -717,6 +743,26 @@ export const apiClient = {
       method: "POST", headers: { "Idempotency-Key": idempotencyKey }, body: JSON.stringify(input),
     }, token);
     return mapRequest(response.data.inquiry);
+  },
+  async getOfferSettings(options: { demo?: boolean } = {}): Promise<OfferSettings> {
+    if (options.demo) return getDemoOfferSettings();
+    const response = await apiRequest<{ data: { settings: OfferSettings } }>("/v1/offer-settings", {}, await requireToken());
+    return response.data.settings;
+  },
+  async saveOfferSettings(settings: OfferSettings, options: { demo?: boolean } = {}): Promise<OfferSettings> {
+    if (options.demo) return saveDemoOfferSettings(settings);
+    const response = await apiRequest<{ data: { settings: OfferSettings } }>("/v1/offer-settings", { method: "PUT", body: JSON.stringify(settings) }, await requireToken());
+    return response.data.settings;
+  },
+  async getOfferEditor(id: string, options: { demo?: boolean } = {}): Promise<OfferEditorData> {
+    if (options.demo) return demoOfferEditor(await this.getRequest(id, options));
+    const response = await apiRequest<{ data: OfferEditorData }>(`/v1/inquiries/${encodeURIComponent(id)}/offer-editor`, {}, await requireToken());
+    return response.data;
+  },
+  async previewReservationOffer(id: string, input: SendReservationOffersInput["offers"][number], options: { demo?: boolean } = {}): Promise<OfferQuote> {
+    if (options.demo) return quoteDemoOffer(await this.getRequest(id, options), input);
+    const response = await apiRequest<{ data: { offer: OfferQuote } }>(`/v1/inquiries/${encodeURIComponent(id)}/offers/preview`, { method: "POST", body: JSON.stringify(input) }, await requireToken());
+    return response.data.offer;
   },
   async markPaymentLinkSent(inquiryId: string, options: { demo?: boolean } = {}): Promise<void> {
     if (options.demo) {
@@ -749,13 +795,13 @@ function countLabel(value: number, singular: string, plural: string): string {
 
 function mapDashboard(input: ApiDashboard): DashboardSnapshot {
   return {
+    nextProcessingDeadlineAt: input.nextProcessingDeadlineAt ?? null,
     totalCount: input.counts.total,
     newCount: input.counts.new,
     waitingCount: input.counts.offerSent,
     paymentPendingCount: input.counts.requiresConfirmation,
     paymentPendingTotalCents: input.counts.requiresConfirmationTotalCents,
     attentionCount: input.counts.needsAttention,
-    failedDeliveryCount: input.counts.failedDeliveries,
     pagination: input.pagination,
     requests: input.inquiries.map(mapRequest),
   };
@@ -775,11 +821,12 @@ function mapRequest(inquiry: ApiDashboard["inquiries"][number]): HotelRequest {
       : workflow === "offer_sent"
         ? "waiting"
         : "new";
-  const statusLabel = requestLabel(status, inquiry.channelStates.email === "failed" || inquiry.channelStates.whatsapp === "failed");
+  const sendingTimedOut = inquiry.attentionReason === AUTOMATIC_SENDING_TIMEOUT_REASON;
+  const statusLabel = requestLabel(status, sendingTimedOut || inquiry.channelStates.email === "failed" || inquiry.channelStates.whatsapp === "failed");
   const nextAction = workflow === "requires_confirmation"
     ? "Review availability"
     : workflow === "needs_attention"
-      ? "Review rates and request"
+      ? sendingTimedOut ? "Check delivery and channel connections" : "Review rates and request"
       : undefined;
   return {
     id: inquiry.id,
@@ -804,13 +851,14 @@ function mapRequest(inquiry: ApiDashboard["inquiries"][number]): HotelRequest {
     totalCents: inquiry.offerSummary?.totalCents ?? 0,
     currency: inquiry.offerSummary?.currency ?? "EUR",
     totalLabel: inquiry.offerSummary
-      ? new Intl.NumberFormat("en-GB", { style: "currency", currency: inquiry.offerSummary.currency }).format(inquiry.offerSummary.totalCents / 100)
+      ? new Intl.NumberFormat(uiLocale(), { style: "currency", currency: inquiry.offerSummary.currency }).format(inquiry.offerSummary.totalCents / 100)
       : "—",
     receivedAt: inquiry.createdAt,
     status,
     statusLabel,
     ...(nextAction ? { nextAction } : {}),
     attentionReason: inquiry.attentionReason,
+    processingDeadlineAt: inquiry.processingDeadlineAt ?? null,
     email: mapDeliveryDetail(inquiry.channelStates.email, inquiry.channelDetails.email, inquiry.guestEmail),
     whatsapp: mapDeliveryDetail(inquiry.channelStates.whatsapp, inquiry.channelDetails.whatsapp, inquiry.guestPhone),
   };
@@ -818,18 +866,20 @@ function mapRequest(inquiry: ApiDashboard["inquiries"][number]): HotelRequest {
 
 function mapDeliveryDetail(
   state: ApiDeliveryState | null,
-  detail: { recipient: string; lastErrorCode: string | null; processedAt: string | null } | null,
+  detail: { attemptCount?: number; recipient: string; lastErrorCode: string | null; processedAt: string | null } | null,
   contact: string | null,
 ) {
   return {
     status: mapDeliveryState(state),
+    ...(state ? { state } : {}),
+    ...(detail?.attemptCount !== undefined ? { attemptCount: detail.attemptCount } : {}),
     ...(contact || detail?.recipient ? { recipient: contact || detail!.recipient } : {}),
     ...(detail ? { lastErrorCode: detail.lastErrorCode, processedAt: detail.processedAt } : {}),
   };
 }
 
 export function authErrorMessage(error: unknown): string {
-  if (!(error instanceof ApiError)) return "Could not complete the action. Please try again.";
+  if (!(error instanceof ApiError)) return t("Could not complete the action. Please try again.");
   const messages: Record<string, string> = {
     API_NOT_CONFIGURED: error.message,
     NETWORK_ERROR: error.message,
@@ -855,5 +905,5 @@ export function authErrorMessage(error: unknown): string {
     SOCIAL_EMAIL_UNVERIFIED: "Use an account with a verified email address.",
     SOCIAL_ACCOUNT_CONFLICT: "This email is already linked to a different sign-in method.",
   };
-  return messages[error.code] ?? error.message;
+  return t(messages[error.code] ?? "Could not complete the action. Please try again.");
 }

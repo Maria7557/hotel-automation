@@ -1,5 +1,6 @@
 import { and, asc, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, lte, ne, sql } from "drizzle-orm";
-import type { DashboardQuery, MealPlan } from "@hotel/contracts";
+import type { DashboardQuery, MealPlan, OfferSettings } from "@hotel/contracts";
+import { AUTOMATIC_SENDING_TIMEOUT_MS } from "@hotel/contracts";
 
 import type { Database } from "../db/client.js";
 import {
@@ -7,6 +8,7 @@ import {
   connections,
   deliveries,
   hotelMessageSettings,
+  hotelOfferSettings,
   hotelMembers,
   hotels,
   inquiries,
@@ -57,6 +59,7 @@ import type {
   WhatsAppSupportRecord,
 } from "./types.js";
 import { errors } from "../lib/errors.js";
+import { acceptedStay } from "../lib/accepted-stay.js";
 
 function requireRow<T>(rows: T[], operation: string): T {
   const row = rows[0];
@@ -70,6 +73,7 @@ function mapUser(row: typeof users.$inferSelect): UserRecord {
     email: row.email,
     displayName: row.displayName,
     passwordHash: row.passwordHash,
+    ...(row.uiLanguage ? { uiLanguage: row.uiLanguage } : {}),
     googleSubject: row.googleSubject,
     appleSubject: row.appleSubject,
   };
@@ -269,13 +273,17 @@ class PostgresAuthRepository implements AuthRepository {
     });
   }
 
+  async updateUserLanguage(userId: string, uiLanguage: "en" | "it"): Promise<void> {
+    await this.db.update(users).set({ uiLanguage }).where(eq(users.id, userId));
+  }
+
   async createSession(input: { userId: string; tokenHash: string; expiresAt: Date }): Promise<void> {
     await this.db.insert(authSessions).values(input);
   }
 
   async findUserBySessionHash(tokenHash: string, now: Date) {
     const [row] = await this.db
-      .select({ id: users.id, email: users.email, displayName: users.displayName })
+      .select({ id: users.id, email: users.email, displayName: users.displayName, uiLanguage: users.uiLanguage })
       .from(authSessions)
       .innerJoin(users, eq(users.id, authSessions.userId))
       .where(and(eq(authSessions.tokenHash, tokenHash), gt(authSessions.expiresAt, now)))
@@ -382,6 +390,21 @@ class PostgresHotelRepository implements HotelRepository {
 
 class PostgresAutomationRepository implements AutomationRepository {
   constructor(private readonly db: Database) {}
+
+  async findOfferSettingsForHotel(hotelId: string): Promise<OfferSettings | null> {
+    const [row] = await this.db.select().from(hotelOfferSettings).where(eq(hotelOfferSettings.hotelId, hotelId)).limit(1);
+    return row?.settings ?? null;
+  }
+
+  async saveOfferSettingsForUser(userId: string, settings: OfferSettings): Promise<OfferSettings | null> {
+    const [membership] = await this.db.select({ hotelId: hotels.id }).from(hotelMembers)
+      .innerJoin(hotels, and(eq(hotels.id, hotelMembers.hotelId), isNull(hotels.deletedAt)))
+      .where(eq(hotelMembers.userId, userId)).limit(1);
+    if (!membership) return null;
+    const [row] = await this.db.insert(hotelOfferSettings).values({ hotelId: membership.hotelId, settings })
+      .onConflictDoUpdate({ target: hotelOfferSettings.hotelId, set: { settings, updatedAt: new Date() } }).returning();
+    return row?.settings ?? null;
+  }
 
   async findPublicHotelWebsite(hotelId: string): Promise<string | null> {
     const [hotel] = await this.db.select().from(hotels).where(and(eq(hotels.id, hotelId), isNull(hotels.deletedAt))).limit(1);
@@ -557,7 +580,11 @@ class PostgresAutomationRepository implements AutomationRepository {
         ne(offerVersions.id, current.id), eq(offerVersions.state, "active")));
       await transaction.update(deliveries).set({ state: "cancelled", updatedAt: now }).where(and(eq(deliveries.inquiryId, current.inquiryId),
         eq(deliveries.kind, "offer"), eq(deliveries.state, "scheduled")));
-      await transaction.update(inquiries).set({ currentOfferId: current.id, updatedAt: now }).where(eq(inquiries.id, current.inquiryId));
+      const stay = acceptedStay(current.snapshot, selectedOptionIndex);
+      await transaction.update(inquiries).set({ currentOfferId: current.id, updatedAt: now,
+        ...(stay ? { checkIn: stay.checkIn, checkOut: stay.checkOut, mealPlan: stay.mealPlan,
+          occupancies: [{ adults: stay.occupancy.adults, childrenAges: stay.occupancy.childAges }] } : {}),
+      }).where(eq(inquiries.id, current.inquiryId));
       return mapOffer(result);
     });
   }
@@ -596,6 +623,7 @@ class PostgresAutomationRepository implements AutomationRepository {
         .where(eq(offerVersions.hotelId, hotel.id))
         .orderBy(asc(offerVersions.inquiryId), desc(offerVersions.version)).as("latest_offer");
       const option = sql`${latest.snapshot}->'options'->coalesce(${latest.selectedOptionIndex}, 0)`;
+      const processingDeadline = sql<Date>`coalesce(${latest.createdAt}, ${inquiries.createdAt}) + ${AUTOMATIC_SENDING_TIMEOUT_MS} * interval '1 millisecond'`;
       // This follows requestSummaries' precedence, including an accepted but expired offer.
       const status = sql<string>`case
         when ${inquiries.closedAt} is not null then 'completed'
@@ -604,12 +632,14 @@ class PostgresAutomationRepository implements AutomationRepository {
         when ${latest.state} in ('expired', 'revoked') or ${latest.expiresAt} <= now() then 'attention'
         when exists (select 1 from ${deliveries} where ${deliveries.inquiryId} = ${inquiries.id}
           and ${deliveries.offerVersionId} = ${latest.id} and ${deliveries.state} in ('provider_accepted', 'delivered')) then 'waiting'
+        when ${processingDeadline} <= now() then 'attention'
         else 'new' end`;
       const rows = db.$with("dashboard_requests").as(db.select({
         id: inquiries.id,
         createdAt: inquiries.createdAt,
         reservationNumber: inquiries.reservationNumber,
         status: status.as("status"),
+        processingDeadlineAt: processingDeadline.as("processing_deadline_at"),
         totalCents: sql<number>`case when jsonb_typeof(${option}->'totalCents') = 'number'
           then (${option}->>'totalCents')::numeric else 0 end`.as("total_cents"),
         searchText: sql<string>`concat_ws(' ', ${inquiries.guestName}, ${inquiries.guestEmail}, ${inquiries.guestPhone},
@@ -621,13 +651,6 @@ class PostgresAutomationRepository implements AutomationRepository {
             case when jsonb_array_length(coalesce(${inquiries.occupancies}->0->'childrenAges', '[]'::jsonb)) = 1 then ' child' else ' children' end), ${status},
           case ${status} when 'payment' then 'Payment link needed' when 'completed' then 'Waiting for client'
             when 'waiting' then 'Waiting for reply' when 'attention' then 'Review needed Not delivered' else 'New request' end)`.as("search_text"),
-        failedDelivery: sql<boolean>`exists (select 1 from (
-          select distinct on (${deliveries.channel}) ${deliveries.state} from ${deliveries}
-          where ${deliveries.inquiryId} = ${inquiries.id}
-            and ${deliveries.channel} in ('email', 'whatsapp')
-            and (${latest.id} is null or ${deliveries.offerVersionId} = ${latest.id})
-          order by ${deliveries.channel}, ${deliveries.createdAt} desc, ${deliveries.id} desc
-        ) as latest_delivery where state = 'failed')`.as("failed_delivery"),
       }).from(inquiries).leftJoin(latest, eq(latest.inquiryId, inquiries.id))
         .where(and(eq(inquiries.hotelId, hotel.id), gte(inquiries.createdAt,
           sql<Date>`date_trunc('day', now() at time zone ${hotel.timezone}) at time zone ${hotel.timezone}`))));
@@ -645,10 +668,11 @@ class PostgresAutomationRepository implements AutomationRepository {
         requiresConfirmation: sql<number>`count(*) filter (where ${rows.status} = 'payment')::int`,
         requiresConfirmationTotalCents: sql<number>`coalesce(sum(${rows.totalCents}) filter (where ${rows.status} = 'payment'), 0)::float8`,
         needsAttention: sql<number>`count(*) filter (where ${rows.status} = 'attention')::int`,
-        failedDeliveries: sql<number>`count(*) filter (where ${rows.failedDelivery})::int`,
         filteredTotal: sql<number>`count(*) filter (where ${matches ?? sql`true`})::int`,
+        nextProcessingDeadlineAt: sql<Date | null>`min(${rows.processingDeadlineAt}) filter (where ${rows.status} = 'new')`,
+        evaluatedAt: sql<Date>`now()`,
       }).from(rows);
-      const { filteredTotal, ...counts } = totals!;
+      const { filteredTotal, nextProcessingDeadlineAt, evaluatedAt, ...counts } = totals!;
       const page = Math.min(query.page, Math.max(1, Math.ceil(filteredTotal / query.limit)));
       const order = query.sort === "asc" ? asc : desc;
       const pageRows = await db.with(rows).select({ inquiry: inquiries }).from(rows)
@@ -661,7 +685,9 @@ class PostgresAutomationRepository implements AutomationRepository {
       ]);
       return { hotel: mapHotel(hotel), inquiries: pageRows.map(({ inquiry }) => mapInquiry(inquiry)),
         offers: offerRows.map(mapOffer), deliveries: deliveryRows.map(mapDelivery), counts,
-        pagination: { page, limit: query.limit, total: filteredTotal } };
+        pagination: { page, limit: query.limit, total: filteredTotal },
+        nextProcessingDeadlineAt: nextProcessingDeadlineAt ? new Date(nextProcessingDeadlineAt) : null,
+        evaluatedAt: new Date(evaluatedAt) };
     }, { isolationLevel: "repeatable read", accessMode: "read only" });
   }
 
@@ -1330,7 +1356,7 @@ class PostgresNotificationRepository implements NotificationRepository {
 
   async findPreferencesForUser(userId: string) {
     const [user] = await this.db
-      .select({ id: users.id, email: users.email, displayName: users.displayName })
+      .select({ id: users.id, email: users.email, displayName: users.displayName, uiLanguage: users.uiLanguage })
       .from(users)
       .where(eq(users.id, userId))
       .limit(1);
@@ -1395,7 +1421,7 @@ class PostgresNotificationRepository implements NotificationRepository {
 
   async listTargetsForHotel(hotelId: string) {
     const memberRows = await this.db
-      .select({ id: users.id, email: users.email, displayName: users.displayName })
+      .select({ id: users.id, email: users.email, displayName: users.displayName, uiLanguage: users.uiLanguage })
       .from(hotelMembers)
       .innerJoin(users, eq(users.id, hotelMembers.userId))
       .where(eq(hotelMembers.hotelId, hotelId));

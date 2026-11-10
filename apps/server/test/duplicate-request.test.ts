@@ -13,7 +13,7 @@ describe("duplicating a reservation into a new request draft", () => {
         totalCents: 64_099, note: "Late arrival included", mealPlan: "HB", currency: "EUR", status: "accepted", expiresAt: "2026-11-01T10:00:00Z" }],
     };
     const before = structuredClone(source);
-    const draft = duplicateRequestDraft(source, "it");
+    const draft = duplicateRequestDraft(source);
     expect(draft).toEqual({
       guest: { name: "Anna Rossi", email: "anna@example.com", phone: "+393331234567", language: "de" },
       checkIn: "2026-11-12", checkOut: "2026-11-16", occupancy: { adults: 2, childAges: [7] },
@@ -32,11 +32,12 @@ describe("duplicating a reservation into a new request draft", () => {
       ...mockDashboard.requests[1]!, mealPlan: null, occupancy: { adults: 1, childAges: [] },
       email: { status: "unused" }, whatsapp: { status: "unused" }, offers: [],
     };
-    const draft = duplicateRequestDraft(source, "en-GB");
-    expect(draft).toMatchObject({ guest: { email: null, phone: null, language: "en-GB" },
+    const draft = duplicateRequestDraft(source);
+    expect(draft).toMatchObject({ guest: { email: null, phone: null, language: "it" },
       mealPlan: null, occupancy: { adults: 1, childAges: [] }, note: "", receivedVia: "other", sendOffer: false });
     expect(draft).not.toHaveProperty("offers");
     expect(manualInquiryInputSchema.safeParse(draft).success).toBe(false);
-    expect(manualInquiryInputSchema.safeParse({ ...draft, mealPlan: "BB" }).success).toBe(true);
+    expect(manualInquiryInputSchema.safeParse({ ...draft, mealPlan: "BB" }).success).toBe(false);
+    expect(manualInquiryInputSchema.safeParse({ ...draft, mealPlan: "BB", guest: { ...draft.guest, email: "guest@example.com", phone: "+393331234567" } }).success).toBe(true);
   });
 });

@@ -2,10 +2,12 @@ export type RequestStatus = "payment" | "completed" | "attention" | "waiting" | 
 export type { DashboardQuery, DashboardPagination } from "@hotel/contracts";
 export type { ClientFilters, ClientFilterOptions } from "@hotel/contracts";
 export type { ManualInquiryInput, ManualInquiryResult, ManualRequestSource } from "@hotel/contracts";
-import type { ReservationOffer } from "@hotel/contracts";
+import type { ManualRequestSource, ReservationOffer } from "@hotel/contracts";
 
 export type DeliverySummary = {
   status: "sent" | "pending" | "failed" | "unused";
+  state?: "scheduled" | "processing" | "provider_accepted" | "delivered" | "failed" | "unknown" | "cancelled";
+  attemptCount?: number;
   recipient?: string;
   lastErrorCode?: string | null;
   processedAt?: string | null;
@@ -30,9 +32,10 @@ export type HotelRequest = {
   statusLabel: string;
   nextAction?: string;
   attentionReason?: string | null;
+  processingDeadlineAt?: string | null;
   note?: string;
   locale?: string;
-  receivedVia?: "phone" | "walk_in" | "other" | null;
+  receivedVia?: ManualRequestSource | null;
   offerExpiresAt?: string | null;
   offerSentAt?: string | null;
   acceptedAt?: string | null;
@@ -50,8 +53,8 @@ export type DashboardSnapshot = {
   paymentPendingCount: number;
   paymentPendingTotalCents: number;
   attentionCount: number;
-  failedDeliveryCount: number;
   pagination: import("@hotel/contracts").DashboardPagination;
+  nextProcessingDeadlineAt?: string | null;
   requests: HotelRequest[];
 };
 
@@ -82,6 +85,7 @@ export type HotelProfileInput = Omit<
 export type HotelIntakeSettings = Pick<HotelProfile, "publicKey" | "allowedOrigins">;
 
 export type SessionUser = {
+  uiLanguage?: "en" | "it" | null;
   id: string;
   email: string;
   displayName: string | null;
@@ -151,7 +155,10 @@ export type RatePreview =
 
 export type MessageChannel = "email" | "whatsapp";
 
+export type MessageTemplates = { emailSubjectTemplate: string; emailBodyTemplate: string; whatsappBodyTemplate: string };
 export type MessageSettings = {
+  templateLanguage?: "en" | "it";
+  translations?: Partial<Record<"en" | "it", MessageTemplates>>;
   emailSubjectTemplate: string;
   emailBodyTemplate: string;
   whatsappBodyTemplate: string;
