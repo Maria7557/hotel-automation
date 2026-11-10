@@ -1,5 +1,7 @@
 import {
+  bigint,
   boolean,
+  check,
   date,
   index,
   integer,
@@ -12,6 +14,7 @@ import {
   uuid,
   varchar,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 const timestamps = {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -186,7 +189,7 @@ export const ratePeriods = pgTable(
       .references(() => rooms.id, { onDelete: "cascade" }),
     planKey: varchar("plan_key", { length: 40 }).notNull(),
     planName: varchar("plan_name", { length: 120 }).notNull(),
-    mealPlan: varchar("meal_plan", { length: 40 }).notNull().default("room_only"),
+    mealPlan: varchar("meal_plan", { length: 40 }).notNull(),
     startDate: date("start_date").notNull(),
     endDateExclusive: date("end_date_exclusive").notNull(),
     nightlyPriceCents: integer("nightly_price_cents").notNull(),
@@ -195,21 +198,25 @@ export const ratePeriods = pgTable(
     includedChildren: integer("included_children").notNull().default(0),
     extraAdultCents: integer("extra_adult_cents").notNull().default(0),
     extraChildCents: integer("extra_child_cents").notNull().default(0),
-    breakfastAdultCents: integer("breakfast_adult_cents").notNull().default(0),
-    breakfastChildCents: integer("breakfast_child_cents").notNull().default(0),
+    boardAdultCents: integer("board_adult_cents").notNull().default(0),
+    boardChildCents: integer("board_child_cents").notNull().default(0),
     childMaxAge: integer("child_max_age").notNull().default(17),
     minimumNights: integer("minimum_nights").notNull().default(1),
     active: boolean("active").notNull().default(true),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
     ...timestamps,
   },
-  (table) => [index("rate_periods_room_idx").on(table.roomId)],
+  (table) => [
+    index("rate_periods_room_idx").on(table.roomId),
+    check("rate_periods_meal_plan_valid", sql`${table.deletedAt} IS NOT NULL OR ${table.mealPlan} IN ('BB', 'HB', 'FB')`),
+  ],
 );
 
 export const inquiries = pgTable(
   "inquiries",
   {
     id: uuid("id").primaryKey().defaultRandom(),
+    reservationNumber: bigint("reservation_number", { mode: "bigint" }).notNull().generatedAlwaysAsIdentity(),
     hotelId: uuid("hotel_id")
       .notNull()
       .references(() => hotels.id, { onDelete: "cascade" }),
@@ -217,9 +224,11 @@ export const inquiries = pgTable(
     guestName: varchar("guest_name", { length: 160 }).notNull(),
     guestEmail: varchar("guest_email", { length: 320 }),
     guestPhone: varchar("guest_phone", { length: 50 }),
+    clientSyncPending: boolean("client_sync_pending").notNull().default(true),
     locale: varchar("locale", { length: 16 }).notNull().default("it"),
     checkIn: date("check_in").notNull(),
     checkOut: date("check_out").notNull(),
+    mealPlan: varchar("meal_plan", { length: 2 }),
     occupancies: jsonb("occupancies")
       .$type<Array<{ adults: number; childrenAges: number[] }>>()
       .notNull(),
@@ -231,8 +240,11 @@ export const inquiries = pgTable(
     ...timestamps,
   },
   (table) => [
+    uniqueIndex("inquiries_reservation_number_unique").on(table.reservationNumber),
     uniqueIndex("inquiries_hotel_idempotency_unique").on(table.hotelId, table.idempotencyKey),
     index("inquiries_hotel_created_idx").on(table.hotelId, table.createdAt),
+    check("inquiries_meal_plan_valid", sql`${table.mealPlan} IN ('BB', 'HB', 'FB')`),
+    index("inquiries_client_pending_idx").on(table.hotelId, table.createdAt, table.id).where(sql`${table.clientSyncPending} = true`),
   ],
 );
 
@@ -310,3 +322,39 @@ export const connections = pgTable(
   },
   (table) => [uniqueIndex("connections_hotel_kind_unique").on(table.hotelId, table.kind)],
 );
+
+// Contacts are a projection of requests. Request handling never reads these tables.
+export const clients = pgTable("clients", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  hotelId: uuid("hotel_id").notNull().references(() => hotels.id, { onDelete: "cascade" }),
+  name: varchar("name", { length: 160 }).notNull(),
+  email: varchar("email", { length: 320 }),
+  phone: varchar("phone", { length: 50 }),
+  normalizedEmail: varchar("normalized_email", { length: 320 }),
+  normalizedPhone: varchar("normalized_phone", { length: 16 }),
+  locale: varchar("locale", { length: 16 }).notNull(),
+  source: varchar("source", { length: 16 }).notNull(),
+  notes: text("notes").notNull().default(""),
+  firstInquiryAt: timestamp("first_inquiry_at", { withTimezone: true }),
+  lastInquiryAt: timestamp("last_inquiry_at", { withTimezone: true }),
+  ...timestamps,
+}, (table) => [
+  uniqueIndex("clients_hotel_email_unique").on(table.hotelId, table.normalizedEmail),
+  uniqueIndex("clients_hotel_phone_unique").on(table.hotelId, table.normalizedPhone),
+  index("clients_hotel_created_idx").on(table.hotelId, table.createdAt, table.id),
+]);
+
+export const clientRequestSync = pgTable("client_request_sync", {
+  inquiryId: uuid("inquiry_id").primaryKey().references(() => inquiries.id, { onDelete: "cascade" }),
+  hotelId: uuid("hotel_id").notNull().references(() => hotels.id, { onDelete: "cascade" }),
+  clientId: uuid("client_id").references(() => clients.id, { onDelete: "cascade" }),
+  attemptCount: integer("attempt_count").notNull().default(0),
+  nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).notNull().defaultNow(),
+  lastError: varchar("last_error", { length: 80 }),
+  ...timestamps,
+}, (table) => [index("client_request_sync_client_idx").on(table.hotelId, table.clientId, table.inquiryId)]);
+
+export const clientWorkerHotels = pgTable("client_worker_hotels", {
+  hotelId: uuid("hotel_id").primaryKey().references(() => hotels.id, { onDelete: "cascade" }),
+  lastRunAt: timestamp("last_run_at", { withTimezone: true }).notNull().defaultNow(),
+});

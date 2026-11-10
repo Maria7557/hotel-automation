@@ -66,7 +66,8 @@ export const roomSchema = z
   });
 export type Room = z.infer<typeof roomSchema>;
 
-export const mealPlanSchema = z.enum(["room_only", "breakfast"]);
+export const mealPlanSchema = z.enum(["BB", "HB", "FB"]);
+export type MealPlan = z.infer<typeof mealPlanSchema>;
 
 export const ratePeriodSchema = z
   .object({
@@ -84,8 +85,8 @@ export const ratePeriodSchema = z
     includedChildren: z.number().int().nonnegative().default(0),
     extraAdultCents: nonNegativeCentsSchema.default(0),
     extraChildCents: nonNegativeCentsSchema.default(0),
-    breakfastAdultCents: nonNegativeCentsSchema.default(0),
-    breakfastChildCents: nonNegativeCentsSchema.default(0),
+    boardAdultCents: nonNegativeCentsSchema.default(0),
+    boardChildCents: nonNegativeCentsSchema.default(0),
     maxChildAge: z.number().int().min(0).max(17).default(17),
     minNights: z.number().int().positive().default(1),
     active: z.boolean().default(true),
@@ -106,6 +107,7 @@ export type Occupancy = z.infer<typeof occupancySchema>;
 
 export const inquiryAttentionReasonSchema = z.enum([
   "no_matching_room",
+  "meal_plan_unavailable",
   "missing_rate",
   "ambiguous_rate",
   "invalid_guest_data",
@@ -126,6 +128,7 @@ export const inquirySchema = z
     checkIn: isoDateSchema,
     checkOut: isoDateSchema,
     occupancy: occupancySchema,
+    mealPlan: mealPlanSchema,
     note: z.string().trim().max(2_000).default(""),
     attentionReason: inquiryAttentionReasonSchema.nullable().default(null),
     createdAt: isoDateTimeSchema,
@@ -146,7 +149,7 @@ export const offerNightSchema = z.object({
   baseCents: nonNegativeCentsSchema,
   extraAdultCents: nonNegativeCentsSchema,
   extraChildCents: nonNegativeCentsSchema,
-  breakfastCents: nonNegativeCentsSchema.default(0),
+  boardCents: nonNegativeCentsSchema.default(0),
   totalCents: nonNegativeCentsSchema,
 });
 
@@ -175,6 +178,7 @@ export const offerVersionSchema = z.object({
     checkIn: isoDateSchema,
     checkOut: isoDateSchema,
     occupancy: occupancySchema,
+    mealPlan: mealPlanSchema,
   }),
   options: z.array(offerOptionSchema).min(1),
   expiresAt: isoDateTimeSchema,

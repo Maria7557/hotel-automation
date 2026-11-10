@@ -1,4 +1,4 @@
-import type { Occupancy, RatePeriod, Room } from "@hotel/contracts";
+import type { MealPlan, Occupancy, RatePeriod, Room } from "@hotel/contracts";
 import { enumerateNights } from "./dates.js";
 
 export type RateIssue =
@@ -12,13 +12,14 @@ export type CalculatedNight = {
   baseCents: number;
   extraAdultCents: number;
   extraChildCents: number;
-  breakfastCents: number;
+  boardCents: number;
   totalCents: number;
 };
 
 export type StayPrice = {
   roomId: string;
   planCode: string;
+  mealPlan: MealPlan;
   currency: string;
   nights: CalculatedNight[];
   totalCents: number;
@@ -79,6 +80,7 @@ export function findRateIssues(
 export function calculateStayPrice(input: {
   roomId: string;
   planCode: string;
+  mealPlan: MealPlan;
   checkIn: string;
   checkOut: string;
   occupancy: Occupancy;
@@ -89,6 +91,7 @@ export function calculateStayPrice(input: {
       period.active &&
       period.roomId === input.roomId &&
       period.planCode === input.planCode &&
+      period.mealPlan === input.mealPlan &&
       period.start < input.checkOut &&
       input.checkIn < period.endExclusive,
   );
@@ -140,10 +143,9 @@ export function calculateStayPrice(input: {
     );
     const extraAdultCents = extraAdults * rate.extraAdultCents;
     const extraChildCents = extraChildren * rate.extraChildCents;
-    const breakfastCents = rate.mealPlan === "breakfast"
-      ? (input.occupancy.adults + childrenCountedAsAdults) * rate.breakfastAdultCents +
-        chargeableChildren * rate.breakfastChildCents
-      : 0;
+    const boardCents =
+      (input.occupancy.adults + childrenCountedAsAdults) * rate.boardAdultCents +
+      chargeableChildren * rate.boardChildCents;
 
     return {
       date,
@@ -151,8 +153,8 @@ export function calculateStayPrice(input: {
       baseCents: rate.nightlyBaseCents,
       extraAdultCents,
       extraChildCents,
-      breakfastCents,
-      totalCents: rate.nightlyBaseCents + extraAdultCents + extraChildCents + breakfastCents,
+      boardCents,
+      totalCents: rate.nightlyBaseCents + extraAdultCents + extraChildCents + boardCents,
     };
   });
 
@@ -161,6 +163,7 @@ export function calculateStayPrice(input: {
     price: {
       roomId: input.roomId,
       planCode: input.planCode,
+      mealPlan: input.mealPlan,
       currency: relevant[0]?.currency ?? "EUR",
       nights,
       totalCents: nights.reduce((sum, night) => sum + night.totalCents, 0),

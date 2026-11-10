@@ -2,10 +2,13 @@ import {
   escapeHtml,
   formatDate,
   formatMoney,
+  offerBoardLabel,
+  renderOfferBoardBadge,
   renderEmailHtml,
   renderEmailSubject,
   renderEmailText,
   renderWhatsAppText,
+  renderOfferChoicesText,
   requirePublicOfferUrl,
   safeHeaderText,
   type OfferSnapshot,
@@ -48,16 +51,16 @@ export function renderOfferDelivery(input: {
   if (input.channel === "whatsapp") {
     return {
       channel: "whatsapp",
-      text: ensureOfferUrl(renderText(input.settings.whatsappBodyTemplate, values), publicOfferUrl),
+      text: ensureBoard(renderText(input.settings.whatsappBodyTemplate, values), snapshot, input.locale, publicOfferUrl),
     };
   }
-  const subject = safeHeaderText(renderText(input.settings.emailSubjectTemplate, values));
-  const text = ensureOfferUrl(renderText(input.settings.emailBodyTemplate, values), publicOfferUrl);
+  const subject = safeHeaderText(`${offerBoardLabel(snapshot, input.locale)} · ${renderText(input.settings.emailSubjectTemplate, values)}`);
+  const text = ensureBoard(renderText(input.settings.emailBodyTemplate, values), snapshot, input.locale, publicOfferUrl);
   return {
     channel: "email",
     subject,
     text,
-    html: safeEmailHtml(subject, text),
+    html: safeEmailHtml(subject, text, renderOfferBoardBadge(snapshot, input.locale)),
   };
 }
 
@@ -90,6 +93,7 @@ function offerVariables(
   );
   return {
     guest_name: snapshot.guestSnapshot.name,
+    meal_plan: snapshot.guestSnapshot.mealPlan ?? "",
     hotel_name: snapshot.hotelSnapshot.name,
     check_in: formatDate(snapshot.guestSnapshot.checkIn, locale),
     check_out: formatDate(snapshot.guestSnapshot.checkOut, locale),
@@ -113,7 +117,14 @@ function ensureOfferUrl(text: string, publicOfferUrl: string): string {
   return text.includes(publicOfferUrl) ? text : `${text.trim()}\n\n${publicOfferUrl}`;
 }
 
-function safeEmailHtml(subject: string, text: string): string {
+function ensureBoard(text: string, snapshot: OfferSnapshot, locale: string, url: string): string {
+  const label = offerBoardLabel(snapshot, locale);
+  const choices = renderOfferChoicesText(snapshot, locale);
+  const withChoices = choices && !text.includes(choices) ? `${text.trim()}\n\n${choices}` : text;
+  return ensureOfferUrl(withChoices.includes(label) ? withChoices : `${label}\n\n${withChoices}`, url);
+}
+
+function safeEmailHtml(subject: string, text: string, board: string): string {
   const safeBody = escapeHtml(text).replace(/\n/g, "<br>");
-  return `<!doctype html><html lang="it"><head><meta charset="utf-8"><meta name="robots" content="noindex,nofollow"></head><body style="margin:0;background:#f1f1f1;color:#202020;font-family:Poppins,Inter,Arial,sans-serif"><main style="max-width:600px;margin:0 auto;padding:32px 20px"><section style="background:#fff;border-radius:20px;padding:24px"><h1 style="font-size:22px;line-height:28px">${escapeHtml(subject)}</h1><p style="font-size:16px;line-height:24px">${safeBody}</p></section></main></body></html>`;
+  return `<!doctype html><html lang="it"><head><meta charset="utf-8"><meta name="robots" content="noindex,nofollow"></head><body style="margin:0;background:#f1f1f1;color:#202020;font-family:Poppins,Inter,Arial,sans-serif"><main style="max-width:600px;margin:0 auto;padding:32px 20px"><section style="background:#fff;border-radius:20px;padding:24px">${board}<h1 style="font-size:22px;line-height:28px">${escapeHtml(subject)}</h1><p style="font-size:16px;line-height:24px">${safeBody}</p></section></main></body></html>`;
 }

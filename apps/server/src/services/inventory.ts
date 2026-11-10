@@ -1,4 +1,4 @@
-import type { Occupancy, RatePeriod, Room } from "@hotel/contracts";
+import type { MealPlan, Occupancy, RatePeriod, Room } from "@hotel/contracts";
 import { calculateStayPrice, roomFitsOccupancy } from "@hotel/domain";
 
 import { errors } from "../lib/errors.js";
@@ -110,6 +110,7 @@ export class InventoryService {
     userId: string;
     roomId: string;
     planCode: string;
+    mealPlan: MealPlan;
     checkIn: string;
     checkOut: string;
     occupancy: Occupancy;
@@ -120,6 +121,7 @@ export class InventoryService {
     return calculateStayPrice({
       roomId: room.id,
       planCode: input.planCode,
+      mealPlan: input.mealPlan,
       checkIn: input.checkIn,
       checkOut: input.checkOut,
       occupancy: input.occupancy,
@@ -130,13 +132,14 @@ export class InventoryService {
   private async assertNoRateOverlap(
     userId: string,
     roomId: string,
-    input: Pick<RatePeriodCreate, "planCode" | "start" | "endExclusive">,
+    input: Pick<RatePeriodCreate, "planCode" | "mealPlan" | "start" | "endExclusive">,
     excludeRatePeriodId?: string,
   ): Promise<void> {
     const overlaps = await this.repository.findRateOverlapsForUser({
       userId,
       roomId,
       planCode: input.planCode,
+      mealPlan: input.mealPlan,
       start: input.start,
       endExclusive: input.endExclusive,
       ...(excludeRatePeriodId ? { excludeRatePeriodId } : {}),
@@ -203,8 +206,8 @@ function toDomainRatePeriod(rate: RatePeriodProfile): RatePeriod {
     includedChildren: rate.includedChildren,
     extraAdultCents: rate.extraAdultCents,
     extraChildCents: rate.extraChildCents,
-    breakfastAdultCents: rate.breakfastAdultCents,
-    breakfastChildCents: rate.breakfastChildCents,
+    boardAdultCents: rate.boardAdultCents,
+    boardChildCents: rate.boardChildCents,
     maxChildAge: rate.maxChildAge,
     minNights: rate.minNights,
     active: rate.active,

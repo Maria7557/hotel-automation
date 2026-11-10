@@ -5,7 +5,7 @@ import { Inter_400Regular } from "@expo-google-fonts/inter/400Regular";
 import { Inter_500Medium } from "@expo-google-fonts/inter/500Medium";
 import { Inter_600SemiBold } from "@expo-google-fonts/inter/600SemiBold";
 import { Inter_700Bold } from "@expo-google-fonts/inter/700Bold";
-import { ClipboardList, Headphones, Settings, type LucideIcon } from "lucide-react-native";
+import { ClipboardList, Headphones, Settings, Users, type LucideIcon } from "lucide-react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { theme } from "@hotel/design";
@@ -13,6 +13,11 @@ import { ApiError, apiClient, authErrorMessage } from "@/api/client";
 import type { HotelProfile, SessionUser } from "@/api/types";
 import { getSocialIdentityToken } from "@/auth/social-auth";
 import { AuthFlow } from "@/screens/AuthFlow";
+import { ClientScreen, ClientsScreen } from "@/screens/ClientsScreen";
+import { ReservationScreen } from "@/screens/ReservationScreen";
+import { RequestClientStatusProvider } from "@/components/RequestClientStatus";
+import { TooltipProvider } from "@/components/Tooltip";
+import { useDetailPages } from "@/navigation/detail-pages";
 import { RequestsScreen } from "@/screens/RequestsScreen";
 import { SettingsScreen } from "@/screens/SettingsScreen";
 import { InventoryScreen } from "@/screens/InventoryScreen";
@@ -23,7 +28,7 @@ import { SiteIntegrationScreen } from "@/screens/SiteIntegrationScreen";
 import { SupportScreen } from "@/screens/SupportScreen";
 import { NotificationSettingsScreen } from "@/screens/NotificationSettingsScreen";
 
-type Tab = "requests" | "settings" | "support";
+type Tab = "requests" | "clients" | "settings" | "support";
 type AppState =
   | { status: "booting" }
   | { status: "signedOut"; error: string | null }
@@ -47,6 +52,10 @@ export default function App() {
   const [connectionsOpen, setConnectionsOpen] = useState(false);
   const [siteIntegrationOpen, setSiteIntegrationOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const details = useDetailPages();
+  const [requestRevision, setRequestRevision] = useState(0);
+  const openRequest = (id: string) => details.open({ kind: "reservation", id });
+  const openClient = (id: string) => details.open({ kind: "client", id });
 
   useEffect(() => {
     let active = true;
@@ -79,6 +88,7 @@ export default function App() {
   }, []);
 
   const handleLogout = async () => {
+    details.clear();
     if (appState.status === "demo") {
       setAppState({ status: "signedOut", error: null });
       setTab("requests");
@@ -117,6 +127,7 @@ export default function App() {
 
   const profile = appState.status === "authenticated" ? appState.profile : appState.status === "demo" ? appState.profile : null;
   const openTab = (nextTab: Tab) => {
+    details.clear();
     setProfileOpen(false);
     setInventoryOpen(false);
     setMessagesOpen(false);
@@ -129,6 +140,7 @@ export default function App() {
   return (
     <SafeAreaProvider>
       <StatusBar style="dark" />
+      <TooltipProvider>
       <SafeAreaView style={styles.safeArea} edges={["top", "left", "right"]}>
         {appState.status === "booting" ? (
           <View style={styles.bootState} accessibilityLabel="Restoring session">
@@ -156,8 +168,8 @@ export default function App() {
             />
           </View>
         ) : profile ? (
-          <View style={styles.shell}>
-            <View style={styles.route}>
+          <RequestClientStatusProvider key={`${profile.id ?? "demo"}:${appState.status}`} demo={appState.status === "demo"}><View style={styles.shell}>
+            <View style={[styles.route, details.page && styles.hiddenRoute]}>
               {profileOpen ? (
                 <HotelProfileScreen
                   onBack={() => setProfileOpen(false)}
@@ -191,6 +203,9 @@ export default function App() {
                 <NotificationSettingsScreen onBack={() => setNotificationsOpen(false)} demo={appState.status === "demo"} />
               ) : tab === "requests" ? (
                 <RequestsScreen
+                  reloadVersion={requestRevision}
+                  onOpenRequest={openRequest}
+                  onOpenClient={openClient}
                   profile={profile}
                   demo={appState.status === "demo"}
                   onOpenProfile={() => setProfileOpen(true)}
@@ -198,6 +213,8 @@ export default function App() {
                   onOpenConnections={() => setConnectionsOpen(true)}
                   onOpenSiteIntegration={() => setSiteIntegrationOpen(true)}
                 />
+              ) : tab === "clients" ? (
+                <ClientsScreen reloadVersion={requestRevision} demo={appState.status === "demo"} locale={profile.locale} onOpenClient={openClient} />
               ) : tab === "support" ? (
                 <SupportScreen />
               ) : (
@@ -217,16 +234,22 @@ export default function App() {
                 />
               )}
             </View>
+            {details.page ? <View style={styles.route}>
+              {details.page.kind === "reservation" ? <ReservationScreen key={`reservation:${details.page.id}`} id={details.page.id} demo={appState.status === "demo"} locale={profile.locale} onBack={details.back} onOpenClient={openClient} onOpenRequest={openRequest} onChanged={() => setRequestRevision((value) => value + 1)} />
+                : <ClientScreen key={`client:${details.page.id}`} id={details.page.id} demo={appState.status === "demo"} onBack={details.back} onOpenRequest={openRequest} onOpenClient={openClient} />}
+            </View> : null}
             <SafeAreaView edges={["bottom"]} style={styles.navSafeArea}>
               <View style={styles.nav} accessibilityRole="tablist">
                 <NavItem label="Requests" icon={ClipboardList} selected={tab === "requests"} onPress={() => openTab("requests")} />
+                <NavItem label="Clients" icon={Users} selected={tab === "clients"} onPress={() => openTab("clients")} />
                 <NavItem label="Settings" icon={Settings} selected={tab === "settings"} onPress={() => openTab("settings")} />
                 <NavItem label="Support" icon={Headphones} selected={tab === "support"} onPress={() => openTab("support")} />
               </View>
             </SafeAreaView>
-          </View>
+          </View></RequestClientStatusProvider>
         ) : null}
       </SafeAreaView>
+      </TooltipProvider>
     </SafeAreaProvider>
   );
 }
@@ -251,6 +274,7 @@ const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: theme.colors.background },
   shell: { flex: 1 },
   route: { flex: 1 },
+  hiddenRoute: { display: "none" },
   bootState: { flex: 1, alignItems: "center", justifyContent: "center", gap: theme.spacing[4], padding: theme.spacing[5] },
   bootMark: { width: 62, height: 62, borderRadius: theme.radii.lg, backgroundColor: theme.colors.action, alignItems: "center", justifyContent: "center", marginBottom: theme.spacing[2] },
   bootMarkText: { ...theme.typography.h1, color: theme.colors.onAction },

@@ -1,6 +1,7 @@
 import { copyFor, formatGuests, formatMoney, formatStay } from "./content.js";
 import { escapeHtml, requirePublicOfferUrl, safeHeaderText, safeImageUrl } from "./security.js";
 import type { MessageRenderContext, OfferSnapshot } from "./types.js";
+import { offerBoardLabel, renderOfferBoardBadge } from "./board.js";
 
 function lowestPrice(snapshot: OfferSnapshot): number | null {
   return snapshot.options.reduce<number | null>(
@@ -9,9 +10,15 @@ function lowestPrice(snapshot: OfferSnapshot): number | null {
   );
 }
 
+export function renderOfferChoicesText(snapshot: OfferSnapshot, locale?: string): string {
+  return snapshot.options.map((option, index) =>
+    `${index + 1}. ${option.roomName} · ${option.planName} · ${formatMoney(option.totalCents, locale)}${option.note ? `\n${option.note}` : ""}`,
+  ).join("\n");
+}
+
 export function renderEmailSubject(snapshot: OfferSnapshot, context: MessageRenderContext): string {
   const copy = copyFor(context.locale);
-  return safeHeaderText(copy.title(snapshot.hotelSnapshot.name));
+  return safeHeaderText(`${offerBoardLabel(snapshot, context.locale)} · ${copy.title(snapshot.hotelSnapshot.name)}`);
 }
 
 export function renderEmailText(snapshot: OfferSnapshot, context: MessageRenderContext): string {
@@ -22,9 +29,11 @@ export function renderEmailText(snapshot: OfferSnapshot, context: MessageRenderC
     copy.greeting(snapshot.guestSnapshot.name),
     "",
     copy.emailIntro,
+    offerBoardLabel(snapshot, context.locale),
     `${copy.stay}: ${formatStay(snapshot, context.locale)}`,
     `${copy.guests}: ${formatGuests(snapshot, context.locale)}`,
     price === null ? null : `${copy.perStay}: ${formatMoney(price, context.locale)}`,
+    renderOfferChoicesText(snapshot, context.locale),
     "",
     `${copy.emailCta}: ${offerUrl}`,
     "",
@@ -42,8 +51,10 @@ export function renderWhatsAppText(snapshot: OfferSnapshot, context: MessageRend
   return [
     copy.greeting(snapshot.guestSnapshot.name),
     copy.whatsappIntro,
+    offerBoardLabel(snapshot, context.locale),
     `${copy.stay}: ${formatStay(snapshot, context.locale)}`,
     price === null ? null : `${copy.perStay}: ${formatMoney(price, context.locale)}`,
+    renderOfferChoicesText(snapshot, context.locale),
     offerUrl,
     snapshot.hotelSnapshot.name,
   ]
@@ -67,10 +78,12 @@ export function renderEmailHtml(snapshot: OfferSnapshot, context: MessageRenderC
         <h1 style="margin:0 0 16px;font-size:24px;line-height:32px">${escapeHtml(copy.greeting(snapshot.guestSnapshot.name))}</h1>
         <p style="margin:0 0 24px;font-size:16px;line-height:24px">${escapeHtml(copy.emailIntro)}</p>
         <div style="padding:20px;background:#edf3fc;border-radius:16px">
+          <div style="margin:0 0 12px">${renderOfferBoardBadge(snapshot, context.locale)}</div>
           <p style="margin:0 0 8px"><strong>${escapeHtml(copy.stay)}:</strong> ${escapeHtml(formatStay(snapshot, context.locale))}</p>
           <p style="margin:0${price === null ? "" : " 0 8px"}"><strong>${escapeHtml(copy.guests)}:</strong> ${escapeHtml(formatGuests(snapshot, context.locale))}</p>
           ${price === null ? "" : `<p style="margin:0"><strong>${escapeHtml(copy.perStay)}:</strong> ${escapeHtml(formatMoney(price, context.locale))}</p>`}
         </div>
+        <p style="font-size:14px;line-height:24px;white-space:pre-line">${escapeHtml(renderOfferChoicesText(snapshot, context.locale))}</p>
         <p style="margin:24px 0"><a href="${escapeHtml(offerUrl)}" style="display:inline-block;padding:16px 24px;border-radius:12px;background:#1769ff;color:#ffffff;text-decoration:none;font-size:14px;font-weight:600">${escapeHtml(copy.emailCta)}</a></p>
         <p style="margin:0;color:#4a4a4a;font-size:14px;line-height:20px">${escapeHtml(copy.emailOutro)}<br>${escapeHtml(snapshot.hotelSnapshot.name)}</p>
       </td></tr>

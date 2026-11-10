@@ -1,4 +1,4 @@
-import type { Hotel, Inquiry, RatePeriod, Room } from "@hotel/contracts";
+import { mealPlanSchema, type Hotel, type Inquiry, type RatePeriod, type Room } from "@hotel/contracts";
 
 import type { HotelProfile, InquiryRecord, RatePeriodProfile, RoomProfile } from "../repositories/types.js";
 
@@ -55,8 +55,8 @@ export function toDomainRatePeriod(rate: RatePeriodProfile): RatePeriod {
     includedChildren: rate.includedChildren,
     extraAdultCents: rate.extraAdultCents,
     extraChildCents: rate.extraChildCents,
-    breakfastAdultCents: rate.breakfastAdultCents,
-    breakfastChildCents: rate.breakfastChildCents,
+    boardAdultCents: rate.boardAdultCents,
+    boardChildCents: rate.boardChildCents,
     maxChildAge: rate.maxChildAge,
     minNights: rate.minNights,
     active: rate.active,
@@ -65,7 +65,7 @@ export function toDomainRatePeriod(rate: RatePeriodProfile): RatePeriod {
   };
 }
 
-export function toDomainInquiry(inquiry: InquiryRecord): Inquiry {
+export function toDomainInquiry(inquiry: Omit<InquiryRecord, "reservationNumber">): Inquiry {
   return {
     id: inquiry.id,
     hotelId: inquiry.hotelId,
@@ -79,6 +79,7 @@ export function toDomainInquiry(inquiry: InquiryRecord): Inquiry {
     checkIn: inquiry.checkIn,
     checkOut: inquiry.checkOut,
     occupancy: inquiry.occupancy,
+    mealPlan: mealPlanSchema.parse(inquiry.mealPlan),
     note: inquiry.note,
     attentionReason: inquiry.attentionReason,
     createdAt: inquiry.createdAt.toISOString(),

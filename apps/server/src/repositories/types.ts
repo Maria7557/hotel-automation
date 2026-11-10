@@ -1,3 +1,5 @@
+import type { DashboardPagination, DashboardQuery, MealPlan } from "@hotel/contracts";
+
 export type UserRecord = {
   id: string;
   email: string;
@@ -68,7 +70,7 @@ export type RatePeriodProfile = {
   roomId: string;
   planCode: string;
   planName: string;
-  mealPlan: "room_only" | "breakfast";
+  mealPlan: MealPlan;
   start: string;
   endExclusive: string;
   nightlyBaseCents: number;
@@ -77,8 +79,8 @@ export type RatePeriodProfile = {
   includedChildren: number;
   extraAdultCents: number;
   extraChildCents: number;
-  breakfastAdultCents: number;
-  breakfastChildCents: number;
+  boardAdultCents: number;
+  boardChildCents: number;
   maxChildAge: number;
   minNights: number;
   active: boolean;
@@ -125,6 +127,7 @@ export interface HotelRepository {
 
 export type InquiryAttentionReason =
   | "no_matching_room"
+  | "meal_plan_unavailable"
   | "missing_rate"
   | "ambiguous_rate"
   | "invalid_guest_data"
@@ -132,6 +135,7 @@ export type InquiryAttentionReason =
 
 export type InquiryRecord = {
   id: string;
+  reservationNumber: string;
   hotelId: string;
   idempotencyKey: string;
   guestName: string;
@@ -141,6 +145,8 @@ export type InquiryRecord = {
   checkIn: string;
   checkOut: string;
   occupancy: { adults: number; childAges: number[] };
+  // Null is reserved for historical requests whose board cannot be established.
+  mealPlan: MealPlan | null;
   source: Record<string, unknown>;
   note: string;
   attentionReason: InquiryAttentionReason | null;
@@ -187,7 +193,7 @@ export type DeliveryRecord = {
 };
 
 export type InquiryBundleCreate = {
-  inquiry: Omit<InquiryRecord, "currentOfferId" | "createdAt" | "updatedAt">;
+  inquiry: Omit<InquiryRecord, "reservationNumber" | "currentOfferId" | "createdAt" | "updatedAt">;
   offer?: Omit<OfferRecord, "createdAt">;
   deliveries?: Array<Omit<DeliveryRecord, "createdAt" | "updatedAt">>;
 };
@@ -206,15 +212,42 @@ export type DashboardFacts = {
   deliveries: DeliveryRecord[];
 };
 
+export type DashboardCounts = {
+  total: number;
+  new: number;
+  offerSent: number;
+  requiresConfirmation: number;
+  requiresConfirmationTotalCents: number;
+  needsAttention: number;
+  failedDeliveries: number;
+};
+
+export type DashboardPageFacts = DashboardFacts & {
+  counts: DashboardCounts;
+  pagination: DashboardPagination;
+};
+
+export type ReservationOffersCreate = {
+  userId: string;
+  inquiryId: string;
+  baseOfferId: string | null;
+  offer: Omit<OfferRecord, "createdAt" | "version">;
+  deliveries: Array<Omit<DeliveryRecord, "createdAt" | "updatedAt">>;
+  now: Date;
+};
+
 export interface AutomationRepository {
   findPublicHotelByKey(publicKey: string): Promise<HotelProfile | null>;
+  findPublicHotelWebsite(hotelId: string): Promise<string | null>;
   listCatalogForHotel(hotelId: string): Promise<{ rooms: RoomProfile[]; ratePeriods: RatePeriodProfile[] }>;
   findInquiryByIdempotency(hotelId: string, idempotencyKey: string): Promise<InquiryRecord | null>;
   createInquiryBundle(input: InquiryBundleCreate): Promise<InquiryBundle>;
+  replaceReservationOffers(input: ReservationOffersCreate): Promise<{ replayed: boolean } | null>;
   findOfferByTokenHash(tokenHash: string): Promise<OfferRecord | null>;
   acceptOfferByTokenHash(tokenHash: string, now: Date, selectedOptionIndex: number): Promise<OfferRecord | null>;
   markPaymentLinkSentForUser(userId: string, inquiryId: string, now: Date): Promise<InquiryRecord | null>;
-  dashboardFactsForUser(userId: string): Promise<DashboardFacts | null>;
+  dashboardFactsForUser(userId: string, inquiryIds?: string[]): Promise<DashboardFacts | null>;
+  dashboardPageForUser(userId: string, query: DashboardQuery): Promise<DashboardPageFacts | null>;
 }
 
 export interface InventoryRepository {
@@ -241,6 +274,7 @@ export interface InventoryRepository {
     userId: string;
     roomId: string;
     planCode: string;
+    mealPlan: MealPlan;
     start: string;
     endExclusive: string;
     excludeRatePeriodId?: string;

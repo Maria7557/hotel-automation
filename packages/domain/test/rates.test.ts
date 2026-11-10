@@ -44,7 +44,8 @@ describe("stay calculator", () => {
   it("calculates each night across rate boundaries", () => {
     const result = calculateStayPrice({
       roomId: "room-1",
-      planCode: "breakfast",
+      planCode: "BB",
+      mealPlan: "BB",
       checkIn: "2027-01-31",
       checkOut: "2027-02-02",
       occupancy: { adults: 2, childAges: [] },
@@ -75,7 +76,8 @@ describe("stay calculator", () => {
   it("adds supplements only above included occupancy", () => {
     const result = calculateStayPrice({
       roomId: "room-1",
-      planCode: "breakfast",
+      planCode: "BB",
+      mealPlan: "BB",
       checkIn: "2027-01-10",
       checkOut: "2027-01-11",
       occupancy: { adults: 3, childAges: [8, 14] },
@@ -91,17 +93,18 @@ describe("stay calculator", () => {
     });
   });
 
-  it("adds breakfast per guest only when the meal plan includes breakfast", () => {
+  it("adds board charges per guest and never prices a different board", () => {
     const breakfast = calculateStayPrice({
       roomId: "room-1",
-      planCode: "breakfast",
+      planCode: "BB",
+      mealPlan: "BB",
       checkIn: "2027-01-10",
       checkOut: "2027-01-11",
       occupancy: { adults: 2, childAges: [8] },
       periods: [rate({
         includedChildren: 1,
-        breakfastAdultCents: 1_200,
-        breakfastChildCents: 600,
+        boardAdultCents: 1_200,
+        boardChildCents: 600,
       })],
     });
 
@@ -109,34 +112,49 @@ describe("stay calculator", () => {
       ok: true,
       price: {
         totalCents: 13_000,
-        nights: [{ breakfastCents: 3_000, totalCents: 13_000 }],
+        nights: [{ boardCents: 3_000, totalCents: 13_000 }],
       },
     });
 
-    const roomOnly = calculateStayPrice({
+    const mismatch = calculateStayPrice({
       roomId: "room-1",
-      planCode: "breakfast",
+      planCode: "BB",
+      mealPlan: "BB",
       checkIn: "2027-01-10",
       checkOut: "2027-01-11",
       occupancy: { adults: 2, childAges: [8] },
       periods: [rate({
-        mealPlan: "room_only",
+        mealPlan: "HB",
         includedChildren: 1,
-        breakfastAdultCents: 1_200,
-        breakfastChildCents: 600,
+        boardAdultCents: 1_200,
+        boardChildCents: 600,
       })],
     });
 
-    expect(roomOnly).toMatchObject({
-      ok: true,
-      price: { totalCents: 10_000, nights: [{ breakfastCents: 0 }] },
+    expect(mismatch).toEqual({ ok: false, issues: [{ type: "gap", date: "2027-01-10" }] });
+  });
+
+  it.each(["BB", "HB", "FB"] as const)("prices %s across date and child-age boundaries without mixing boards", (mealPlan) => {
+    const result = calculateStayPrice({
+      roomId: "room-1", planCode: "standard", mealPlan,
+      checkIn: "2027-01-31", checkOut: "2027-02-02",
+      occupancy: { adults: 2, childAges: [8, 14] },
+      periods: [
+        rate({ id: "jan", planCode: "standard", mealPlan, endExclusive: "2027-02-01", boardAdultCents: 1_000, boardChildCents: 500 }),
+        rate({ id: "feb", planCode: "standard", mealPlan, start: "2027-02-01", endExclusive: "2027-03-01", nightlyBaseCents: 15_000, boardAdultCents: 1_200, boardChildCents: 600 }),
+        rate({ id: "other", planCode: "standard", mealPlan: mealPlan === "BB" ? "FB" : "BB", nightlyBaseCents: 1 }),
+      ],
     });
+    expect(result).toMatchObject({ ok: true, price: { mealPlan, totalCents: 38_700, nights: [
+      { boardCents: 3_500, totalCents: 16_500 }, { boardCents: 4_200, totalCents: 22_200 },
+    ] } });
   });
 
   it("blocks calculation when a night has no tariff", () => {
     const result = calculateStayPrice({
       roomId: "room-1",
-      planCode: "breakfast",
+      planCode: "BB",
+      mealPlan: "BB",
       checkIn: "2027-01-31",
       checkOut: "2027-02-02",
       occupancy: { adults: 2, childAges: [] },
@@ -152,7 +170,8 @@ describe("stay calculator", () => {
   it("reports a minimum-stay violation explicitly", () => {
     const result = calculateStayPrice({
       roomId: "room-1",
-      planCode: "breakfast",
+      planCode: "BB",
+      mealPlan: "BB",
       checkIn: "2027-01-10",
       checkOut: "2027-01-12",
       occupancy: { adults: 2, childAges: [] },

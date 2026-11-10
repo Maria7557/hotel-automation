@@ -1,3 +1,4 @@
+import { BoardSelector } from "@/components/BoardBadge";
 import { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -85,6 +86,7 @@ export function SiteIntegrationScreen({
   data-phone="[name='phone']"
   data-adults="[name='adults']"
   data-child-ages="[name='childAges']"
+  data-meal-plan="[name='mealPlan']"
   data-note="[name='message']"></script>`
     : "";
   const snippet = integrationMode === "adapter" ? adapterSnippet : widgetSnippet;
@@ -129,7 +131,7 @@ export function SiteIntegrationScreen({
     <KeyboardAvoidingView style={uiStyles.screen} behavior={Platform.OS === "ios" ? "padding" : undefined}>
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
         <ScreenHeader title="Website form" onBack={onBack} />
-        <Text style={styles.lead}>Connect the enquiry form already on your website, or add our ready-made form.</Text>
+        <Text style={styles.lead}>Every enquiry must include BB, HB or FB. Connect your website’s board field, or use our ready-made form.</Text>
         {demo ? <InlineState tone="warning">Demo mode: settings and embed code are local; no API requests are made</InlineState> : null}
         {error ? <InlineState tone="danger">{error}</InlineState> : null}
         {notice ? <InlineState tone="success">{notice}</InlineState> : null}
@@ -249,7 +251,7 @@ export function SiteIntegrationScreen({
                 <Text style={styles.installTitle}>{integrationMode === "adapter" ? "Match your form and fields" : "Paste it before the closing tag"}</Text>
                 <Text style={styles.installText}>
                   {integrationMode === "adapter"
-                    ? "Replace #booking-form and each [name='…'] selector in the code with the selectors already used by your website form. Optional child ages and message fields can be added with data-child-ages and data-note."
+                    ? "Replace #booking-form and each [name='…'] selector in the code with the selectors already used by your website form. Map the required mealPlan field to BB, HB or FB. Optional child ages and message fields can be added with data-child-ages and data-note."
                     : <>Open your website HTML template and add the copied script immediately before <Text style={styles.inlineCode}>{"</body>"}</Text>.</>}
                 </Text>
               </View>
@@ -323,10 +325,13 @@ function DeviceButton({
 }
 
 function WidgetPreview({ device }: { device: "desktop" | "mobile" }) {
+  const [mealPlan, setMealPlan] = useState<"BB" | "HB" | "FB">("BB");
   const mobile = device === "mobile";
   return (
     <View style={styles.previewStage}>
       <View style={[styles.previewFrame, mobile && styles.previewFrameMobile]}>
+        <Text style={styles.installTitle}>Board basis</Text>
+        <BoardSelector value={mealPlan} onChange={setMealPlan} />
         <View style={[styles.previewPair, mobile && styles.previewPairMobile]}>
           <PreviewField label="Check-in" placeholder="dd/mm/yyyy" />
           <PreviewField label="Check-out" placeholder="dd/mm/yyyy" />

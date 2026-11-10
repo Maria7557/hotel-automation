@@ -1,11 +1,14 @@
 import type { FastifyInstance } from "fastify";
+import { renderBoardBadge } from "@hotel/templates";
+
+const boardChoices = (["BB", "HB", "FB"] as const).map((board) => `<label class="board-choice"><input required type="radio" name="mealPlan" value="${board}">${renderBoardBadge(board, "en")}</label>`).join("");
 
 const embedScript = String.raw`/*
 Widget: <script async src="https://YOUR_API/embed.js" data-public-key="YOUR_PUBLIC_KEY"></script>
 Existing form adapter: <script async src="https://YOUR_API/embed.js" data-public-key="YOUR_PUBLIC_KEY" data-mode="adapter" data-form="#booking-form"></script>
-Tag fields with data-hotel-field="checkIn|checkOut|name|email|phone|adults|childAges|note".
+Tag fields with data-hotel-field="checkIn|checkOut|name|email|phone|adults|childAges|mealPlan|note".
 Alternatively map them on the script with data-check-in, data-check-out, data-name, data-email,
-data-phone, data-adults, data-child-ages and data-note CSS selectors.
+data-phone, data-adults, data-child-ages, data-meal-plan and data-note CSS selectors.
 */
 (() => {
   const script = document.currentScript;
@@ -14,6 +17,7 @@ data-phone, data-adults, data-child-ages and data-note CSS selectors.
   const apiBase = new URL(script.src).origin;
 
   const postInquiry = async (values, sourceType) => {
+    if (!["BB", "HB", "FB"].includes(values.mealPlan)) throw new Error("Choose BB, HB or FB before sending your request.");
     const ages = String(values.childAges || "").split(",").map((value) => value.trim()).filter(Boolean).map(Number);
     return fetch(apiBase + "/v1/public/hotels/" + encodeURIComponent(publicKey) + "/inquiries", {
       method: "POST",
@@ -23,6 +27,7 @@ data-phone, data-adults, data-child-ages and data-note CSS selectors.
         guest: { name: String(values.name || ""), email: String(values.email || "") || null, phone: String(values.phone || "") || null, language: document.documentElement.lang || "en" },
         checkIn: String(values.checkIn || ""), checkOut: String(values.checkOut || ""),
         occupancy: { adults: Number(values.adults || 1), childAges: ages },
+        mealPlan: values.mealPlan,
         note: String(values.note || ""), website: String(values.website || ""),
         source: { type: sourceType, page: location.origin + location.pathname, widgetVersion: "v1" }
       })
@@ -44,6 +49,7 @@ data-phone, data-adults, data-child-ages and data-note CSS selectors.
       phone: script.dataset.phone,
       adults: script.dataset.adults,
       childAges: script.dataset.childAges,
+      mealPlan: script.dataset.mealPlan,
       note: script.dataset.note,
       website: script.dataset.website
     };
@@ -52,6 +58,7 @@ data-phone, data-adults, data-child-ages and data-note CSS selectors.
       let element;
       try { element = form.querySelector(selector); } catch (_) { return ""; }
       if (!element) return "";
+      if (element.type === "radio") { const selected = form.querySelector(selector + ":checked"); return selected ? selected.value : ""; }
       if (element.type === "checkbox") return element.checked ? element.value || "true" : "";
       return element.value == null ? "" : element.value;
     };
@@ -74,7 +81,7 @@ data-phone, data-adults, data-child-ages and data-note CSS selectors.
         const response = await postInquiry({
           checkIn: read("checkIn"), checkOut: read("checkOut"), name: read("name"),
           email: read("email"), phone: read("phone"), adults: read("adults") || 1,
-          childAges: read("childAges"), note: read("note"), website: read("website")
+          childAges: read("childAges"), mealPlan: read("mealPlan"), note: read("note"), website: read("website")
         }, "existing_form");
         if (!response.ok) throw new Error("request_failed");
         setStatus("success", "Request sent. You will receive our offer shortly.");
@@ -92,8 +99,8 @@ data-phone, data-adults, data-child-ages and data-note CSS selectors.
   script.insertAdjacentElement("afterend", host);
   const root = host.attachShadow ? host.attachShadow({ mode: "open" }) : host;
   root.innerHTML =
-    '<style>*{box-sizing:border-box}.box{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#202020;background:#fff;border:1px solid #e5e5e5;border-radius:16px;padding:20px;max-width:680px}.grid{display:grid;gap:14px}.two{grid-template-columns:repeat(2,minmax(0,1fr))}label{display:grid;gap:6px;font-size:13px;font-weight:600}input,textarea{width:100%;min-height:44px;border:1px solid #d8d8d8;border-radius:10px;padding:10px 12px;font:inherit}textarea{min-height:88px;resize:vertical}button{min-height:54px;border:0;border-radius:12px;background:#1769ff;color:#fff;font:600 15px inherit;cursor:pointer}button[disabled]{opacity:.6}.hp{position:absolute;left:-10000px}.message{margin:0;font-size:14px}.error{color:#b42318}.success{color:#16784a}@media(max-width:560px){.two{grid-template-columns:1fr}}</style>' +
-    '<form class="box grid"><div class="grid two"><label>Check-in<input required type="date" name="checkIn"></label><label>Check-out<input required type="date" name="checkOut"></label></div><div class="grid two"><label>Full name<input required autocomplete="name" name="name" maxlength="160"></label><label>Email<input type="email" autocomplete="email" name="email"></label></div><div class="grid two"><label>Phone / WhatsApp<input autocomplete="tel" name="phone"></label><label>Adults<input required type="number" name="adults" min="1" max="12" value="2"></label></div><label>Child ages, separated by commas<input name="childAges" placeholder="e.g. 4, 9"></label><label>Message<textarea name="note" maxlength="2000"></textarea></label><label class="hp" aria-hidden="true">Website<input tabindex="-1" autocomplete="off" name="website"></label><button type="submit">Request availability</button><p class="message" role="status" aria-live="polite"></p></form>';
+    '<style>*{box-sizing:border-box}.box{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#202020;background:#fff;border:1px solid #e5e5e5;border-radius:16px;padding:20px;max-width:680px}.board-options{border:0;padding:0;margin:0;display:flex;gap:8px;flex-wrap:wrap}.board-options legend{font-size:14px;font-weight:700;margin-bottom:8px}.board-choice{flex:1;min-width:150px;display:flex;align-items:center;gap:8px;border:1px solid #e0e5e1;border-radius:12px;padding:10px;cursor:pointer}.board-choice:has(input:checked){border-color:#747a77;background:#f0f1f2}.board-choice input{width:16px;min-height:16px;margin:0;accent-color:#343a37}.board-choice .board-identity{display:flex!important;align-items:center}.grid{display:grid;gap:14px}.two{grid-template-columns:repeat(2,minmax(0,1fr))}label{display:grid;gap:6px;font-size:13px;font-weight:600}input,select,textarea{width:100%;min-height:44px;border:1px solid #d8d8d8;border-radius:10px;padding:10px 12px;font:inherit}textarea{min-height:88px;resize:vertical}button{min-height:54px;border:0;border-radius:12px;background:#1769ff;color:#fff;font:600 15px inherit;cursor:pointer}button[disabled]{opacity:.6}.hp{position:absolute;left:-10000px}.message{margin:0;font-size:14px}.error{color:#b42318}.success{color:#16784a}@media(max-width:560px){.two{grid-template-columns:1fr}}</style>' +
+    '<form class="box grid"><fieldset class="board-options"><legend>Board basis</legend>' + ${JSON.stringify(boardChoices)} + '</fieldset><div class="grid two"><label>Check-in<input required type="date" name="checkIn"></label><label>Check-out<input required type="date" name="checkOut"></label></div><div class="grid two"><label>Full name<input required autocomplete="name" name="name" maxlength="160"></label><label>Email<input type="email" autocomplete="email" name="email"></label></div><div class="grid two"><label>Phone / WhatsApp<input autocomplete="tel" name="phone"></label><label>Adults<input required type="number" name="adults" min="1" max="12" value="2"></label></div><label>Child ages, separated by commas<input name="childAges" placeholder="e.g. 4, 9"></label><label>Message<textarea name="note" maxlength="2000"></textarea></label><label class="hp" aria-hidden="true">Website<input tabindex="-1" autocomplete="off" name="website"></label><button type="submit">Request availability</button><p class="message" role="status" aria-live="polite"></p></form>';
   const form = root.querySelector("form");
   const message = root.querySelector(".message");
   form.addEventListener("submit", async (event) => {
@@ -107,7 +114,7 @@ data-phone, data-adults, data-child-ages and data-note CSS selectors.
       const response = await postInquiry({
         name: data.get("name"), email: data.get("email"), phone: data.get("phone"),
         checkIn: data.get("checkIn"), checkOut: data.get("checkOut"), adults: data.get("adults"),
-        childAges: data.get("childAges"), note: data.get("note"), website: data.get("website")
+        childAges: data.get("childAges"), mealPlan: data.get("mealPlan"), note: data.get("note"), website: data.get("website")
       }, "embed");
       if (!response.ok) throw new Error("request_failed");
       form.reset();

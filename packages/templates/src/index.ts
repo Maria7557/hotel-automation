@@ -1,4 +1,5 @@
 export * from "./content.js";
+export * from "./board.js";
 export * from "./messages.js";
 export * from "./page.js";
 export * from "./security.js";

@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { inquirySchema, ratePeriodSchema, roomSchema } from "./entities.js";
+import { inquirySchema, mealPlanSchema, ratePeriodSchema, roomSchema } from "./entities.js";
 
 const timestamp = "2026-10-31T10:00:00Z";
 
 describe("entity contracts", () => {
+  it("accepts exactly BB, HB and FB", () => {
+    for (const value of ["BB", "HB", "FB"]) expect(mealPlanSchema.safeParse(value).success).toBe(true);
+    for (const value of [undefined, null, "bb", "breakfast", "room_only", "AI"]) expect(mealPlanSchema.safeParse(value).success).toBe(false);
+  });
   it("rejects an inverted rate range", () => {
     const result = ratePeriodSchema.safeParse({
       id: "rate-1",
@@ -15,7 +19,7 @@ describe("entity contracts", () => {
       endExclusive: "2027-01-01",
       nightlyBaseCents: 10_000,
       currency: "EUR",
-      mealPlan: "room_only",
+      mealPlan: "HB",
       createdAt: timestamp,
       updatedAt: timestamp,
     });
@@ -31,6 +35,7 @@ describe("entity contracts", () => {
       checkIn: "2027-01-01",
       checkOut: "2027-01-02",
       occupancy: { adults: 2 },
+      mealPlan: "BB",
       createdAt: timestamp,
     });
 

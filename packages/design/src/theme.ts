@@ -8,6 +8,7 @@ export const theme = {
     text: colors.neutral[950],
     textSecondary: colors.neutral[700],
     textMuted: colors.neutral[500],
+    helperIcon: colors.neutral[400],
     border: colors.neutral[200],
     borderStrong: colors.neutral[300],
     action: colors.brand.primary,

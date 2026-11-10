@@ -26,7 +26,7 @@ const demoSettings: MessageSettings = {
   emailSubjectTemplate: "Your offer from {{hotel_name}}",
   emailBodyTemplate: "Hello {{guest_name}},\n\nYour offer for {{check_in}} to {{check_out}} is ready.\nTotal: {{total}}\n\n{{offer_url}}",
   whatsappBodyTemplate: "Hello {{guest_name}}, your offer from {{hotel_name}} is ready: {{offer_url}}",
-  allowedVariables: ["guest_name", "hotel_name", "check_in", "check_out", "guest_count", "total", "offer_url"],
+  allowedVariables: ["guest_name", "hotel_name", "check_in", "check_out", "guest_count", "meal_plan", "total", "offer_url"],
 };
 
 type ActiveTemplate = "subject" | "email" | "whatsapp";

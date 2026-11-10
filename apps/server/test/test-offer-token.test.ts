@@ -11,6 +11,7 @@ describe("test offer token", () => {
       checkIn: "2026-11-10",
       checkOut: "2026-11-12",
       adults: 2,
+      mealPlan: "HB",
     }, new Date(now.getTime() + 60_000), secret);
     expect(token.length).toBeLessThanOrEqual(200);
     expect(verifyTestOfferToken(token, secret, now)).toMatchObject({
@@ -18,6 +19,7 @@ describe("test offer token", () => {
       checkIn: "2026-11-10",
       checkOut: "2026-11-12",
       adults: 2,
+      mealPlan: "HB",
     });
     expect(verifyTestOfferToken(`${token.slice(0, -1)}x`, secret, now)).toBeNull();
     expect(verifyTestOfferToken(token, secret, new Date(now.getTime() + 61_000))).toBeNull();

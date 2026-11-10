@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { mealPlanSchema } from "@hotel/contracts";
 
 export const allowedMessageVariables = [
   "guest_name",
@@ -6,6 +7,7 @@ export const allowedMessageVariables = [
   "check_in",
   "check_out",
   "guest_count",
+  "meal_plan",
   "total",
   "offer_url",
 ] as const;
@@ -46,6 +48,7 @@ export const previewSampleSchema = z.object({
   checkIn: z.iso.date().default("2027-06-10"),
   checkOut: z.iso.date().default("2027-06-12"),
   guestCount: z.number().int().min(1).max(20).default(2),
+  mealPlan: mealPlanSchema.default("BB"),
   totalCents: z.number().int().nonnegative().max(100_000_000).default(24_000),
 });
 

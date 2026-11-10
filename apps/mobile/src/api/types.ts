@@ -1,4 +1,8 @@
 export type RequestStatus = "payment" | "completed" | "attention" | "waiting" | "new";
+export type { DashboardQuery, DashboardPagination } from "@hotel/contracts";
+export type { ClientFilters, ClientFilterOptions } from "@hotel/contracts";
+export type { ManualInquiryInput, ManualInquiryResult, ManualRequestSource } from "@hotel/contracts";
+import type { ReservationOffer } from "@hotel/contracts";
 
 export type DeliverySummary = {
   status: "sent" | "pending" | "failed" | "unused";
@@ -9,7 +13,12 @@ export type DeliverySummary = {
 
 export type HotelRequest = {
   id: string;
+  reservationNumber: string;
   guestName: string;
+  mealPlan: MealPlan | null;
+  checkIn: string;
+  checkOut: string;
+  occupancy: { adults: number; childAges: number[] };
   stayLabel: string;
   guestLabel: string;
   roomLabel: string;
@@ -21,6 +30,15 @@ export type HotelRequest = {
   statusLabel: string;
   nextAction?: string;
   attentionReason?: string | null;
+  note?: string;
+  locale?: string;
+  receivedVia?: "phone" | "walk_in" | "other" | null;
+  offerExpiresAt?: string | null;
+  offerSentAt?: string | null;
+  acceptedAt?: string | null;
+  paymentLinkSentAt?: string | null;
+  currentOfferId?: string | null;
+  offers?: ReservationOffer[];
   email: DeliverySummary;
   whatsapp: DeliverySummary;
 };
@@ -32,6 +50,8 @@ export type DashboardSnapshot = {
   paymentPendingCount: number;
   paymentPendingTotalCents: number;
   attentionCount: number;
+  failedDeliveryCount: number;
+  pagination: import("@hotel/contracts").DashboardPagination;
   requests: HotelRequest[];
 };
 
@@ -92,7 +112,7 @@ export type Room = {
 
 export type RoomInput = Omit<Room, "id">;
 
-export type MealPlan = "room_only" | "breakfast";
+export type MealPlan = "BB" | "HB" | "FB";
 
 export type RatePeriod = {
   id: string;
@@ -109,8 +129,8 @@ export type RatePeriod = {
   includedChildren: number;
   extraAdultCents: number;
   extraChildCents: number;
-  breakfastAdultCents: number;
-  breakfastChildCents: number;
+  boardAdultCents: number;
+  boardChildCents: number;
   maxChildAge: number;
   minNights: number;
   active: boolean;
@@ -124,7 +144,7 @@ export type RatePreview =
       price: {
         currency: "EUR";
         totalCents: number;
-        nights: Array<{ date: string; totalCents: number; baseCents: number; extraAdultCents: number; extraChildCents: number; breakfastCents: number }>;
+        nights: Array<{ date: string; totalCents: number; baseCents: number; extraAdultCents: number; extraChildCents: number; boardCents: number }>;
       };
     }
   | { ok: false; issues: Array<{ type: string; date?: string }> };
@@ -215,3 +235,21 @@ export type NotificationSettings = {
   emailAddress: string;
   emailDeliveryAvailable: boolean;
 };
+
+export type ClientProfile = {
+  id: string;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  locale: string;
+  notes: string;
+  source: "manual" | "inquiry";
+  firstInquiryAt: string | null;
+  lastInquiryAt: string | null;
+  createdAt: string;
+  requestCount: number;
+};
+export type ClientInput = { name: string; email: string | null; phone: string | null; locale: string; notes: string };
+export type ClientPage = { clients: ClientProfile[]; nextCursor: string | null };
+export type ClientHistory = { requests: HotelRequest[]; nextCursor: string | null };
+export type RequestClientStatus = { inquiryId: string; inContacts: boolean; clientId: string | null };

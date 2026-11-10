@@ -18,6 +18,7 @@ export function offerSnapshot(): OfferSnapshot {
       checkIn: "2027-01-10",
       checkOut: "2027-01-12",
       occupancy: { adults: 2, childAges: [8] },
+      mealPlan: "BB",
     },
     options: [
       {
@@ -58,9 +59,9 @@ export function offerSnapshot(): OfferSnapshot {
             },
           ],
         },
-        planCode: "breakfast",
+        planCode: "BB",
         planName: "Tariffa flessibile",
-        mealPlan: "breakfast",
+        mealPlan: "BB",
         currency: "EUR",
         nights: [
           {
@@ -119,8 +120,8 @@ export function offerSnapshot(): OfferSnapshot {
           ],
         },
         planCode: "room-only",
-        planName: "Solo pernottamento",
-        mealPlan: "room_only",
+        planName: "Camera e colazione",
+        mealPlan: "BB",
         currency: "EUR",
         nights: [
           {

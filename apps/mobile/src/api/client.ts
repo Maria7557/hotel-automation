@@ -1,3 +1,6 @@
+import { requestLabel } from "../requests/status";
+import { DASHBOARD_PAGE_SIZE, OFFER_VALIDITY_MS, dashboardQuerySchema, type DashboardQuery, type ReservationOffer, type SendReservationOffersInput } from "@hotel/contracts";
+import type { ClientFilters, ClientFilterOptions, ClientPage, ClientHistory, ClientInput, ClientProfile, RequestClientStatus } from "./types";
 import { Platform } from "react-native";
 import * as SecureStore from "expo-secure-store";
 import { mockDashboard } from "./mock";
@@ -5,6 +8,9 @@ import type {
   AuthSession,
   DashboardSnapshot,
   HotelProfile,
+  HotelRequest,
+  ManualInquiryInput,
+  ManualInquiryResult,
   HotelProfileInput,
   HotelIntakeSettings,
   ConnectionStatus,
@@ -62,14 +68,28 @@ type ApiDeliveryState =
   | "cancelled";
 
 type ApiDashboard = {
-  counts: { total: number; new: number; offerSent: number; requiresConfirmation: number; requiresConfirmationTotalCents: number; needsAttention: number };
+  counts: { total: number; new: number; offerSent: number; requiresConfirmation: number; requiresConfirmationTotalCents: number; needsAttention: number; failedDeliveries: number };
+  pagination: DashboardSnapshot["pagination"];
   inquiries: Array<{
     id: string;
+    reservationNumber: string;
     guestName: string;
+    guestEmail: string | null;
+    guestPhone: string | null;
+    locale: string;
+    note: string;
+    receivedVia?: "phone" | "walk_in" | "other" | null;
+    offerExpiresAt: string | null;
+    offerSentAt: string | null;
+    acceptedAt: string | null;
+    paymentLinkSentAt: string | null;
+    mealPlan: "BB" | "HB" | "FB" | null;
     checkIn: string;
     checkOut: string;
     occupancy: { adults: number; childAges: number[] };
     offerSummary: { roomName: string; totalCents: number; currency: string } | null;
+    currentOfferId?: string | null;
+    offers?: ReservationOffer[];
     channelStates: { email: ApiDeliveryState | null; whatsapp: ApiDeliveryState | null };
     channelDetails: {
       email: { state: ApiDeliveryState; recipient: string; lastErrorCode: string | null; processedAt: string | null } | null;
@@ -131,6 +151,7 @@ async function apiRequest<T>(
   path: string,
   options: RequestInit = {},
   token?: string | null,
+  clearUnauthorized = true,
 ): Promise<T> {
   const baseUrl = requireApiUrl();
   const headers = new Headers(options.headers);
@@ -153,7 +174,7 @@ async function apiRequest<T>(
 
   const body = (await response.json().catch(() => null)) as (ApiErrorPayload & T) | null;
   if (!response.ok) {
-    if (response.status === 401 && token) await clearToken();
+    if (response.status === 401 && token && clearUnauthorized) await clearToken();
     const serverError = body?.error;
     throw new ApiError(
       serverError?.code ?? "REQUEST_FAILED",
@@ -206,7 +227,48 @@ async function requireToken(): Promise<string> {
   return token;
 }
 
+// Contacts have their own short timeout and never participate in dashboard loading.
+async function clientRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const token = await requireToken();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 4000);
+  try { return await apiRequest<T>(path, { ...options, signal: controller.signal }, token, false); }
+  finally { clearTimeout(timeout); }
+}
+
 export const apiClient = {
+  async listClients(search = "", cursor?: string, filters: ClientFilters = {}): Promise<ClientPage> {
+    const query = new URLSearchParams({ search, ...(cursor ? { cursor } : {}) });
+    for (const [key, value] of Object.entries(filters)) {
+      if (value !== undefined) query.set(key, String(value));
+    }
+    return (await clientRequest<{ data: ClientPage }>(`/v1/clients?${query}`)).data;
+  },
+  async getClientFilterOptions(): Promise<ClientFilterOptions> {
+    return (await clientRequest<{ data: ClientFilterOptions }>("/v1/clients/filter-options")).data;
+  },
+  async createClient(input: ClientInput): Promise<{ client: ClientProfile; created: boolean }> {
+    return (await clientRequest<{ data: { client: ClientProfile; created: boolean } }>("/v1/clients", { method: "POST", body: JSON.stringify(input) })).data;
+  },
+  async getClient(id: string): Promise<ClientProfile> {
+    return (await clientRequest<{ data: { client: ClientProfile } }>(`/v1/clients/${encodeURIComponent(id)}`)).data.client;
+  },
+  async getClientHistory(id: string, cursor?: string): Promise<ClientHistory> {
+    const page = (await clientRequest<{ data: { requests: Array<{ id: string }>; nextCursor: string | null } }>(`/v1/clients/${encodeURIComponent(id)}/requests${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`)).data;
+    if (!page.requests.length) return { ...page, requests: [] };
+    const token = await requireToken();
+    const response = await apiRequest<{ data: { inquiries: ApiDashboard["inquiries"] } }>("/v1/inquiries/summaries", {
+      method: "POST", body: JSON.stringify({ inquiryIds: page.requests.map((request) => request.id) }),
+    }, token);
+    const requests = new Map(response.data.inquiries.map((inquiry) => [inquiry.id, mapRequest(inquiry)]));
+    return { nextCursor: page.nextCursor, requests: page.requests.flatMap(({ id }) => requests.get(id) ? [requests.get(id)!] : []) };
+  },
+  async getRequestClientStatuses(inquiryIds: string[]): Promise<RequestClientStatus[]> {
+    return (await clientRequest<{ data: { statuses: RequestClientStatus[] } }>("/v1/clients/request-statuses", { method: "POST", body: JSON.stringify({ inquiryIds }) })).data.statuses;
+  },
+  async addRequestClient(inquiryId: string): Promise<ClientProfile> {
+    return (await clientRequest<{ data: { client: ClientProfile } }>(`/v1/inquiries/${encodeURIComponent(inquiryId)}/client`, { method: "POST" })).data.client;
+  },
   register: (input: { displayName: string; email: string; password: string }) =>
     authenticate("/v1/auth/register", input),
 
@@ -369,7 +431,7 @@ export const apiClient = {
 
   async previewRate(
     roomId: string,
-    input: { planCode: string; checkIn: string; checkOut: string; adults: number; childAges: number[] },
+    input: { planCode: string; mealPlan: "BB" | "HB" | "FB"; checkIn: string; checkOut: string; adults: number; childAges: number[] },
   ): Promise<RatePreview> {
     const token = await requireToken();
     const response = await apiRequest<{ data: { preview: RatePreview } }>(
@@ -378,6 +440,7 @@ export const apiClient = {
         method: "POST",
         body: JSON.stringify({
           planCode: input.planCode,
+          mealPlan: input.mealPlan,
           checkIn: input.checkIn,
           checkOut: input.checkOut,
           occupancy: { adults: input.adults, childAges: input.childAges },
@@ -552,16 +615,118 @@ export const apiClient = {
     const token = await requireToken(); const response = await apiRequest<{ data: { connection: ConnectionStatus } }>("/v1/connections/mail/smtp", { method: "POST", body: JSON.stringify(input) }, token); return response.data.connection;
   },
 
-  async getDashboard(options: { demo?: boolean } = {}): Promise<DashboardSnapshot> {
+  async createManualRequest(input: ManualInquiryInput, idempotencyKey: string, options: { demo?: boolean } = {}): Promise<ManualInquiryResult> {
     if (options.demo) {
-      await new Promise((resolve) => setTimeout(resolve, 240));
-      return mockDashboard;
+      const id = `manual:${idempotencyKey}`;
+      const existing = mockDashboard.requests.find((request) => request.id === id);
+      if (existing) return { inquiryId: id, reservationNumber: existing.reservationNumber, automated: false, attentionReason: "manual_review", deliveriesScheduled: 0, replayed: true };
+      const reservationNumber = String(Math.max(0, ...mockDashboard.requests.map((request) => Number(request.reservationNumber))) + 1);
+      const nights = nightsBetween(input.checkIn, input.checkOut);
+      const currentOfferId = input.offers?.length ? `00000000-0000-4000-8000-${reservationNumber.padStart(12, "0")}` : null;
+      const expiresAt = new Date(Date.now() + OFFER_VALIDITY_MS).toISOString();
+      const offers: ReservationOffer[] = input.offers?.map((offer, index) => ({
+        ...offer, id: `${currentOfferId}:${index}`,
+        roomName: mockDashboard.requests.flatMap((request) => request.offers ?? []).find(({ roomId }) => roomId === offer.roomId)?.roomName ?? "Room",
+        mealPlan: input.mealPlan, currency: "EUR", status: "available", expiresAt,
+      })) ?? [];
+      const first = offers[0];
+      mockDashboard.requests.unshift({
+        id, reservationNumber, guestName: input.guest.name, mealPlan: input.mealPlan,
+        checkIn: input.checkIn, checkOut: input.checkOut, occupancy: input.occupancy,
+        stayLabel: `${input.checkIn} — ${input.checkOut} · ${countLabel(nights, "night", "nights")}`,
+        guestLabel: `${countLabel(input.occupancy.adults, "adult", "adults")}${input.occupancy.childAges.length ? ` · ${countLabel(input.occupancy.childAges.length, "child", "children")}` : ""}`,
+        roomLabel: first?.roomName ?? "No offer created",
+        totalLabel: first ? new Intl.NumberFormat("en-GB", { style: "currency", currency: "EUR" }).format(first.totalCents / 100) : "—",
+        totalCents: first?.totalCents ?? 0, currency: "EUR", currentOfferId, offers,
+        offerExpiresAt: offers.length ? expiresAt : null,
+        receivedAt: new Date().toISOString(), receivedVia: input.receivedVia,
+        status: "attention", statusLabel: requestLabel("attention"), attentionReason: "manual_review",
+        nextAction: "Review rates and request", note: input.note, locale: input.guest.language,
+        email: { status: "unused", ...(input.guest.email ? { recipient: input.guest.email } : {}) },
+        whatsapp: { status: "unused", ...(input.guest.phone ? { recipient: input.guest.phone } : {}) },
+      });
+      return { inquiryId: id, reservationNumber, automated: offers.length > 0, attentionReason: "manual_review", deliveriesScheduled: 0, replayed: false };
     }
     const token = await requireToken();
-    const response = await apiRequest<{ data: ApiDashboard }>("/v1/dashboard", {}, token);
+    const response = await apiRequest<{ data: ManualInquiryResult }>("/v1/inquiries", {
+      method: "POST", headers: { "Idempotency-Key": idempotencyKey }, body: JSON.stringify(input),
+    }, token);
+    return response.data;
+  },
+  async getDashboard(options: { demo?: boolean } & Partial<DashboardQuery> = {}): Promise<DashboardSnapshot> {
+    const { demo, ...parameters } = options;
+    const query = dashboardQuerySchema.parse({ limit: DASHBOARD_PAGE_SIZE, ...parameters });
+    if (options.demo) {
+      await new Promise((resolve) => setTimeout(resolve, 240));
+      const requests = mockDashboard.requests;
+      const reservationNumber = /^#?\s*(\d+)$/.exec(query.search)?.[1];
+      const filtered = requests.filter((request) => (query.status === "all" || request.status === query.status) && (!query.search ||
+        (reservationNumber !== undefined ? request.reservationNumber === reservationNumber :
+          [request.guestName, request.mealPlan ?? "", request.email.recipient ?? "", request.whatsapp.recipient ?? "", request.stayLabel, request.roomLabel, request.guestLabel, request.statusLabel]
+            .some((value) => value.toLocaleLowerCase().includes(query.search.toLocaleLowerCase())))));
+      const direction = query.sort === "asc" ? 1 : -1;
+      filtered.sort((left, right) => direction * (Date.parse(left.receivedAt) - Date.parse(right.receivedAt) || left.id.localeCompare(right.id)));
+      const page = Math.min(query.page, Math.max(1, Math.ceil(filtered.length / query.limit)));
+      return { ...mockDashboard, totalCount: requests.length,
+        newCount: requests.filter((request) => request.status === "new").length,
+        waitingCount: requests.filter((request) => request.status === "waiting").length,
+        attentionCount: requests.filter((request) => request.status === "attention").length,
+        paymentPendingCount: requests.filter((request) => request.status === "payment").length,
+        paymentPendingTotalCents: requests.filter((request) => request.status === "payment").reduce((total, request) => total + request.totalCents, 0),
+        failedDeliveryCount: requests.filter((request) => request.email.status === "failed" || request.whatsapp.status === "failed").length,
+        pagination: { page, limit: query.limit, total: filtered.length },
+        requests: filtered.slice((page - 1) * query.limit, page * query.limit),
+      };
+    }
+    const token = await requireToken();
+    const search = new URLSearchParams(Object.entries(query).map(([key, value]) => [key, String(value)]));
+    const response = await apiRequest<{ data: ApiDashboard }>(`/v1/dashboard?${search}`, {}, token);
     return mapDashboard(response.data);
   },
-  async markPaymentLinkSent(inquiryId: string): Promise<void> {
+  async getRequest(id: string, options: { demo?: boolean } = {}): Promise<HotelRequest> {
+    if (options.demo) {
+      const request = mockDashboard.requests.find((item) => item.id === id);
+      if (!request) throw new ApiError("INQUIRY_NOT_FOUND", "Reservation was not found.");
+      return request;
+    }
+    const token = await requireToken();
+    const response = await apiRequest<{ data: { inquiry: ApiDashboard["inquiries"][number] } }>(`/v1/inquiries/${encodeURIComponent(id)}`, {}, token);
+    return mapRequest(response.data.inquiry);
+  },
+  async sendReservationOffers(id: string, input: SendReservationOffersInput, idempotencyKey: string, options: { demo?: boolean } = {}): Promise<HotelRequest> {
+    if (options.demo) {
+      const request = mockDashboard.requests.find((item) => item.id === id);
+      if (!request) throw new ApiError("INQUIRY_NOT_FOUND", "Reservation was not found.");
+      if (request.acceptedAt || request.paymentLinkSentAt || request.status === "payment" || request.status === "completed") throw new ApiError("RESERVATION_ACCEPTED", "An offer has already been accepted.");
+      const currentOfferId = idempotencyKey;
+      if (request.currentOfferId === currentOfferId) return request;
+      if ((request.currentOfferId ?? null) !== input.baseOfferId) throw new ApiError("OFFERS_CHANGED", "Refresh the reservation before editing.");
+      const expiresAt = new Date(Date.now() + OFFER_VALIDITY_MS).toISOString();
+      const offers: ReservationOffer[] = input.offers.map((offer, index) => ({
+        ...offer, id: `${currentOfferId}:${index}`, roomName: request.offers?.find(({ roomId }) => roomId === offer.roomId)?.roomName ?? (request.roomLabel === "No offer created" ? "Deluxe Room" : request.roomLabel),
+        mealPlan: request.mealPlan, currency: request.currency, status: "available", expiresAt,
+      }));
+      const first = offers[0]!;
+      Object.assign(request, { currentOfferId, offers, offerExpiresAt: expiresAt, roomLabel: first.roomName,
+        totalCents: first.totalCents, totalLabel: new Intl.NumberFormat("en-GB", { style: "currency", currency: first.currency }).format(first.totalCents / 100),
+        status: "new", statusLabel: requestLabel("new"), attentionReason: null, nextAction: undefined });
+      return { ...request };
+    }
+    const token = await requireToken();
+    const response = await apiRequest<{ data: { inquiry: ApiDashboard["inquiries"][number] } }>(`/v1/inquiries/${encodeURIComponent(id)}/offers`, {
+      method: "POST", headers: { "Idempotency-Key": idempotencyKey }, body: JSON.stringify(input),
+    }, token);
+    return mapRequest(response.data.inquiry);
+  },
+  async markPaymentLinkSent(inquiryId: string, options: { demo?: boolean } = {}): Promise<void> {
+    if (options.demo) {
+      mockDashboard.requests = mockDashboard.requests.map((item) => {
+        if (item.id !== inquiryId) return item;
+        const { nextAction: _next, ...request } = item;
+        return { ...request, status: "completed", statusLabel: requestLabel("completed"), paymentLinkSentAt: new Date().toISOString() };
+      });
+      return;
+    }
     const token = await requireToken();
     await apiRequest(`/v1/inquiries/${encodeURIComponent(inquiryId)}/payment-link-sent`, { method: "POST" }, token);
   },
@@ -590,64 +755,75 @@ function mapDashboard(input: ApiDashboard): DashboardSnapshot {
     paymentPendingCount: input.counts.requiresConfirmation,
     paymentPendingTotalCents: input.counts.requiresConfirmationTotalCents,
     attentionCount: input.counts.needsAttention,
-    requests: input.inquiries.map((inquiry) => {
-      const nights = nightsBetween(inquiry.checkIn, inquiry.checkOut);
-      const adults = countLabel(inquiry.occupancy.adults, "adult", "adults");
-      const children = inquiry.occupancy.childAges.length;
-      const workflow = inquiry.workflowState;
-      const status = workflow === "requires_confirmation"
-        ? "payment"
-        : workflow === "payment_link_sent"
-          ? "completed"
-        : workflow === "needs_attention"
-          ? "attention"
-          : workflow === "offer_sent"
-            ? "waiting"
-            : "new";
-      const statusLabel = workflow === "requires_confirmation"
-        ? "To confirm"
-        : workflow === "payment_link_sent"
-          ? "Payment link sent"
-        : workflow === "needs_attention"
-          ? (inquiry.channelStates.email === "failed" || inquiry.channelStates.whatsapp === "failed" ? "Not delivered" : "Review needed")
-          : workflow === "offer_sent"
-            ? "Waiting for guest"
-            : "New request";
-      const nextAction = workflow === "requires_confirmation"
-        ? "Review availability"
-        : workflow === "needs_attention"
-          ? "Review rates and request"
-          : undefined;
-      return {
-        id: inquiry.id,
-        guestName: inquiry.guestName,
-        stayLabel: `${inquiry.checkIn} — ${inquiry.checkOut} · ${countLabel(nights, "night", "nights")}`,
-        guestLabel: `${adults}${children ? ` · ${countLabel(children, "child", "children")}` : ""}`,
-        roomLabel: inquiry.offerSummary?.roomName ?? "No offer created",
-        totalCents: inquiry.offerSummary?.totalCents ?? 0,
-        currency: inquiry.offerSummary?.currency ?? "EUR",
-        totalLabel: inquiry.offerSummary
-          ? new Intl.NumberFormat("en-GB", { style: "currency", currency: inquiry.offerSummary.currency }).format(inquiry.offerSummary.totalCents / 100)
-          : "—",
-        receivedAt: inquiry.createdAt,
-        status,
-        statusLabel,
-        ...(nextAction ? { nextAction } : {}),
-        attentionReason: inquiry.attentionReason,
-        email: mapDeliveryDetail(inquiry.channelStates.email, inquiry.channelDetails.email),
-        whatsapp: mapDeliveryDetail(inquiry.channelStates.whatsapp, inquiry.channelDetails.whatsapp),
-      };
-    }),
+    failedDeliveryCount: input.counts.failedDeliveries,
+    pagination: input.pagination,
+    requests: input.inquiries.map(mapRequest),
+  };
+}
+
+function mapRequest(inquiry: ApiDashboard["inquiries"][number]): HotelRequest {
+  const nights = nightsBetween(inquiry.checkIn, inquiry.checkOut);
+  const adults = countLabel(inquiry.occupancy.adults, "adult", "adults");
+  const children = inquiry.occupancy.childAges.length;
+  const workflow = inquiry.workflowState;
+  const status = workflow === "requires_confirmation"
+    ? "payment"
+    : workflow === "payment_link_sent"
+      ? "completed"
+    : workflow === "needs_attention"
+      ? "attention"
+      : workflow === "offer_sent"
+        ? "waiting"
+        : "new";
+  const statusLabel = requestLabel(status, inquiry.channelStates.email === "failed" || inquiry.channelStates.whatsapp === "failed");
+  const nextAction = workflow === "requires_confirmation"
+    ? "Review availability"
+    : workflow === "needs_attention"
+      ? "Review rates and request"
+      : undefined;
+  return {
+    id: inquiry.id,
+    reservationNumber: inquiry.reservationNumber,
+    guestName: inquiry.guestName,
+    mealPlan: inquiry.mealPlan,
+    checkIn: inquiry.checkIn,
+    checkOut: inquiry.checkOut,
+    occupancy: inquiry.occupancy,
+    locale: inquiry.locale,
+    note: inquiry.note,
+    receivedVia: inquiry.receivedVia ?? null,
+    offerExpiresAt: inquiry.offerExpiresAt,
+    offerSentAt: inquiry.offerSentAt,
+    acceptedAt: inquiry.acceptedAt,
+    paymentLinkSentAt: inquiry.paymentLinkSentAt,
+    currentOfferId: inquiry.currentOfferId ?? null,
+    offers: inquiry.offers ?? [],
+    stayLabel: `${inquiry.checkIn} — ${inquiry.checkOut} · ${countLabel(nights, "night", "nights")}`,
+    guestLabel: `${adults}${children ? ` · ${countLabel(children, "child", "children")}` : ""}`,
+    roomLabel: inquiry.offerSummary?.roomName ?? "No offer created",
+    totalCents: inquiry.offerSummary?.totalCents ?? 0,
+    currency: inquiry.offerSummary?.currency ?? "EUR",
+    totalLabel: inquiry.offerSummary
+      ? new Intl.NumberFormat("en-GB", { style: "currency", currency: inquiry.offerSummary.currency }).format(inquiry.offerSummary.totalCents / 100)
+      : "—",
+    receivedAt: inquiry.createdAt,
+    status,
+    statusLabel,
+    ...(nextAction ? { nextAction } : {}),
+    attentionReason: inquiry.attentionReason,
+    email: mapDeliveryDetail(inquiry.channelStates.email, inquiry.channelDetails.email, inquiry.guestEmail),
+    whatsapp: mapDeliveryDetail(inquiry.channelStates.whatsapp, inquiry.channelDetails.whatsapp, inquiry.guestPhone),
   };
 }
 
 function mapDeliveryDetail(
   state: ApiDeliveryState | null,
   detail: { recipient: string; lastErrorCode: string | null; processedAt: string | null } | null,
+  contact: string | null,
 ) {
   return {
     status: mapDeliveryState(state),
-    ...(detail?.recipient ? { recipient: detail.recipient } : {}),
+    ...(contact || detail?.recipient ? { recipient: contact || detail!.recipient } : {}),
     ...(detail ? { lastErrorCode: detail.lastErrorCode, processedAt: detail.processedAt } : {}),
   };
 }

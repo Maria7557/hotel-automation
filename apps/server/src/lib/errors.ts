@@ -29,7 +29,7 @@ export const errors = {
   inquiryNotFound: () => new AppError(404, "INQUIRY_NOT_FOUND", "Request was not found or is not waiting for a payment link."),
   ratePeriodNotFound: () => new AppError(404, "RATE_PERIOD_NOT_FOUND", "Rate period was not found."),
   rateOverlap: (details?: unknown) =>
-    new AppError(409, "RATE_PERIOD_OVERLAP", "This room already has a rate for part of this period.", details),
+    new AppError(409, "RATE_PERIOD_OVERLAP", "This room already has a rate for this board and plan during part of this period.", details),
   invalidRateRange: () =>
     new AppError(422, "INVALID_RATE_RANGE", "The inclusive end date must be on or after the start date."),
   invalidRateOccupancy: () =>
@@ -44,9 +44,13 @@ export const errors = {
     new AppError(400, "IDEMPOTENCY_KEY_REQUIRED", "A valid Idempotency-Key header is required."),
   offerNotFound: () => new AppError(404, "OFFER_NOT_FOUND", "Offer was not found."),
   offerExpired: () => new AppError(410, "OFFER_EXPIRED", "This offer has expired."),
+  offersChanged: () => new AppError(409, "OFFERS_CHANGED", "These offers have changed. Refresh the reservation before editing."),
+  reservationAccepted: () => new AppError(409, "RESERVATION_ACCEPTED", "An offer has already been accepted for this reservation."),
+  offerContactRequired: () => new AppError(422, "OFFER_CONTACT_REQUIRED", "Add an email or WhatsApp number to the request before sending offers."),
+  offerBoardRequired: () => new AppError(422, "OFFER_BOARD_REQUIRED", "The request needs a board basis before offers can be sent."),
   offerRevoked: () => new AppError(410, "OFFER_REVOKED", "This offer has been revoked."),
   invalidOfferOption: () =>
-    new AppError(422, "INVALID_OFFER_OPTION", "The selected offer option does not exist."),
+    new AppError(422, "INVALID_OFFER_OPTION", "The selected offer option is invalid or does not match the requested board."),
   configRequired: (provider: string) =>
     new AppError(503, "CONFIG_REQUIRED", `${provider} configuration is required.`),
   oauthStateInvalid: () =>

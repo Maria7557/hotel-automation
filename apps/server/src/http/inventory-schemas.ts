@@ -50,8 +50,8 @@ const rateFields = {
   includedChildren: z.number().int().nonnegative().max(20),
   extraAdultCents: z.number().int().nonnegative().max(100_000_000),
   extraChildCents: z.number().int().nonnegative().max(100_000_000),
-  breakfastAdultCents: z.number().int().nonnegative().max(100_000_000),
-  breakfastChildCents: z.number().int().nonnegative().max(100_000_000),
+  boardAdultCents: z.number().int().nonnegative().max(100_000_000),
+  boardChildCents: z.number().int().nonnegative().max(100_000_000),
   maxChildAge: z.number().int().min(0).max(17),
   minNights: z.number().int().positive().max(365),
   active: z.boolean(),
@@ -61,7 +61,7 @@ export const createRatePeriodSchema = z
   .object({
     planCode: rateFields.planCode,
     planName: rateFields.planName,
-    mealPlan: rateFields.mealPlan.default("room_only"),
+    mealPlan: rateFields.mealPlan,
     start: rateFields.start,
     endInclusive: rateFields.endInclusive,
     nightlyBaseCents: rateFields.nightlyBaseCents,
@@ -70,12 +70,12 @@ export const createRatePeriodSchema = z
     includedChildren: rateFields.includedChildren.default(0),
     extraAdultCents: rateFields.extraAdultCents.default(0),
     extraChildCents: rateFields.extraChildCents.default(0),
-    breakfastAdultCents: rateFields.breakfastAdultCents.default(0),
-    breakfastChildCents: rateFields.breakfastChildCents.default(0),
+    boardAdultCents: rateFields.boardAdultCents.default(0),
+    boardChildCents: rateFields.boardChildCents.default(0),
     maxChildAge: rateFields.maxChildAge.default(17),
     minNights: rateFields.minNights.default(1),
     active: rateFields.active.default(true),
-  })
+  }).strict()
   .refine(({ start, endInclusive }) => start <= endInclusive, {
     message: "endInclusive must be on or after start.",
     path: ["endInclusive"],
@@ -84,6 +84,7 @@ export const createRatePeriodSchema = z
 export const updateRatePeriodSchema = z
   .object(rateFields)
   .partial()
+  .strict()
   .refine((value) => Object.keys(value).length > 0, "At least one field must be provided.")
   .refine(
     ({ start, endInclusive }) => start === undefined || endInclusive === undefined || start <= endInclusive,
@@ -93,6 +94,7 @@ export const updateRatePeriodSchema = z
 export const previewRateSchema = z
   .object({
     planCode: rateFields.planCode,
+    mealPlan: rateFields.mealPlan,
     checkIn: isoDateSchema,
     checkOut: isoDateSchema,
     occupancy: occupancySchema,

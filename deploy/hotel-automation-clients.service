@@ -1,0 +1,29 @@
+[Unit]
+Description=Hotel Automation contact worker
+After=network-online.target postgresql.service
+Wants=network-online.target
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=hotelapp
+Group=hotelapp
+WorkingDirectory=/opt/hotel-automation/current/apps/server
+EnvironmentFile=/etc/hotel-automation/server.env
+ExecStart=/opt/node24/bin/node /opt/hotel-automation/current/apps/server/dist/client-worker.js
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=30
+Nice=10
+CPUWeight=10
+CPUQuota=20%
+IOWeight=10
+MemoryHigh=192M
+MemoryMax=256M
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

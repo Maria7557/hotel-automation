@@ -1,4 +1,5 @@
 import { and, asc, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, lte, ne, sql } from "drizzle-orm";
+import type { DashboardQuery, MealPlan } from "@hotel/contracts";
 
 import type { Database } from "../db/client.js";
 import {
@@ -25,6 +26,7 @@ import type {
   ConnectionRecord,
   DeliveryWorkerRepository,
   DashboardFacts,
+  DashboardPageFacts,
   DeliveryRecord,
   HotelCreate,
   HotelProfile,
@@ -39,6 +41,7 @@ import type {
   NotificationPreferences,
   NotificationRepository,
   OfferRecord,
+  ReservationOffersCreate,
   PlatformAdminRepository,
   RatePeriodCreate,
   RatePeriodProfile,
@@ -53,6 +56,7 @@ import type {
   UserRecord,
   WhatsAppSupportRecord,
 } from "./types.js";
+import { errors } from "../lib/errors.js";
 
 function requireRow<T>(rows: T[], operation: string): T {
   const row = rows[0];
@@ -98,6 +102,7 @@ function mapInquiry(row: typeof inquiries.$inferSelect): InquiryRecord {
   const occupancy = row.occupancies[0] ?? { adults: 1, childrenAges: [] };
   return {
     id: row.id,
+    reservationNumber: row.reservationNumber.toString(),
     hotelId: row.hotelId,
     idempotencyKey: row.idempotencyKey,
     guestName: row.guestName,
@@ -107,6 +112,7 @@ function mapInquiry(row: typeof inquiries.$inferSelect): InquiryRecord {
     checkIn: row.checkIn,
     checkOut: row.checkOut,
     occupancy: { adults: occupancy.adults, childAges: occupancy.childrenAges },
+    mealPlan: row.mealPlan as MealPlan | null,
     source: row.source,
     note: row.note,
     attentionReason: row.attentionReason as InquiryRecord["attentionReason"],
@@ -175,8 +181,8 @@ function mapRatePeriod(row: typeof ratePeriods.$inferSelect, hotelId: string): R
     includedChildren: row.includedChildren,
     extraAdultCents: row.extraAdultCents,
     extraChildCents: row.extraChildCents,
-    breakfastAdultCents: row.breakfastAdultCents,
-    breakfastChildCents: row.breakfastChildCents,
+    boardAdultCents: row.boardAdultCents,
+    boardChildCents: row.boardChildCents,
     maxChildAge: row.childMaxAge,
     minNights: row.minimumNights,
     active: row.active,
@@ -377,6 +383,11 @@ class PostgresHotelRepository implements HotelRepository {
 class PostgresAutomationRepository implements AutomationRepository {
   constructor(private readonly db: Database) {}
 
+  async findPublicHotelWebsite(hotelId: string): Promise<string | null> {
+    const [hotel] = await this.db.select().from(hotels).where(and(eq(hotels.id, hotelId), isNull(hotels.deletedAt))).limit(1);
+    return hotel?.website || hotel?.allowedOrigins[0] || null;
+  }
+
   async findPublicHotelByKey(publicKey: string): Promise<HotelProfile | null> {
     const [row] = await this.db
       .select()
@@ -434,6 +445,7 @@ class PostgresAutomationRepository implements AutomationRepository {
           checkIn: input.inquiry.checkIn,
           checkOut: input.inquiry.checkOut,
           occupancies: [{ adults: input.inquiry.occupancy.adults, childrenAges: input.inquiry.occupancy.childAges }],
+          mealPlan: input.inquiry.mealPlan,
           source: input.inquiry.source,
           note: input.inquiry.note,
           attentionReason: input.inquiry.attentionReason,
@@ -500,15 +512,54 @@ class PostgresAutomationRepository implements AutomationRepository {
     return row ? mapOffer(row) : null;
   }
 
+  async replaceReservationOffers(input: ReservationOffersCreate): Promise<{ replayed: boolean } | null> {
+    return this.db.transaction(async (transaction) => {
+      // Editing and accepting take this same reservation lock. No new inquiry is inserted.
+      const [row] = await transaction.select({ inquiry: inquiries }).from(inquiries)
+        .innerJoin(hotelMembers, and(eq(hotelMembers.hotelId, inquiries.hotelId), eq(hotelMembers.userId, input.userId)))
+        .where(and(eq(inquiries.id, input.inquiryId), eq(inquiries.hotelId, input.offer.hotelId)))
+        .for("update", { of: inquiries });
+      if (!row) return null;
+      const existing = await transaction.select().from(offerVersions).where(eq(offerVersions.inquiryId, input.inquiryId));
+      if (existing.some(({ id }) => id === input.offer.id)) return { replayed: true };
+      if (row.inquiry.closedAt || existing.some(({ state }) => state === "accepted")) throw errors.reservationAccepted();
+      if (row.inquiry.currentOfferId !== input.baseOfferId) throw errors.offersChanged();
+      await transaction.update(offerVersions).set({ state: "expired" })
+        .where(and(eq(offerVersions.inquiryId, input.inquiryId), eq(offerVersions.state, "active")));
+      await transaction.update(deliveries).set({ state: "cancelled", updatedAt: input.now })
+        .where(and(eq(deliveries.inquiryId, input.inquiryId), eq(deliveries.kind, "offer"), eq(deliveries.state, "scheduled")));
+      await transaction.insert(offerVersions).values({ ...input.offer, version: Math.max(0, ...existing.map(({ version }) => version)) + 1 });
+      await transaction.insert(deliveries).values(input.deliveries);
+      await transaction.update(inquiries).set({ currentOfferId: input.offer.id, attentionReason: null, updatedAt: input.now })
+        .where(eq(inquiries.id, input.inquiryId));
+      return { replayed: false };
+    });
+  }
+
   async acceptOfferByTokenHash(tokenHash: string, now: Date, selectedOptionIndex: number): Promise<OfferRecord | null> {
-    const current = await this.findOfferByTokenHash(tokenHash);
-    if (!current || current.state === "accepted" || current.state !== "active" || current.expiresAt <= now) return current;
-    const rows = await this.db
-      .update(offerVersions)
-      .set({ state: "accepted", acceptedAt: now, selectedOptionIndex })
-      .where(and(eq(offerVersions.publicTokenHash, tokenHash), eq(offerVersions.state, "active"), gt(offerVersions.expiresAt, now)))
-      .returning();
-    return rows[0] ? mapOffer(rows[0]) : this.findOfferByTokenHash(tokenHash);
+    return this.db.transaction(async (transaction) => {
+      const [found] = await transaction.select().from(offerVersions).where(eq(offerVersions.publicTokenHash, tokenHash)).limit(1);
+      if (!found) return null;
+      await transaction.select({ id: inquiries.id }).from(inquiries).where(eq(inquiries.id, found.inquiryId)).for("update");
+      const [current] = await transaction.select().from(offerVersions).where(eq(offerVersions.id, found.id));
+      if (!current) return null;
+      if (current.state !== "active" || current.expiresAt <= now) return mapOffer(current);
+      const [accepted] = await transaction.select({ id: offerVersions.id }).from(offerVersions)
+        .where(and(eq(offerVersions.inquiryId, current.inquiryId), eq(offerVersions.state, "accepted"))).limit(1);
+      if (accepted) {
+        const [expired] = await transaction.update(offerVersions).set({ state: "expired" }).where(eq(offerVersions.id, current.id)).returning();
+        return expired ? mapOffer(expired) : null;
+      }
+      const [result] = await transaction.update(offerVersions).set({ state: "accepted", acceptedAt: now, selectedOptionIndex })
+        .where(and(eq(offerVersions.id, current.id), eq(offerVersions.state, "active"), gt(offerVersions.expiresAt, now))).returning();
+      if (!result) return mapOffer(current);
+      await transaction.update(offerVersions).set({ state: "expired" }).where(and(eq(offerVersions.inquiryId, current.inquiryId),
+        ne(offerVersions.id, current.id), eq(offerVersions.state, "active")));
+      await transaction.update(deliveries).set({ state: "cancelled", updatedAt: now }).where(and(eq(deliveries.inquiryId, current.inquiryId),
+        eq(deliveries.kind, "offer"), eq(deliveries.state, "scheduled")));
+      await transaction.update(inquiries).set({ currentOfferId: current.id, updatedAt: now }).where(eq(inquiries.id, current.inquiryId));
+      return mapOffer(result);
+    });
   }
 
   async markPaymentLinkSentForUser(userId: string, inquiryId: string, now: Date): Promise<InquiryRecord | null> {
@@ -530,7 +581,91 @@ class PostgresAutomationRepository implements AutomationRepository {
     return updated[0] ? mapInquiry(updated[0]) : mapInquiry({ ...existing, closedAt: now, updatedAt: now });
   }
 
-  async dashboardFactsForUser(userId: string): Promise<DashboardFacts | null> {
+  async dashboardPageForUser(userId: string, query: DashboardQuery): Promise<DashboardPageFacts | null> {
+    // Keep the counts and page contents consistent while offers or deliveries change.
+    return this.db.transaction(async (db) => {
+      const [membership] = await db
+        .select({ hotel: hotels })
+        .from(hotelMembers)
+        .innerJoin(hotels, eq(hotels.id, hotelMembers.hotelId))
+        .where(and(eq(hotelMembers.userId, userId), isNull(hotels.deletedAt)))
+        .limit(1);
+      if (!membership) return null;
+      const hotel = membership.hotel;
+      const latest = db.selectDistinctOn([offerVersions.inquiryId]).from(offerVersions)
+        .where(eq(offerVersions.hotelId, hotel.id))
+        .orderBy(asc(offerVersions.inquiryId), desc(offerVersions.version)).as("latest_offer");
+      const option = sql`${latest.snapshot}->'options'->coalesce(${latest.selectedOptionIndex}, 0)`;
+      // This follows requestSummaries' precedence, including an accepted but expired offer.
+      const status = sql<string>`case
+        when ${inquiries.closedAt} is not null then 'completed'
+        when ${latest.acceptedAt} is not null then 'payment'
+        when ${inquiries.attentionReason} is not null then 'attention'
+        when ${latest.state} in ('expired', 'revoked') or ${latest.expiresAt} <= now() then 'attention'
+        when exists (select 1 from ${deliveries} where ${deliveries.inquiryId} = ${inquiries.id}
+          and ${deliveries.offerVersionId} = ${latest.id} and ${deliveries.state} in ('provider_accepted', 'delivered')) then 'waiting'
+        else 'new' end`;
+      const rows = db.$with("dashboard_requests").as(db.select({
+        id: inquiries.id,
+        createdAt: inquiries.createdAt,
+        reservationNumber: inquiries.reservationNumber,
+        status: status.as("status"),
+        totalCents: sql<number>`case when jsonb_typeof(${option}->'totalCents') = 'number'
+          then (${option}->>'totalCents')::numeric else 0 end`.as("total_cents"),
+        searchText: sql<string>`concat_ws(' ', ${inquiries.guestName}, ${inquiries.guestEmail}, ${inquiries.guestPhone},
+          ${inquiries.mealPlan}, ${option}->>'roomName', ${inquiries.checkIn}, ${inquiries.checkOut},
+          concat(${inquiries.checkOut} - ${inquiries.checkIn}, case when ${inquiries.checkOut} - ${inquiries.checkIn} = 1 then ' night' else ' nights' end),
+          concat(coalesce((${inquiries.occupancies}->0->>'adults')::int, 1),
+            case when coalesce((${inquiries.occupancies}->0->>'adults')::int, 1) = 1 then ' adult' else ' adults' end),
+          concat(jsonb_array_length(coalesce(${inquiries.occupancies}->0->'childrenAges', '[]'::jsonb)),
+            case when jsonb_array_length(coalesce(${inquiries.occupancies}->0->'childrenAges', '[]'::jsonb)) = 1 then ' child' else ' children' end), ${status},
+          case ${status} when 'payment' then 'Payment link needed' when 'completed' then 'Waiting for client'
+            when 'waiting' then 'Waiting for reply' when 'attention' then 'Review needed Not delivered' else 'New request' end)`.as("search_text"),
+        failedDelivery: sql<boolean>`exists (select 1 from (
+          select distinct on (${deliveries.channel}) ${deliveries.state} from ${deliveries}
+          where ${deliveries.inquiryId} = ${inquiries.id}
+            and ${deliveries.channel} in ('email', 'whatsapp')
+            and (${latest.id} is null or ${deliveries.offerVersionId} = ${latest.id})
+          order by ${deliveries.channel}, ${deliveries.createdAt} desc, ${deliveries.id} desc
+        ) as latest_delivery where state = 'failed')`.as("failed_delivery"),
+      }).from(inquiries).leftJoin(latest, eq(latest.inquiryId, inquiries.id))
+        .where(and(eq(inquiries.hotelId, hotel.id), gte(inquiries.createdAt,
+          sql<Date>`date_trunc('day', now() at time zone ${hotel.timezone}) at time zone ${hotel.timezone}`))));
+
+      const reservationNumber = /^#?\s*(\d+)$/.exec(query.search)?.[1];
+      const escapedSearch = query.search.replace(/[\\%_]/g, "\\$&");
+      const matches = and(query.status === "all" ? undefined : eq(rows.status, query.status),
+        !query.search ? undefined : reservationNumber !== undefined
+          ? sql`${rows.reservationNumber}::text = ${reservationNumber}`
+          : sql`${rows.searchText} ilike ${`%${escapedSearch}%`}`);
+      const [totals] = await db.with(rows).select({
+        total: sql<number>`count(*)::int`,
+        new: sql<number>`count(*) filter (where ${rows.status} = 'new')::int`,
+        offerSent: sql<number>`count(*) filter (where ${rows.status} = 'waiting')::int`,
+        requiresConfirmation: sql<number>`count(*) filter (where ${rows.status} = 'payment')::int`,
+        requiresConfirmationTotalCents: sql<number>`coalesce(sum(${rows.totalCents}) filter (where ${rows.status} = 'payment'), 0)::float8`,
+        needsAttention: sql<number>`count(*) filter (where ${rows.status} = 'attention')::int`,
+        failedDeliveries: sql<number>`count(*) filter (where ${rows.failedDelivery})::int`,
+        filteredTotal: sql<number>`count(*) filter (where ${matches ?? sql`true`})::int`,
+      }).from(rows);
+      const { filteredTotal, ...counts } = totals!;
+      const page = Math.min(query.page, Math.max(1, Math.ceil(filteredTotal / query.limit)));
+      const order = query.sort === "asc" ? asc : desc;
+      const pageRows = await db.with(rows).select({ inquiry: inquiries }).from(rows)
+        .innerJoin(inquiries, eq(inquiries.id, rows.id)).where(matches)
+        .orderBy(order(rows.createdAt), order(rows.id)).limit(query.limit).offset((page - 1) * query.limit);
+      const ids = pageRows.map(({ inquiry }) => inquiry.id);
+      const [offerRows, deliveryRows] = ids.length === 0 ? [[], []] : await Promise.all([
+        db.select().from(offerVersions).where(and(eq(offerVersions.hotelId, hotel.id), inArray(offerVersions.inquiryId, ids))),
+        db.select().from(deliveries).where(and(eq(deliveries.hotelId, hotel.id), inArray(deliveries.inquiryId, ids))),
+      ]);
+      return { hotel: mapHotel(hotel), inquiries: pageRows.map(({ inquiry }) => mapInquiry(inquiry)),
+        offers: offerRows.map(mapOffer), deliveries: deliveryRows.map(mapDelivery), counts,
+        pagination: { page, limit: query.limit, total: filteredTotal } };
+    }, { isolationLevel: "repeatable read", accessMode: "read only" });
+  }
+
+  async dashboardFactsForUser(userId: string, inquiryIds?: string[]): Promise<DashboardFacts | null> {
     const [membership] = await this.db
       .select({ hotel: hotels })
       .from(hotelMembers)
@@ -542,15 +677,17 @@ class PostgresAutomationRepository implements AutomationRepository {
     const inquiryRows = await this.db
       .select()
       .from(inquiries)
-      .where(and(eq(inquiries.hotelId, membership.hotel.id), gte(inquiries.createdAt, todayStart)))
+      .where(and(eq(inquiries.hotelId, membership.hotel.id), inquiryIds
+        ? inArray(inquiries.id, inquiryIds)
+        : gte(inquiries.createdAt, todayStart)))
       .orderBy(desc(inquiries.createdAt))
       .limit(1_000);
-    const inquiryIds = inquiryRows.map(({ id }) => id);
-    const [offerRows, deliveryRows] = inquiryIds.length === 0
+    const foundIds = inquiryRows.map(({ id }) => id);
+    const [offerRows, deliveryRows] = foundIds.length === 0
       ? [[], []]
       : await Promise.all([
-          this.db.select().from(offerVersions).where(and(eq(offerVersions.hotelId, membership.hotel.id), inArray(offerVersions.inquiryId, inquiryIds))),
-          this.db.select().from(deliveries).where(and(eq(deliveries.hotelId, membership.hotel.id), inArray(deliveries.inquiryId, inquiryIds))),
+          this.db.select().from(offerVersions).where(and(eq(offerVersions.hotelId, membership.hotel.id), inArray(offerVersions.inquiryId, foundIds))),
+          this.db.select().from(deliveries).where(and(eq(deliveries.hotelId, membership.hotel.id), inArray(deliveries.inquiryId, foundIds))),
         ]);
     return {
       hotel: mapHotel(membership.hotel),
@@ -639,8 +776,8 @@ class PostgresInventoryRepository implements InventoryRepository {
           includedChildren: input.includedChildren,
           extraAdultCents: input.extraAdultCents,
           extraChildCents: input.extraChildCents,
-          breakfastAdultCents: input.breakfastAdultCents,
-          breakfastChildCents: input.breakfastChildCents,
+          boardAdultCents: input.boardAdultCents,
+          boardChildCents: input.boardChildCents,
           childMaxAge: input.maxChildAge,
           minimumNights: input.minNights,
           active: input.active,
@@ -704,8 +841,8 @@ class PostgresInventoryRepository implements InventoryRepository {
       ...(input.includedChildren === undefined ? {} : { includedChildren: input.includedChildren }),
       ...(input.extraAdultCents === undefined ? {} : { extraAdultCents: input.extraAdultCents }),
       ...(input.extraChildCents === undefined ? {} : { extraChildCents: input.extraChildCents }),
-      ...(input.breakfastAdultCents === undefined ? {} : { breakfastAdultCents: input.breakfastAdultCents }),
-      ...(input.breakfastChildCents === undefined ? {} : { breakfastChildCents: input.breakfastChildCents }),
+      ...(input.boardAdultCents === undefined ? {} : { boardAdultCents: input.boardAdultCents }),
+      ...(input.boardChildCents === undefined ? {} : { boardChildCents: input.boardChildCents }),
       ...(input.maxChildAge === undefined ? {} : { childMaxAge: input.maxChildAge }),
       ...(input.minNights === undefined ? {} : { minimumNights: input.minNights }),
       ...(input.active === undefined ? {} : { active: input.active }),
@@ -751,6 +888,7 @@ class PostgresInventoryRepository implements InventoryRepository {
     userId: string;
     roomId: string;
     planCode: string;
+    mealPlan: MealPlan;
     start: string;
     endExclusive: string;
     excludeRatePeriodId?: string;
@@ -760,6 +898,7 @@ class PostgresInventoryRepository implements InventoryRepository {
     const conditions = [
       eq(ratePeriods.roomId, input.roomId),
       eq(ratePeriods.planKey, input.planCode),
+      eq(ratePeriods.mealPlan, input.mealPlan),
       eq(ratePeriods.active, true),
       isNull(ratePeriods.deletedAt),
       lt(ratePeriods.startDate, input.endExclusive),

@@ -29,11 +29,12 @@ npm run db:migrate --workspace @hotel/server
 Перед запуском замените `AUTH_SECRET` в `apps/server/.env` случайной строкой длиной не менее 32 символов.
 Для фактической отправки предложений включите `DELIVERY_WORKER_ENABLED=true`. Без этого заявки и доставки создаются, но worker намеренно не отправляет сообщения.
 
-В двух терминалах:
+В трёх терминалах:
 
 ```bash
 npm run dev:server
 npm run dev:mobile
+npm run dev:clients
 ```
 
 Для физического телефона укажите в `apps/mobile/.env` LAN-адрес компьютера вместо `127.0.0.1`, например `http://192.168.1.20:4000`.
@@ -58,6 +59,14 @@ npm exec --workspace @hotel/server -- drizzle-kit check
 ```
 
 Текущая база включает регистрацию и сессии, профиль и фотографии по URL, комнаты, тарифы по датам, серверный расчёт, публичный intake, автоматическое неизменяемое предложение, веб-страницу Accept и живой dashboard в Expo. В приложении доступны редактор шаблонов, preview, тестовая отправка, подключение Google OAuth и WAHA. Встроенный worker отправляет реальные email/WhatsApp, безопасно повторяет только однозначно повторяемые ошибки и не дублирует отправку при неоднозначном сетевом ответе.
+
+Каждая заявка получает постоянный уникальный номер бронирования: `1`, `2`, `3` и далее, без букв и ведущих нулей. Он отображается в списке заявок, доступен для поиска и копирования во внутреннюю систему отеля, а также возвращается API как `reservationNumber`. Миграция `0013_reservation_numbers` присваивает номера существующим заявкам. Номера общие для всех отелей, не переиспользуются после удаления и могут иметь пропуски при повторных запросах или откате транзакций.
+
+Staff can add enquiries from phone calls, walk-ins and other conversations using **Requests → New request**, including before website setup is complete. Enter the guest, stay dates, occupancy, BB/HB/FB and optional notes. By default the request is saved for review without sending a guest message; contact details are optional. Enable **Prepare & send offer** to calculate an offer using the existing rates and queue delivery to the supplied email and/or WhatsApp. At least one contact is required in that mode; missing rooms or rates leave the request needing review. The authenticated `POST /v1/inquiries` endpoint requires an `Idempotency-Key` (1–153 characters) and takes the hotel from the signed-in user. Manual source and staff identity are recorded with the request. Demo entries remain in memory and never send messages.
+
+Use **Duplicate** on a reservation page to open a new request with the guest, contacts, language, dates, occupancy, board, notes and priced room offers prefilled. Review and edit the copied information before saving; copied offer prices are retained rather than recalculated. Saving creates a separate reservation number, resets acceptance/payment/delivery history and leaves sending off by default. A saved client is not required: requests store their guest details directly, and the existing contact worker handles client linking separately.
+
+Open a reservation and select **Prepare offers** or **Edit & send offers** to send 1–6 priced choices on that same reservation. Staff can change the room, terms, total stay price and guest note using arrangements recorded by phone or in the original request notes. Dates, occupancy and board remain those of the request. Offers have `available`, `expired` or `accepted` status and are valid for seven days. Accepting one expires all alternatives; the accepted choice stays accepted after seven days. Sending edits creates an immutable replacement offer set, expires the previous links and cancels their pending deliveries, while keeping the existing reservation ID and number. Expired email links still display an expired reservation screen with a link to the hotel website (or first configured website origin) for a new booking and availability check. Configure the hotel website for phone-only requests. The authenticated `POST /v1/inquiries/:inquiryId/offers` endpoint requires an `Idempotency-Key`, `baseOfferId` (or `null` for the first set), and 1–6 `offers` containing `roomId`, `planName`, integer `totalCents` and an optional `note`. Concurrent edits or changes after acceptance return `409`. Run PostgreSQL concurrency checks with `OFFERS_TEST_DATABASE_URL` pointing to a disposable test database.
 
 ## Форма для сайта
 
@@ -90,3 +99,15 @@ npm exec --workspace @hotel/server -- drizzle-kit check
 - [CSS-переменные](design/tokens.css)
 
 Референс: Smart Home App UI Kit в Figma. Из него перенесены визуальная логика, типографическая шкала, геометрия, цветовые роли и подход к компонентам. Тематика и пользовательские сценарии адаптированы под гостиничный продукт.
+
+Клиенты и отдельный фоновый worker: [apps/server/docs/clients.md](apps/server/docs/clients.md).
+
+## Board basis: BB / HB / FB
+
+Every new website enquiry must send a required `mealPlan` with exactly `BB`, `HB`, or `FB` (case-sensitive). Legacy values and missing codes are rejected. The widget provides the choice; existing forms must map it using `data-meal-plan="[name='mealPlan']"` or `data-hotel-field="mealPlan"`. Radio groups and selects are supported. The board is persisted on the enquiry and immutable offer snapshot, displayed in request summaries, and included in guest/staff messages.
+
+Rates and previews also require `mealPlan`. A room can have BB, HB and FB rates for the same dates and plan code; overlaps are rejected within the same room + plan + board. Automatic offers use only the requested board. Missing matching board rates create a request needing attention and never substitute another board.
+
+`nightlyBaseCents` is the package price for the included occupancy. `extraAdultCents` / `extraChildCents` add the extra guest's accommodation and board. Optional `boardAdultCents` / `boardChildCents` are additional charges for every adult/child per night; leave them zero when the package already includes all meals. The existing age threshold determines adult/child pricing. The price is calculated night by night and frozen before delivery and acceptance.
+
+Migration `0012_strict_board_basis` renames breakfast charge columns to board charges, converts breakfast rates to BB, and soft-archives room-only rates without inventing meal inclusions. Historical requests get a board only when their selected or consistent offer establishes it. Unresolved requests show “Board needed”; their active offers are revoked and scheduled deliveries cancelled. Existing offer snapshots remain unchanged. Run the normal server database migration before starting the updated server.

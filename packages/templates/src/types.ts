@@ -10,6 +10,7 @@ export type OfferSnapshot = Readonly<{
     locale?: string;
     timezone?: string;
     logoUrl: string | null;
+    websiteUrl?: string | null;
     photos?: readonly Readonly<{
       url: string;
       alt: string;
@@ -20,6 +21,7 @@ export type OfferSnapshot = Readonly<{
     name: string;
     checkIn: string;
     checkOut: string;
+    mealPlan: "BB" | "HB" | "FB";
     occupancy: Readonly<{
       adults: number;
       childAges: readonly number[];
@@ -43,7 +45,7 @@ export type OfferSnapshot = Readonly<{
     }>;
     planCode: string;
     planName: string;
-    mealPlan: "room_only" | "breakfast";
+    mealPlan: "BB" | "HB" | "FB";
     currency: string;
     nights: readonly Readonly<{
       date: string;
@@ -54,6 +56,7 @@ export type OfferSnapshot = Readonly<{
       totalCents: number;
     }>[];
     totalCents: number;
+    note?: string;
   }>[];
 }>;
 
@@ -68,4 +71,5 @@ export type PageRenderContext = Readonly<{
   locale?: string;
   selectedOptionIndex?: number;
   testMode?: boolean;
+  websiteUrl?: string | null;
 }>;

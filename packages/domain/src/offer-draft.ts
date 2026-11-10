@@ -5,6 +5,7 @@ import type {
   Room,
 } from "@hotel/contracts";
 import { calculateStayPrice, roomFitsOccupancy, type RateIssue } from "./rates.js";
+import { MAX_RESERVATION_OFFERS } from "@hotel/contracts";
 
 type DeepReadonly<T> = T extends (...args: never[]) => unknown
   ? T
@@ -16,6 +17,7 @@ type DeepReadonly<T> = T extends (...args: never[]) => unknown
 
 export type OfferDraftAttentionReason =
   | "no_matching_room"
+  | "meal_plan_unavailable"
   | "missing_rate"
   | "ambiguous_rate";
 
@@ -41,7 +43,7 @@ export type OfferDraftOption = {
     baseCents: number;
     extraAdultCents: number;
     extraChildCents: number;
-    breakfastCents: number;
+    boardCents: number;
     totalCents: number;
   }[];
   totalCents: number;
@@ -57,6 +59,7 @@ export type OfferDraft = DeepReadonly<{
     locale: string;
     timezone: string;
     logoUrl: string | null;
+    websiteUrl: string | null;
     photos: Hotel["photos"];
   };
   guestSnapshot: {
@@ -64,6 +67,7 @@ export type OfferDraft = DeepReadonly<{
     checkIn: string;
     checkOut: string;
     occupancy: Inquiry["occupancy"];
+    mealPlan: Inquiry["mealPlan"];
   };
   options: OfferDraftOption[];
 }>;
@@ -125,7 +129,7 @@ function planMetadataIsStable(periods: readonly RatePeriod[]): boolean {
 }
 
 export function buildOfferDraft(input: BuildOfferDraftInput): BuildOfferDraftResult {
-  const optionLimit = Math.max(1, Math.min(3, input.maxOptions ?? 3));
+  const optionLimit = Math.max(1, Math.min(MAX_RESERVATION_OFFERS, input.maxOptions ?? MAX_RESERVATION_OFFERS));
   const guestCount =
     input.inquiry.occupancy.adults + input.inquiry.occupancy.childAges.length;
   const suitableRooms = input.rooms.filter(
@@ -141,6 +145,11 @@ export function buildOfferDraft(input: BuildOfferDraftInput): BuildOfferDraftRes
       attentionReason: "no_matching_room" as const,
       issues: [],
     });
+  }
+
+  if (!input.ratePeriods.some((period) => period.active && period.hotelId === input.hotel.id &&
+    period.mealPlan === input.inquiry.mealPlan && suitableRooms.some((room) => room.id === period.roomId))) {
+    return deepFreeze({ ok: false as const, attentionReason: "meal_plan_unavailable" as const, issues: [] });
   }
 
   const candidates: Candidate[] = [];
@@ -160,7 +169,7 @@ export function buildOfferDraft(input: BuildOfferDraftInput): BuildOfferDraftRes
 
     for (const planCode of planCodes) {
       const planRates = roomRates
-        .filter((period) => period.planCode === planCode)
+        .filter((period) => period.planCode === planCode && period.mealPlan === input.inquiry.mealPlan)
         .sort(
           (left, right) =>
             compareText(left.start, right.start) || compareText(left.id, right.id),
@@ -185,6 +194,7 @@ export function buildOfferDraft(input: BuildOfferDraftInput): BuildOfferDraftRes
       const calculation = calculateStayPrice({
         roomId: room.id,
         planCode,
+        mealPlan: input.inquiry.mealPlan,
         checkIn: input.inquiry.checkIn,
         checkOut: input.inquiry.checkOut,
         occupancy: input.inquiry.occupancy,
@@ -251,6 +261,7 @@ export function buildOfferDraft(input: BuildOfferDraftInput): BuildOfferDraftRes
         locale: input.hotel.locale,
         timezone: input.hotel.timezone,
         logoUrl: input.hotel.logoUrl,
+        websiteUrl: input.hotel.websiteUrl,
         photos: input.hotel.photos.map((photo) => ({ ...photo })),
       },
       guestSnapshot: {
@@ -261,6 +272,7 @@ export function buildOfferDraft(input: BuildOfferDraftInput): BuildOfferDraftRes
           adults: input.inquiry.occupancy.adults,
           childAges: [...input.inquiry.occupancy.childAges],
         },
+        mealPlan: input.inquiry.mealPlan,
       },
       options,
     },

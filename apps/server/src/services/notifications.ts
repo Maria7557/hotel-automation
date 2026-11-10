@@ -1,8 +1,9 @@
 import type { NotificationRepository } from "../repositories/types.js";
+import type { MealPlan } from "@hotel/contracts";
 
 export type NotificationEvent =
-  | { type: "inquiry"; hotelId: string; inquiryId: string; guestName: string; checkIn: string; checkOut: string; attentionReason: string | null }
-  | { type: "payment"; hotelId: string; inquiryId: string; guestName: string }
+  | { type: "inquiry"; hotelId: string; inquiryId: string; guestName: string; checkIn: string; checkOut: string; mealPlan: MealPlan; attentionReason: string | null }
+  | { type: "payment"; hotelId: string; inquiryId: string; guestName: string; mealPlan: MealPlan }
   | { type: "error"; hotelId: string; inquiryId: string; guestName: string; message: string };
 
 export type PushMessage = {
@@ -73,7 +74,7 @@ export class NotificationService {
             to: device.expoPushToken,
             title: content.title,
             body: content.body,
-            data: { event: event.type, inquiryId: event.inquiryId },
+            data: { event: event.type, inquiryId: event.inquiryId, ...(event.type === "error" ? {} : { mealPlan: event.mealPlan }) },
           });
         }
       }
@@ -86,8 +87,8 @@ export class NotificationService {
       ) {
         emailTasks.push(this.mailer.send({
           to: target.preferences.emailAddress,
-          subject: `New request: ${event.guestName}`,
-          text: `${event.guestName}\n${event.checkIn} — ${event.checkOut}${event.attentionReason ? `\nNeeds attention: ${event.attentionReason}` : ""}`,
+          subject: `${event.mealPlan} · New request: ${event.guestName}`,
+          text: `${event.mealPlan} · ${event.guestName}\n${event.checkIn} — ${event.checkOut}${event.attentionReason ? `\nNeeds attention: ${event.attentionReason}` : ""}`,
         }));
       }
     }
@@ -104,13 +105,13 @@ export class NotificationService {
 
 function notificationContent(event: NotificationEvent): { title: string; body: string } {
   if (event.type === "payment") {
-    return { title: "Guest accepted", body: `${event.guestName} is waiting for confirmation and payment.` };
+    return { title: `${event.mealPlan} · Guest accepted`, body: `${event.guestName} is waiting for confirmation and payment.` };
   }
   if (event.type === "error") {
     return { title: "Action required", body: `${event.guestName}: ${event.message}` };
   }
   if (event.attentionReason) {
-    return { title: "New request needs attention", body: `${event.guestName}: review dates, room and rates.` };
+    return { title: `${event.mealPlan} · New request needs attention`, body: `${event.guestName}: review ${event.mealPlan} rates, dates and room.` };
   }
-  return { title: "New request", body: `${event.guestName} · ${event.checkIn} — ${event.checkOut}` };
+  return { title: `${event.mealPlan} · New request`, body: `${event.guestName} · ${event.checkIn} — ${event.checkOut}` };
 }

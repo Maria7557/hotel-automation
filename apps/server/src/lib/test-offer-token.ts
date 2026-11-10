@@ -1,14 +1,17 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
+import type { MealPlan } from "@hotel/contracts";
 
 export type TestOfferTokenPayload = {
   publicKey: string;
   checkIn: string;
   checkOut: string;
   adults: number;
+  mealPlan: MealPlan;
   expiresAt: number;
 };
 
-const payloadLength = 29;
+const payloadLength = 30;
+const mealPlans = ["BB", "HB", "FB"] as const;
 
 function signature(payload: string, secret: string): Buffer {
   return createHmac("sha256", secret).update(`test-offer:${payload}`).digest().subarray(0, 16);
@@ -27,6 +30,7 @@ export function createTestOfferToken(
   payload.writeUInt32BE(dateToEpochDay(input.checkOut), 20);
   payload.writeUInt32BE(Math.floor(expiresAt.getTime() / 1_000), 24);
   payload.writeUInt8(input.adults, 28);
+  payload.writeUInt8(mealPlans.indexOf(input.mealPlan), 29);
   const encoded = payload.toString("base64url");
   return `${encoded}.${signature(encoded, secret).toString("base64url")}`;
 }
@@ -48,14 +52,17 @@ export function verifyTestOfferToken(
   } catch {
     return null;
   }
+  if (provided.toString("base64url") !== providedSignature || payload.toString("base64url") !== encoded) return null;
   if (provided.length !== expected.length || !timingSafeEqual(provided, expected) || payload.length !== payloadLength) return null;
   const publicKey = bytesToUuid(payload.subarray(0, 16));
   const checkIn = epochDayToDate(payload.readUInt32BE(16));
   const checkOut = epochDayToDate(payload.readUInt32BE(20));
   const expiresAt = payload.readUInt32BE(24) * 1_000;
   const adults = payload.readUInt8(28);
+  const mealPlan = mealPlans[payload.readUInt8(29)];
+  if (!mealPlan) return null;
   if (checkIn >= checkOut || adults < 1 || adults > 20 || expiresAt <= now.getTime()) return null;
-  return { publicKey, checkIn, checkOut, adults, expiresAt };
+  return { publicKey, checkIn, checkOut, adults, mealPlan, expiresAt };
 }
 
 function dateToEpochDay(value: string): number {

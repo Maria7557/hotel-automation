@@ -46,6 +46,8 @@ const envSchema = z.object({
     z.email().optional(),
   ),
   NOTIFICATION_FROM_NAME: optionalString,
+  CLIENT_WORKER_INTERVAL_MS: z.coerce.number().int().min(1000).max(300_000).default(30_000),
+  CLIENT_WORKER_BATCH_SIZE: z.coerce.number().int().min(1).max(25).default(25),
   DELIVERY_WORKER_ENABLED: booleanFromString,
   DELIVERY_WORKER_INTERVAL_MS: z.coerce.number().int().min(250).max(60_000).default(5_000),
   DELIVERY_WORKER_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(20).default(5),

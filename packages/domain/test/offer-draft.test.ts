@@ -19,6 +19,18 @@ function hotel(overrides: Partial<Hotel> = {}): Hotel {
 }
 
 describe("buildOfferDraft", () => {
+  it("filters by requested board before ranking and limiting offers", () => {
+    const result = buildOfferDraft({
+      hotel: hotel(), rooms: [room()], inquiry: inquiry({ mealPlan: "HB" }),
+      ratePeriods: [
+        ...[1, 2, 3, 4].map((number) => rate({ id: `bb-${number}`, planCode: `bb-${number}`, nightlyBaseCents: number })),
+        rate({ id: "hb", planCode: "hb", mealPlan: "HB", nightlyBaseCents: 20_000 }),
+      ],
+    });
+    expect(result).toMatchObject({ ok: true, draft: { guestSnapshot: { mealPlan: "HB" }, options: [{ mealPlan: "HB", totalCents: 40_000 }] } });
+    if (result.ok) expect(result.draft.options).toHaveLength(1);
+  });
+
   it("returns attention without inventing a price when no room fits", () => {
     const result = buildOfferDraft({
       hotel: hotel(),
@@ -89,7 +101,7 @@ describe("buildOfferDraft", () => {
           roomId: "compact",
           planCode: "save",
           planName: "Non-refundable",
-          mealPlan: "room_only",
+          mealPlan: "BB",
           nightlyBaseCents: 10_000,
         }),
         rate({ id: "large-flex", roomId: "large", nightlyBaseCents: 5_000 }),
@@ -105,8 +117,8 @@ describe("buildOfferDraft", () => {
       totalCents,
     }))).toEqual([
       { roomId: "compact", planCode: "save", totalCents: 20_000 },
-      { roomId: "compact", planCode: "breakfast", totalCents: 24_000 },
-      { roomId: "large", planCode: "breakfast", totalCents: 10_000 },
+      { roomId: "compact", planCode: "BB", totalCents: 24_000 },
+      { roomId: "large", planCode: "BB", totalCents: 10_000 },
     ]);
   });
 
@@ -161,7 +173,7 @@ describe("buildOfferDraft", () => {
     expect(sourceInquiry).toEqual(before);
   });
 
-  it("returns at most three deterministic, deeply frozen snapshots", () => {
+  it("returns at most six deterministic, deeply frozen snapshots", () => {
     const result = buildOfferDraft({
       hotel: hotel({
         photos: [
@@ -174,6 +186,7 @@ describe("buildOfferDraft", () => {
         rate({ id: "rate-b", planCode: "b", planName: "B", nightlyBaseCents: 11_000 }),
         rate({ id: "rate-c", planCode: "c", planName: "C", nightlyBaseCents: 12_000 }),
         rate({ id: "rate-a", planCode: "a", planName: "A", nightlyBaseCents: 10_000 }),
+        ...["g", "e", "f"].map((planCode, index) => rate({ id: `rate-${planCode}`, planCode, planName: planCode, nightlyBaseCents: 14_000 + index * 1_000 })),
       ],
       inquiry: inquiry(),
       maxOptions: 10,
@@ -181,7 +194,7 @@ describe("buildOfferDraft", () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.draft.options.map(({ planCode }) => planCode)).toEqual(["a", "b", "c"]);
+    expect(result.draft.options.map(({ planCode }) => planCode)).toEqual(["a", "b", "c", "d", "g", "e"]);
     expect(Object.isFrozen(result.draft)).toBe(true);
     expect(Object.isFrozen(result.draft.options)).toBe(true);
     expect(Object.isFrozen(result.draft.hotelSnapshot.photos[0])).toBe(true);
@@ -205,6 +218,6 @@ describe("buildOfferDraft", () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.draft.options.map(({ planCode }) => planCode)).toEqual(["breakfast"]);
+    expect(result.draft.options.map(({ planCode }) => planCode)).toEqual(["BB"]);
   });
 });

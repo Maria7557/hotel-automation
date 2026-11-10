@@ -33,18 +33,18 @@ describe("notification service", () => {
     const mail = new MailSpy();
     const service = new NotificationService(repositories.notifications, push, mail);
 
-    await service.notify({ type: "inquiry", hotelId: hotel.id, inquiryId: "inquiry-1", guestName: "Anna", checkIn: "2027-01-01", checkOut: "2027-01-02", attentionReason: null });
+    await service.notify({ type: "inquiry", mealPlan: "BB", hotelId: hotel.id, inquiryId: "inquiry-1", guestName: "Anna", checkIn: "2027-01-01", checkOut: "2027-01-02", attentionReason: null });
     expect(push.messages).toHaveLength(0);
 
-    await service.notify({ type: "payment", hotelId: hotel.id, inquiryId: "inquiry-1", guestName: "Anna" });
+    await service.notify({ type: "payment", mealPlan: "BB", hotelId: hotel.id, inquiryId: "inquiry-1", guestName: "Anna" });
     await service.notify({ type: "error", hotelId: hotel.id, inquiryId: "inquiry-1", guestName: "Anna", message: "Delivery failed." });
-    expect(push.messages.map(({ title }) => title)).toEqual(["Guest accepted", "Action required"]);
+    expect(push.messages.map(({ title }) => title)).toEqual(["BB · Guest accepted", "Action required"]);
 
     await repositories.notifications.upsertPreferencesForUser(user.id, {
       pushAllRequests: true, emailIncomingRequests: true, emailAddress: "desk@example.com",
     });
-    await service.notify({ type: "inquiry", hotelId: hotel.id, inquiryId: "inquiry-2", guestName: "Marco", checkIn: "2027-02-01", checkOut: "2027-02-03", attentionReason: null });
-    expect(push.messages.at(-1)?.title).toBe("New request");
-    expect(mail.messages).toMatchObject([{ to: "desk@example.com", subject: "New request: Marco" }]);
+    await service.notify({ type: "inquiry", mealPlan: "BB", hotelId: hotel.id, inquiryId: "inquiry-2", guestName: "Marco", checkIn: "2027-02-01", checkOut: "2027-02-03", attentionReason: null });
+    expect(push.messages.at(-1)?.title).toBe("BB · New request");
+    expect(mail.messages).toMatchObject([{ to: "desk@example.com", subject: "BB · New request: Marco" }]);
   });
 });

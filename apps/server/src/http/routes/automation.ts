@@ -1,8 +1,9 @@
 import type { FastifyInstance } from "fastify";
 import { renderPublicOfferPage, type OfferSnapshot } from "@hotel/templates";
 import { z } from "zod";
+import { dashboardQuerySchema, manualInquiryInputSchema, sendReservationOffersSchema } from "@hotel/contracts";
 
-import { errors } from "../../lib/errors.js";
+import { AppError, errors } from "../../lib/errors.js";
 import type { AuthService } from "../../services/auth.js";
 import type { AutomationService } from "../../services/automation.js";
 import { requireAuthentication } from "../authenticate.js";
@@ -87,10 +88,11 @@ export async function registerAutomationRoutes(
 
   app.get("/proposal/:token", async (request, reply) => {
     const { token } = publicOfferParamsSchema.parse(request.params);
-    const { offer, state } = await automationService.proposalPage(token);
+    const { offer, state, websiteUrl } = await automationService.proposalPage(token);
     const hotelSnapshot = offer.snapshot.hotelSnapshot;
     const html = renderPublicOfferPage(offer.snapshot as unknown as OfferSnapshot, {
       state,
+      websiteUrl,
       acceptActionPath: `/proposal/${token}/accept`,
       locale: typeof hotelSnapshot === "object" && hotelSnapshot && "locale" in hotelSnapshot
         ? String(hotelSnapshot.locale)
@@ -107,19 +109,53 @@ export async function registerAutomationRoutes(
   app.post("/proposal/:token/accept", async (request, reply) => {
     const { token } = publicOfferParamsSchema.parse(request.params);
     const { option } = acceptOfferSchema.parse(request.body ?? {});
-    await automationService.acceptProposal(token, option);
+    try {
+      await automationService.acceptProposal(token, option);
+    } catch (error) {
+      // A stale browser form should land on the same expired screen as the email link.
+      if (!(error instanceof AppError) || error.statusCode !== 410) throw error;
+    }
     return reply.redirect(`/proposal/${token}`, 303);
   });
 
   const authenticate = requireAuthentication(authService);
+  app.post("/v1/inquiries/:inquiryId/offers", { preHandler: authenticate }, async (request, reply) => {
+    const { inquiryId } = z.object({ inquiryId: z.uuid() }).parse(request.params);
+    const key = z.string().trim().min(1).max(153).safeParse(request.headers["idempotency-key"]);
+    if (!key.success) throw errors.idempotencyKeyRequired();
+    const input = sendReservationOffersSchema.parse(request.body);
+    const result = await automationService.sendReservationOffers(request.currentUser!.id, inquiryId, key.data, input);
+    reply.header("Cache-Control", "private, no-store");
+    return reply.code(result.replayed ? 200 : 201).send({ data: result });
+  });
+  app.post("/v1/inquiries", { preHandler: authenticate }, async (request, reply) => {
+    const key = z.string().trim().min(1).max(153).safeParse(request.headers["idempotency-key"]);
+    if (!key.success) throw errors.idempotencyKeyRequired();
+    const input = manualInquiryInputSchema.parse(request.body);
+    const result = await automationService.createManualInquiry(request.currentUser!.id, key.data, input);
+    reply.header("Cache-Control", "private, no-store");
+    return reply.code(result.replayed ? 200 : 201).send({ data: result });
+  });
+  app.get("/v1/inquiries/:inquiryId", { preHandler: authenticate }, async (request, reply) => {
+    const { inquiryId } = z.object({ inquiryId: z.uuid() }).parse(request.params);
+    reply.header("Cache-Control", "private, no-store");
+    return { data: { inquiry: await automationService.request(request.currentUser!.id, inquiryId) } };
+  });
+  app.post("/v1/inquiries/summaries", { preHandler: authenticate }, async (request, reply) => {
+    const { inquiryIds } = z.object({ inquiryIds: z.array(z.uuid()).min(1).max(100) }).parse(request.body);
+    reply.header("Cache-Control", "private, no-store");
+    return { data: { inquiries: await automationService.requests(request.currentUser!.id, [...new Set(inquiryIds)]) } };
+  });
   app.post("/v1/inquiries/:inquiryId/payment-link-sent", { preHandler: authenticate }, async (request) => {
     if (!request.currentUser) throw errors.unauthorized();
     const { inquiryId } = z.object({ inquiryId: z.uuid() }).parse(request.params);
     return { data: await automationService.markPaymentLinkSent(request.currentUser.id, inquiryId) };
   });
 
-  app.get("/v1/dashboard", { preHandler: authenticate }, async (request) => {
+  app.get("/v1/dashboard", { preHandler: authenticate }, async (request, reply) => {
     if (!request.currentUser) throw errors.unauthorized();
-    return { data: await automationService.dashboard(request.currentUser.id) };
+    const query = dashboardQuerySchema.parse(request.query);
+    reply.header("Cache-Control", "private, no-store");
+    return { data: await automationService.dashboard(request.currentUser.id, query) };
   });
 }

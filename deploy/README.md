@@ -18,3 +18,8 @@ are not modified.
 Required production values are kept only in `/etc/hotel-automation/server.env`
 and must never be committed. Email and WhatsApp delivery stay disabled until
 real Google OAuth and WAHA credentials are configured.
+
+Contacts require the `0011` migration, the rebuilt app/API, and the separate
+`hotel-automation-clients.service` unit. See
+[contact worker setup and verification](../apps/server/docs/clients.md). The API
+continues handling requests if the contact worker is stopped.

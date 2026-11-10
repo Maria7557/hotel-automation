@@ -54,8 +54,8 @@ export function Button({
         <View style={styles.buttonContent}>
           {Icon ? (
             <Icon
-              size={19}
-              strokeWidth={2.2}
+              size={theme.controls.actionIconSize}
+              strokeWidth={2}
               color={variant === "primary" ? theme.colors.onAction : theme.colors.action}
             />
           ) : null}
@@ -187,7 +187,7 @@ const styles = StyleSheet.create({
   buttonTertiary: { backgroundColor: "transparent", minHeight: theme.controls.minTarget },
   buttonPressed: { opacity: 0.78, transform: [{ scale: 0.99 }] },
   buttonDisabled: { opacity: 0.48 },
-  buttonContent: { flexDirection: "row", alignItems: "center", gap: theme.spacing[2] },
+  buttonContent: { flexDirection: "row", alignItems: "center", gap: theme.controls.helperGap },
   buttonLabel: theme.typography.button,
   buttonLabelPrimary: { color: theme.colors.onAction },
   buttonLabelSecondary: { color: theme.colors.action },

@@ -1,4 +1,4 @@
-import { occupancySchema } from "@hotel/contracts";
+import { mealPlanSchema, occupancySchema } from "@hotel/contracts";
 import { z } from "zod";
 
 const date = z.iso.date();
@@ -18,10 +18,11 @@ export const publicInquirySchema = z
     checkIn: date,
     checkOut: date,
     occupancy: occupancySchema,
+    mealPlan: mealPlanSchema,
     note: z.string().trim().max(2_000).default(""),
     website: z.string().max(200).default(""),
     source: z.record(z.string(), z.unknown()).default({}),
-  })
+  }).strict()
   .refine(({ checkIn, checkOut }) => checkIn < checkOut, {
     message: "checkOut must be later than checkIn",
     path: ["checkOut"],

@@ -6,6 +6,7 @@ import {
   renderEmailText,
   renderPublicOfferPage,
   renderWhatsAppText,
+  renderBoardBadge,
   type OfferPageState,
   type OfferSnapshot,
 } from "../src/index.js";
@@ -17,6 +18,16 @@ const messageContext = {
 } as const;
 
 describe("message renderers", () => {
+  it.each([["BB", 1], ["HB", 2], ["FB", 3]] as const)("renders %s with a continuous bottom border showing its coverage", (board, filled) => {
+    const html = renderBoardBadge(board, "en");
+    expect(html).toContain(`data-board="${board}"`);
+    expect(html).toContain(`data-coverage="${filled}/3"`);
+    expect(html).toContain(`width:${filled / 3 * 100}%`);
+    const original = offerSnapshot();
+    const snapshot = { ...original, guestSnapshot: { ...original.guestSnapshot, mealPlan: board } };
+    expect(renderEmailText(snapshot, messageContext)).toContain(`${board} ·`);
+    expect(renderWhatsAppText(snapshot, messageContext)).toContain(`${board} ·`);
+  });
   it("renders stable Italian email and WhatsApp output", () => {
     const snapshot = offerSnapshot();
     expect({
@@ -65,6 +76,34 @@ describe("message renderers", () => {
 });
 
 describe("public offer page", () => {
+  it("links expired reservations back to the hotel booking website", () => {
+    const html = renderPublicOfferPage(offerSnapshot(), {
+      state: "expired", acceptActionPath: "/o/token/accept", websiteUrl: "https://hotel.example/book?availability=1&new=1", locale: "en",
+    });
+    expect(html).toContain("This reservation offer has expired");
+    expect(html).toContain('href="https://hotel.example/book?availability=1&amp;new=1"');
+    expect(html).toContain("Make a new booking &amp; check availability");
+    expect(html).not.toContain("<form");
+    expect(html).not.toContain('class="option-card"');
+  });
+
+  it.each(["javascript:alert(1)", "data:text/html,booking", "https://user:pass@hotel.example"])("does not render unsafe booking links: %s", (websiteUrl) => {
+    const html = renderPublicOfferPage(offerSnapshot(), { state: "expired", acceptActionPath: "/o/token/accept", websiteUrl });
+    expect(html).not.toContain('class="booking-link"');
+  });
+
+  it("includes every offer price and staff note in email and WhatsApp", () => {
+    const original = offerSnapshot();
+    const snapshot = { ...original, options: Array.from({ length: 6 }, (_, index) => ({ ...original.options[0]!, planName: `Choice ${index + 1}`, totalCents: 20_000 + index * 1_000, note: `Note ${index + 1}` })) };
+    for (const text of [renderEmailText(snapshot, { ...messageContext, locale: "en" }), renderEmailHtml(snapshot, { ...messageContext, locale: "en" }), renderWhatsAppText(snapshot, { ...messageContext, locale: "en" })]) {
+      for (let index = 0; index < 6; index++) {
+        expect(text).toContain(`Choice ${index + 1}`);
+        expect(text).toContain(`Note ${index + 1}`);
+        expect(text).toContain(formatMoney(20_000 + index * 1_000, "en"));
+      }
+    }
+  });
+
   it("renders a stable mobile-first active page", () => {
     expect(
       renderPublicOfferPage(offerSnapshot(), {

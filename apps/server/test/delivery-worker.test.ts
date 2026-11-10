@@ -349,9 +349,9 @@ function offerRecord(hotelId: string): OfferRecord {
         {
           roomId: "room-1",
           roomName: "Camera Doppia",
-          planCode: "breakfast",
+          planCode: "BB",
           planName: "Colazione inclusa",
-          mealPlan: "breakfast",
+          mealPlan: "BB",
           currency: "EUR",
           nights: [
             {

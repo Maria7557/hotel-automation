@@ -1,3 +1,7 @@
 export * from "./api.js";
 export * from "./common.js";
 export * from "./entities.js";
+export * from "./clients.js";
+export * from "./inquiries.js";
+export * from "./offers.js";
+export * from "./dashboard.js";

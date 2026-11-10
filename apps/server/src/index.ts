@@ -1,3 +1,4 @@
+import { createClientConnection, PostgresClientRepository } from "./repositories/clients.js";
 import "dotenv/config";
 
 import { createApp } from "./app.js";
@@ -15,7 +16,8 @@ import { NotificationService } from "./services/notifications.js";
 const env = loadEnv();
 const { client, db } = createDatabase(env.DATABASE_URL);
 const repositories = createPostgresRepositories(db);
-const app = await createApp({ env, repositories, logger: true });
+const clientConnection = createClientConnection(env.DATABASE_URL);
+const app = await createApp({ env, repositories, clients: new PostgresClientRepository(clientConnection), logger: true });
 const notificationService = new NotificationService(
   repositories.notifications,
   new ExpoPushProvider(fetch, env.EXPO_ACCESS_TOKEN),
@@ -62,6 +64,7 @@ async function shutdown(signal: string): Promise<void> {
   app.log.info({ signal }, "Shutting down");
   await workerLoop?.stop();
   await app.close();
+  await clientConnection.end({ timeout: 3 });
   await client.end();
   process.exit(0);
 }
@@ -74,6 +77,7 @@ try {
   workerLoop?.start();
 } catch (error) {
   app.log.error(error);
+  await clientConnection.end({ timeout: 3 });
   await client.end();
   process.exit(1);
 }

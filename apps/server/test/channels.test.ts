@@ -160,10 +160,10 @@ describe("message settings and channel connections", () => {
     const roomId = room.json().data.room.id as string;
     await app.inject({
       method: "POST", url: `/v1/rooms/${roomId}/rates`, headers: auth(owner.token), payload: {
-        planCode: "breakfast", planName: "Breakfast included", mealPlan: "breakfast",
+        planCode: "BB", planName: "Breakfast included", mealPlan: "BB",
         start: "2026-11-01", endInclusive: "2026-12-31", nightlyBaseCents: 10_000,
         includedAdults: 2, includedChildren: 0, extraAdultCents: 3_000, extraChildCents: 1_500,
-        breakfastAdultCents: 1_200, breakfastChildCents: 600, maxChildAge: 12, minNights: 1,
+        boardAdultCents: 1_200, boardChildCents: 600, maxChildAge: 12, minNights: 1,
       },
     });
     await app.inject({

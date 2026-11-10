@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { DashboardQuery } from "@hotel/contracts";
 
 import type {
   AuthRepository,
@@ -8,6 +9,7 @@ import type {
   ConnectionKind,
   ConnectionRecord,
   DashboardFacts,
+  DashboardPageFacts,
   DeliveryRecord,
   DeliveryWorkerRepository,
   HotelCreate,
@@ -23,6 +25,7 @@ import type {
   NotificationPreferences,
   NotificationRepository,
   OfferRecord,
+  ReservationOffersCreate,
   PlatformAdminRepository,
   PushDeviceRecord,
   RatePeriodCreate,
@@ -37,6 +40,7 @@ import type {
   UserRecord,
   WhatsAppSupportRecord,
 } from "../../src/repositories/types.js";
+import { errors } from "../../src/lib/errors.js";
 
 class MemoryAuthRepository implements AuthRepository {
   readonly users = new Map<string, UserRecord>();
@@ -184,6 +188,7 @@ class MemoryHotelRepository implements HotelRepository {
 }
 
 class MemoryAutomationRepository implements AutomationRepository {
+  private nextReservationNumber = 1n;
   readonly inquiries = new Map<string, InquiryRecord>();
   readonly offers = new Map<string, OfferRecord>();
   readonly deliveries = new Map<string, DeliveryRecord>();
@@ -195,6 +200,11 @@ class MemoryAutomationRepository implements AutomationRepository {
 
   async findPublicHotelByKey(publicKey: string): Promise<HotelProfile | null> {
     return [...this.hotels.hotels.values()].find((hotel) => hotel.publicKey === publicKey) ?? null;
+  }
+
+  async findPublicHotelWebsite(hotelId: string): Promise<string | null> {
+    const hotel = this.hotels.hotels.get(hotelId);
+    return hotel?.website || hotel?.allowedOrigins[0] || null;
   }
 
   async listCatalogForHotel(hotelId: string) {
@@ -225,6 +235,7 @@ class MemoryAutomationRepository implements AutomationRepository {
     const now = new Date();
     const inquiry: InquiryRecord = {
       ...input.inquiry,
+      reservationNumber: (this.nextReservationNumber++).toString(),
       currentOfferId: input.offer?.id ?? null,
       createdAt: now,
       updatedAt: now,
@@ -248,11 +259,50 @@ class MemoryAutomationRepository implements AutomationRepository {
     return [...this.offers.values()].find(({ publicTokenHash }) => publicTokenHash === tokenHash) ?? null;
   }
 
+  async replaceReservationOffers(input: ReservationOffersCreate): Promise<{ replayed: boolean } | null> {
+    const hotel = await this.hotels.findForUser(input.userId);
+    const inquiry = this.inquiries.get(input.inquiryId);
+    if (!hotel || !inquiry || hotel.id !== inquiry.hotelId || input.offer.hotelId !== hotel.id) return null;
+    const existing = [...this.offers.values()].filter(({ inquiryId }) => inquiryId === inquiry.id);
+    if (existing.some(({ id }) => id === input.offer.id)) return { replayed: true };
+    if (inquiry.closedAt || existing.some(({ state }) => state === "accepted")) throw errors.reservationAccepted();
+    if (inquiry.currentOfferId !== input.baseOfferId) throw errors.offersChanged();
+    for (const offer of existing) if (offer.state === "active") this.offers.set(offer.id, { ...offer, state: "expired" });
+    for (const delivery of this.deliveries.values()) {
+      if (delivery.inquiryId === inquiry.id && delivery.kind === "offer" && delivery.state === "scheduled") {
+        this.deliveries.set(delivery.id, { ...delivery, state: "cancelled", updatedAt: input.now });
+      }
+    }
+    this.offers.set(input.offer.id, { ...input.offer, version: Math.max(0, ...existing.map(({ version }) => version)) + 1, createdAt: input.now });
+    for (const delivery of input.deliveries) this.deliveries.set(delivery.id, { ...delivery, createdAt: input.now, updatedAt: input.now });
+    this.inquiries.set(inquiry.id, { ...inquiry, currentOfferId: input.offer.id, attentionReason: null, updatedAt: input.now });
+    return { replayed: false };
+  }
+
   async acceptOfferByTokenHash(tokenHash: string, now: Date, selectedOptionIndex: number): Promise<OfferRecord | null> {
-    const offer = await this.findOfferByTokenHash(tokenHash);
+    const found = await this.findOfferByTokenHash(tokenHash);
+    const offer = found ? this.offers.get(found.id) ?? null : null;
     if (!offer || offer.state === "accepted" || offer.state !== "active" || offer.expiresAt <= now) return offer;
+    const previous = [...this.offers.values()].find((candidate) => candidate.inquiryId === offer.inquiryId && candidate.state === "accepted");
+    if (previous) {
+      const expired = { ...offer, state: "expired" as const };
+      this.offers.set(offer.id, expired);
+      return expired;
+    }
     const accepted = { ...offer, state: "accepted" as const, acceptedAt: now, selectedOptionIndex };
     this.offers.set(offer.id, accepted);
+    for (const sibling of this.offers.values()) {
+      if (sibling.inquiryId === offer.inquiryId && sibling.id !== offer.id && sibling.state === "active") {
+        this.offers.set(sibling.id, { ...sibling, state: "expired" });
+      }
+    }
+    for (const delivery of this.deliveries.values()) {
+      if (delivery.inquiryId === offer.inquiryId && delivery.kind === "offer" && delivery.state === "scheduled") {
+        this.deliveries.set(delivery.id, { ...delivery, state: "cancelled", updatedAt: now });
+      }
+    }
+    const inquiry = this.inquiries.get(offer.inquiryId);
+    if (inquiry) this.inquiries.set(inquiry.id, { ...inquiry, currentOfferId: offer.id, updatedAt: now });
     return accepted;
   }
 
@@ -268,12 +318,48 @@ class MemoryAutomationRepository implements AutomationRepository {
     return updated;
   }
 
-  async dashboardFactsForUser(userId: string): Promise<DashboardFacts | null> {
+  async dashboardPageForUser(userId: string, query: DashboardQuery): Promise<DashboardPageFacts | null> {
+    const facts = await this.dashboardFactsForUser(userId);
+    if (!facts) return null;
+    const now = new Date();
+    const day = new Intl.DateTimeFormat("en-CA", { timeZone: facts.hotel.timezone });
+    const items = facts.inquiries.filter((inquiry) => day.format(inquiry.createdAt) === day.format(now)).map((inquiry) => {
+      const latest = facts.offers.filter((offer) => offer.inquiryId === inquiry.id).sort((a, b) => b.version - a.version)[0];
+      const currentDeliveries = facts.deliveries.filter((delivery) => delivery.inquiryId === inquiry.id && (!latest || delivery.offerVersionId === latest.id))
+        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || b.id.localeCompare(a.id));
+      const status = inquiry.closedAt ? "completed" : latest?.acceptedAt ? "payment" : inquiry.attentionReason ? "attention"
+        : latest && (latest.state === "expired" || latest.state === "revoked" || latest.expiresAt <= now) ? "attention"
+        : latest && currentDeliveries.some(({ state }) => state === "provider_accepted" || state === "delivered") ? "waiting" : "new";
+      const options = latest?.snapshot.options;
+      const option = Array.isArray(options) ? options[latest?.selectedOptionIndex ?? 0] as Record<string, unknown> | undefined : undefined;
+      const failedDelivery = (["email", "whatsapp"] as const).some((channel) => currentDeliveries.find((delivery) => delivery.channel === channel)?.state === "failed");
+      return { inquiry, status, option, failedDelivery };
+    });
+    const reservationNumber = /^#?\s*(\d+)$/.exec(query.search)?.[1];
+    const labels: Record<string, string> = { new: "New", waiting: "Waiting for reply", payment: "Payment link needed", completed: "Waiting for client", attention: "Not delivered" };
+    const filtered = items.filter(({ inquiry, status, option }) => (query.status === "all" || query.status === status) && (!query.search ||
+      (reservationNumber !== undefined ? inquiry.reservationNumber === reservationNumber :
+        [inquiry.guestName, inquiry.guestEmail, inquiry.guestPhone, inquiry.mealPlan, option?.roomName, inquiry.checkIn, inquiry.checkOut, labels[status]]
+          .some((value) => typeof value === "string" && value.toLocaleLowerCase().includes(query.search.toLocaleLowerCase())))));
+    const direction = query.sort === "asc" ? 1 : -1;
+    filtered.sort((a, b) => direction * (a.inquiry.createdAt.getTime() - b.inquiry.createdAt.getTime() || a.inquiry.id.localeCompare(b.inquiry.id)));
+    const page = Math.min(query.page, Math.max(1, Math.ceil(filtered.length / query.limit)));
+    return { ...facts, inquiries: filtered.slice((page - 1) * query.limit, page * query.limit).map(({ inquiry }) => inquiry),
+      counts: { total: items.length, new: items.filter(({ status }) => status === "new").length,
+        offerSent: items.filter(({ status }) => status === "waiting").length,
+        requiresConfirmation: items.filter(({ status }) => status === "payment").length,
+        requiresConfirmationTotalCents: items.filter(({ status }) => status === "payment").reduce((total, { option }) => total + (typeof option?.totalCents === "number" ? option.totalCents : 0), 0),
+        needsAttention: items.filter(({ status }) => status === "attention").length,
+        failedDeliveries: items.filter(({ failedDelivery }) => failedDelivery).length },
+      pagination: { page, limit: query.limit, total: filtered.length } };
+  }
+
+  async dashboardFactsForUser(userId: string, inquiryIds?: string[]): Promise<DashboardFacts | null> {
     const hotel = await this.hotels.findForUser(userId);
     if (!hotel) return null;
     return {
       hotel,
-      inquiries: [...this.inquiries.values()].filter(({ hotelId }) => hotelId === hotel.id),
+      inquiries: [...this.inquiries.values()].filter(({ hotelId, id }) => hotelId === hotel.id && (!inquiryIds || inquiryIds.includes(id))),
       offers: [...this.offers.values()].filter(({ hotelId }) => hotelId === hotel.id),
       deliveries: [...this.deliveries.values()].filter(({ hotelId }) => hotelId === hotel.id),
     };
@@ -381,6 +467,7 @@ class MemoryInventoryRepository implements InventoryRepository {
     userId: string;
     roomId: string;
     planCode: string;
+    mealPlan: "BB" | "HB" | "FB";
     start: string;
     endExclusive: string;
     excludeRatePeriodId?: string;
@@ -393,6 +480,7 @@ class MemoryInventoryRepository implements InventoryRepository {
           rate.id !== input.excludeRatePeriodId &&
           rate.active &&
           rate.planCode === input.planCode &&
+          rate.mealPlan === input.mealPlan &&
           rate.start < input.endExclusive &&
           input.start < rate.endExclusive,
       )

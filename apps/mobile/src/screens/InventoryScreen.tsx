@@ -1,3 +1,4 @@
+import { BoardBadge, BoardSelector } from "@/components/BoardBadge";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import {
@@ -368,8 +369,8 @@ function RoomForm({ room, onBack, onSaved }: { room: Room | null; onBack: () => 
           {submitted && bedCount < 1 ? <Text style={styles.validationSummary}>Add at least one bed.</Text> : null}
         </View>
         <View style={styles.formSection}>
-          <SectionTitle>Amenities</SectionTitle>
-          <Text style={styles.sectionHelper}>Select everything included with this room.</Text>
+          <SectionTitle>Features and amenities</SectionTitle>
+          <Text style={styles.sectionHelper}>Select everything included with this room, or add a custom feature.</Text>
           <AmenityPicker selected={amenities} onChange={setAmenities} disabled={saving} />
         </View>
         <View style={styles.formSection}>
@@ -467,25 +468,52 @@ function BedPicker({
 }
 
 function AmenityPicker({ selected, onChange, disabled }: { selected: string[]; onChange: (next: string[]) => void; disabled: boolean }) {
+  const [customFeature, setCustomFeature] = useState("");
   const options = [...amenityOptions, ...selected.filter((value) => !amenityOptions.includes(value))];
+  const featureLimitReached = selected.length >= 100;
+  const addFeature = () => {
+    const value = customFeature.trim();
+    if (disabled || featureLimitReached || !value) return;
+    const existing = options.find((option) => option.toLowerCase() === value.toLowerCase());
+    if (!selected.some((feature) => feature.toLowerCase() === value.toLowerCase())) {
+      onChange([...selected, existing ?? value]);
+    }
+    setCustomFeature("");
+  };
+
   return (
-    <View style={styles.choices}>
-      {options.map((amenity) => {
-        const isSelected = selected.includes(amenity);
-        return (
-          <Pressable
-            key={amenity}
-            accessibilityRole="checkbox"
-            accessibilityState={{ checked: isSelected, disabled }}
-            disabled={disabled}
-            onPress={() => onChange(isSelected ? selected.filter((value) => value !== amenity) : [...selected, amenity])}
-            style={({ pressed }) => [styles.amenityChoice, isSelected && styles.amenityChoiceSelected, pressed && styles.pressed]}
-          >
-            {isSelected ? <Check size={15} color={theme.colors.onAction} /> : null}
-            <Text style={[styles.choiceText, isSelected && styles.choiceTextSelected]}>{amenity}</Text>
-          </Pressable>
-        );
-      })}
+    <View style={styles.featurePicker}>
+      <View style={styles.choices}>
+        {options.map((amenity) => {
+          const isSelected = selected.includes(amenity);
+          const choiceDisabled = disabled || (featureLimitReached && !isSelected);
+          return (
+            <Pressable
+              key={amenity}
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: isSelected, disabled: choiceDisabled }}
+              disabled={choiceDisabled}
+              onPress={() => onChange(isSelected ? selected.filter((value) => value !== amenity) : [...selected, amenity])}
+              style={({ pressed }) => [styles.amenityChoice, isSelected && styles.amenityChoiceSelected, pressed && styles.pressed]}
+            >
+              {isSelected ? <Check size={15} color={theme.colors.onAction} /> : null}
+              <Text style={[styles.choiceText, isSelected && styles.choiceTextSelected]}>{amenity}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+      <Field
+        label="Custom feature"
+        placeholder="e.g. Nespresso machine"
+        value={customFeature}
+        onChangeText={setCustomFeature}
+        maxLength={100}
+        editable={!disabled && !featureLimitReached}
+        returnKeyType="done"
+        onSubmitEditing={addFeature}
+        helper={featureLimitReached ? "You can select up to 100 features per room." : "Add a feature to include it with this room."}
+      />
+      <Button variant="secondary" icon={Plus} onPress={addFeature} disabled={disabled || featureLimitReached || !customFeature.trim()}>Add feature</Button>
     </View>
   );
 }
@@ -563,7 +591,7 @@ function RoomRatesView({ room, onBack, onAddRate, onEditRate }: { room: Room; on
       <View style={styles.section}>
         <SectionTitle>Rates calendar</SectionTitle>
         <Text style={styles.sectionHelper}>Prices are shown per night. Dates without a rate are highlighted so gaps are easy to find.</Text>
-        {error ? <InlineState tone="danger">{error}</InlineState> : loading ? <LoadingState label="Loading rates…" compact /> : <RateCalendar rates={rates} />}
+        {error ? <InlineState tone="danger">{error}</InlineState> : loading ? <LoadingState label="Loading rates…" compact /> : <BoardRateCalendar rates={rates} />}
         {!loading && !error && rates.length === 0 ? (
           <View style={styles.emptyWrap}>
             <EmptyState title="No rates yet" description="Choose a free date range and add the first nightly price." />
@@ -610,7 +638,7 @@ function RoomDetail({ room, onBack, onEdit, onAddRate, onEditRate }: { room: Roo
         <SectionTitle action={<HeaderAction icon={Plus} label="Add rate" onPress={onAddRate} />}>Rates calendar</SectionTitle>
         <Text style={styles.sectionHelper}>Prices are shown per night. Dates without a rate are highlighted so gaps are easy to find.</Text>
         {error ? <InlineState tone="danger">{error}</InlineState> : loading ? <LoadingState label="Loading rates…" compact /> : (
-          <RateCalendar rates={rates} />
+          <BoardRateCalendar rates={rates} />
         )}
         {!loading && !error && rates.length === 0 ? (
           <View style={styles.emptyWrap}>
@@ -627,8 +655,16 @@ function RoomDetail({ room, onBack, onEdit, onAddRate, onEditRate }: { room: Roo
   );
 }
 
+function BoardRateCalendar({ rates }: { rates: RatePeriod[] }) {
+  const [mealPlan, setMealPlan] = useState<MealPlan>(rates[0]?.mealPlan ?? "BB");
+  return <View>
+    <BoardSelector value={mealPlan} onChange={setMealPlan} />
+    <RateCalendar rates={rates.filter((rate) => rate.mealPlan === mealPlan)} />
+  </View>;
+}
+
 function RateForm({ room, rate, onBack, onSaved }: { room: Room; rate: RatePeriod | null; onBack: () => void; onSaved: () => void }) {
-  const [mealPlan, setMealPlan] = useState<MealPlan>(rate?.mealPlan ?? "room_only");
+  const [mealPlan, setMealPlan] = useState<MealPlan>(rate?.mealPlan ?? "BB");
   const [start, setStart] = useState(rate?.start ?? "");
   const [endInclusive, setEndInclusive] = useState(rate?.endInclusive ?? "");
   const [nightly, setNightly] = useState(rate ? moneyInput(rate.nightlyBaseCents) : "100");
@@ -636,8 +672,8 @@ function RateForm({ room, rate, onBack, onSaved }: { room: Room; rate: RatePerio
   const [includedChildren, setIncludedChildren] = useState(String(rate?.includedChildren ?? 0));
   const [extraAdult, setExtraAdult] = useState(rate ? moneyInput(rate.extraAdultCents) : "0");
   const [extraChild, setExtraChild] = useState(rate ? moneyInput(rate.extraChildCents) : "0");
-  const [breakfastAdult, setBreakfastAdult] = useState(rate ? moneyInput(rate.breakfastAdultCents) : "12");
-  const [breakfastChild, setBreakfastChild] = useState(rate ? moneyInput(rate.breakfastChildCents) : "6");
+  const [boardAdult, setBoardAdult] = useState(rate ? moneyInput(rate.boardAdultCents) : "0");
+  const [boardChild, setBoardChild] = useState(rate ? moneyInput(rate.boardChildCents) : "0");
   const [maxChildAge, setMaxChildAge] = useState(String(rate?.maxChildAge ?? 17));
   const [minNights, setMinNights] = useState(String(rate?.minNights ?? 1));
   const [existingRates, setExistingRates] = useState<RatePeriod[]>([]);
@@ -658,7 +694,7 @@ function RateForm({ room, rate, onBack, onSaved }: { room: Room; rate: RatePerio
   }, [room.id]);
 
   const datesValid = isIsoDate(start) && isIsoDate(endInclusive) && start <= endInclusive;
-  const moneyValues = [nightly, extraAdult, extraChild, breakfastAdult, breakfastChild].map(parseMoneyCents);
+  const moneyValues = [nightly, extraAdult, extraChild, boardAdult, boardChild].map(parseMoneyCents);
   const integerValues = [includedAdults, includedChildren, maxChildAge, minNights].map(parseInteger);
   const capacityValid = (integerValues[0] ?? room.maxAdults + 1) <= room.maxAdults &&
     (integerValues[1] ?? room.maxChildren + 1) <= room.maxChildren &&
@@ -669,12 +705,12 @@ function RateForm({ room, rate, onBack, onSaved }: { room: Room; rate: RatePerio
     setSubmitted(true);
     setError(null);
     if (!valid) return;
-    const [nightlyBaseCents, extraAdultCents, extraChildCents, breakfastAdultCents, breakfastChildCents] = moneyValues as [number, number, number, number, number];
+    const [nightlyBaseCents, extraAdultCents, extraChildCents, boardAdultCents, boardChildCents] = moneyValues as [number, number, number, number, number];
     const [adults, children, childAge, nights] = integerValues as [number, number, number, number];
-    const existingTechnicalPlan = existingRates[0];
+    const existingTechnicalPlan = existingRates.find((item) => item.mealPlan === mealPlan);
     const input: RatePeriodInput = {
       planCode: rate?.planCode ?? existingTechnicalPlan?.planCode ?? "standard",
-      planName: rate?.planName ?? existingTechnicalPlan?.planName ?? "Standard",
+      planName: rate?.planName ?? "Standard",
       mealPlan,
       start,
       endInclusive,
@@ -684,8 +720,8 @@ function RateForm({ room, rate, onBack, onSaved }: { room: Room; rate: RatePerio
       includedChildren: children,
       extraAdultCents,
       extraChildCents,
-      breakfastAdultCents: mealPlan === "breakfast" ? breakfastAdultCents : 0,
-      breakfastChildCents: mealPlan === "breakfast" ? breakfastChildCents : 0,
+      boardAdultCents,
+      boardChildCents,
       maxChildAge: childAge,
       minNights: nights,
       active: rate?.active ?? true,
@@ -707,11 +743,14 @@ function RateForm({ room, rate, onBack, onSaved }: { room: Room; rate: RatePerio
         <Text style={styles.lead}>{room.name}</Text>
         {error ? <InlineState tone="danger">{error}</InlineState> : null}
         <View style={styles.formSection}>
+          <SectionTitle>Board basis</SectionTitle>
+          <BoardSelector value={mealPlan} disabled={saving} onChange={(value) => { setMealPlan(value); setCalendarError(null); }} />
+          <Text style={styles.sectionHelper}>This price applies only to {mealPlan} requests.</Text>
           <SectionTitle>Select dates</SectionTitle>
-          <Text style={styles.sectionHelper}>Grey dates already have a price and cannot be selected again.</Text>
+          <Text style={styles.sectionHelper}>Grey dates already have a price for this board. Other boards can use the same dates.</Text>
           {ratesLoading ? <LoadingState label="Loading calendar…" compact /> : (
             <RateCalendar
-              rates={existingRates}
+              rates={existingRates.filter((item) => item.mealPlan === mealPlan && item.planCode === (rate?.planCode ?? existingRates.find((item) => item.mealPlan === mealPlan)?.planCode ?? "standard"))}
               selectedStart={start || undefined}
               selectedEndInclusive={endInclusive || undefined}
               editingRateId={rate?.id}
@@ -729,7 +768,7 @@ function RateForm({ room, rate, onBack, onSaved }: { room: Room; rate: RatePerio
         </View>
         <View style={styles.formSection}>
           <SectionTitle>Nightly price</SectionTitle>
-          <Field label="Price per night, EUR" keyboardType="decimal-pad" value={nightly} onChangeText={setNightly} editable={!saving} error={submitted && parseMoneyCents(nightly) === null ? "Enter an amount, for example 100 or 100.50" : undefined} />
+          <Field label={`${mealPlan} package / night, EUR`} keyboardType="decimal-pad" value={nightly} onChangeText={setNightly} editable={!saving} error={submitted && parseMoneyCents(nightly) === null ? "Enter an amount, for example 100 or 100.50" : undefined} />
           {datesValid && parseMoneyCents(nightly) !== null ? (
             <View style={styles.rateSummary}>
               <Text style={styles.rateSummaryPeriod}>{formatDate(start)} — {formatDate(endInclusive)}</Text>
@@ -739,7 +778,7 @@ function RateForm({ room, rate, onBack, onSaved }: { room: Room; rate: RatePerio
         </View>
         <View style={styles.formSection}>
           <SectionTitle>Guests and supplements</SectionTitle>
-          <Text style={styles.sectionHelper}>The nightly price includes the guests below. Supplements are added per extra guest, per night.</Text>
+          <Text style={styles.sectionHelper}>The package price includes accommodation and the selected board for the guests below. Extra guest supplements must include their board.</Text>
           <View style={styles.fieldRow}>
             <View style={styles.fieldHalf}><Field label="Adults included" keyboardType="number-pad" value={includedAdults} onChangeText={setIncludedAdults} editable={!saving} /></View>
             <View style={styles.fieldHalf}><Field label="Children included" keyboardType="number-pad" value={includedChildren} onChangeText={setIncludedChildren} editable={!saving} /></View>
@@ -753,17 +792,12 @@ function RateForm({ room, rate, onBack, onSaved }: { room: Room; rate: RatePerio
             <View style={styles.fieldHalf}><Field label="Minimum nights" keyboardType="number-pad" value={minNights} onChangeText={setMinNights} editable={!saving} /></View>
           </View>
           <View style={styles.mealCard}>
-            <Text style={styles.fieldLabel}>Meal plan</Text>
-            <ChoiceRow options={[{ value: "room_only", label: "Room only" }, { value: "breakfast", label: "Breakfast included" }]} selected={mealPlan} onSelect={(value) => setMealPlan(value as MealPlan)} />
-            {mealPlan === "breakfast" ? (
-              <>
-                <Text style={styles.mealHelper}>Breakfast is added for every guest, every night.</Text>
-                <View style={styles.fieldRow}>
-                  <View style={styles.fieldHalf}><Field label="Breakfast / adult, EUR" keyboardType="decimal-pad" value={breakfastAdult} onChangeText={setBreakfastAdult} editable={!saving} /></View>
-                  <View style={styles.fieldHalf}><Field label="Breakfast / child, EUR" keyboardType="decimal-pad" value={breakfastChild} onChangeText={setBreakfastChild} editable={!saving} /></View>
-                </View>
-              </>
-            ) : null}
+            <Text style={styles.fieldLabel}>Additional board charge</Text>
+            <Text style={styles.mealHelper}>Leave at 0 when meals are included in the package price. Any amount here is added for every guest, every night.</Text>
+            <View style={styles.fieldRow}>
+              <View style={styles.fieldHalf}><Field label={`${mealPlan} / adult / night, EUR`} keyboardType="decimal-pad" value={boardAdult} onChangeText={setBoardAdult} editable={!saving} /></View>
+              <View style={styles.fieldHalf}><Field label={`${mealPlan} / child / night, EUR`} keyboardType="decimal-pad" value={boardChild} onChangeText={setBoardChild} editable={!saving} /></View>
+            </View>
           </View>
           {submitted && !valid ? <Text style={styles.validationSummary}>Check the numbers: included guests must fit the room, values cannot be negative, child age is up to 17, and minimum stay starts at 1 night.</Text> : null}
         </View>
@@ -774,7 +808,9 @@ function RateForm({ room, rate, onBack, onSaved }: { room: Room; rate: RatePerio
 }
 
 function PreviewCalculator({ room, rates }: { room: Room; rates: RatePeriod[] }) {
-  const planCode = rates.find((rate) => rate.planCode === "standard")?.planCode ?? rates[0]?.planCode ?? "standard";
+  const [mealPlan, setMealPlan] = useState<MealPlan>(rates[0]?.mealPlan ?? "BB");
+  const boardRates = rates.filter((rate) => rate.mealPlan === mealPlan);
+  const planCode = boardRates.find((rate) => rate.planCode === "standard")?.planCode ?? boardRates[0]?.planCode ?? "standard";
   const [checkIn, setCheckIn] = useState(rates[0]?.start ?? "2026-11-01");
   const [checkOut, setCheckOut] = useState(rates[0]?.endExclusive ?? "2026-11-02");
   const [adults, setAdults] = useState("2");
@@ -786,9 +822,9 @@ function PreviewCalculator({ room, rates }: { room: Room; rates: RatePeriod[] })
     (sum, night) => ({
       room: sum.room + night.baseCents,
       guests: sum.guests + night.extraAdultCents + night.extraChildCents,
-      breakfast: sum.breakfast + night.breakfastCents,
+      board: sum.board + night.boardCents,
     }),
-    { room: 0, guests: 0, breakfast: 0 },
+    { room: 0, guests: 0, board: 0 },
   ) : null;
 
   const calculate = async () => {
@@ -801,7 +837,7 @@ function PreviewCalculator({ room, rates }: { room: Room; rates: RatePeriod[] })
       return;
     }
     setLoading(true);
-    try { setPreview(await apiClient.previewRate(room.id, { planCode, checkIn, checkOut, adults: adultCount, childAges: ages })); }
+    try { setPreview(await apiClient.previewRate(room.id, { planCode, mealPlan, checkIn, checkOut, adults: adultCount, childAges: ages })); }
     catch (nextError) { setError(authErrorMessage(nextError)); }
     finally { setLoading(false); }
   };
@@ -809,6 +845,7 @@ function PreviewCalculator({ room, rates }: { room: Room; rates: RatePeriod[] })
   return (
     <View style={styles.section}>
       <SectionTitle>Price check</SectionTitle>
+      <BoardSelector value={mealPlan} onChange={(value) => { setMealPlan(value); setPreview(null); }} />
       <View style={[uiStyles.card, styles.previewCard]}>
         <Text style={styles.previewIntro}>See how the system prices a sample request.</Text>
         <View style={styles.fieldRow}>
@@ -828,7 +865,7 @@ function PreviewCalculator({ room, rates }: { room: Room; rates: RatePeriod[] })
             </View>
             <View style={styles.previewLine}><Text style={styles.previewLineLabel}>Room</Text><Text style={styles.previewLineValue}>{formatCents(breakdown.room)}</Text></View>
             {breakdown.guests > 0 ? <View style={styles.previewLine}><Text style={styles.previewLineLabel}>Extra guests</Text><Text style={styles.previewLineValue}>{formatCents(breakdown.guests)}</Text></View> : null}
-            {breakdown.breakfast > 0 ? <View style={styles.previewLine}><Text style={styles.previewLineLabel}>Breakfast</Text><Text style={styles.previewLineValue}>{formatCents(breakdown.breakfast)}</Text></View> : null}
+            {breakdown.board > 0 ? <View style={styles.previewLine}><Text style={styles.previewLineLabel}>{mealPlan} board</Text><Text style={styles.previewLineValue}>{formatCents(breakdown.board)}</Text></View> : null}
           </View>
         ) : preview && !preview.ok ? (
           <InlineState tone="warning">No complete rate coverage: {preview.issues.map((issue) => issue.date ?? issue.type).join(", ")}</InlineState>
@@ -840,14 +877,12 @@ function PreviewCalculator({ room, rates }: { room: Room; rates: RatePeriod[] })
 }
 
 function RateCard({ rate, onPress }: { rate: RatePeriod; onPress: () => void }) {
-  const mealDescription = rate.mealPlan === "breakfast"
-    ? `Breakfast · ${formatCents(rate.breakfastAdultCents)}/adult · ${formatCents(rate.breakfastChildCents)}/child`
-    : "Room only";
+  const mealDescription = `${rate.mealPlan} · ${formatCents(rate.boardAdultCents)}/adult · ${formatCents(rate.boardChildCents)}/child additional board charge`;
   return (
-    <Pressable accessibilityRole="button" accessibilityLabel={`Edit rate from ${rate.start} to ${rate.endInclusive}`} onPress={onPress} style={({ pressed }) => [uiStyles.card, styles.rateCard, pressed && styles.pressed]}>
+    <Pressable accessibilityRole="button" accessibilityLabel={`Edit ${rate.mealPlan} rate from ${rate.start} to ${rate.endInclusive}`} onPress={onPress} style={({ pressed }) => [uiStyles.card, styles.rateCard, pressed && styles.pressed]}>
       <View style={styles.rateTop}>
-        <View style={styles.rateIcon}>{rate.mealPlan === "breakfast" ? <Coffee size={20} color={theme.colors.action} /> : <BedDouble size={20} color={theme.colors.action} />}</View>
-        <View style={{ flex: 1 }}><Text style={styles.rateName}>{formatDate(rate.start)} — {formatDate(rate.endInclusive)}</Text><Text style={styles.rateCode}>One price for this period</Text></View>
+        <BoardBadge mealPlan={rate.mealPlan} />
+        <View style={{ flex: 1 }}><Text style={styles.rateName}>{formatDate(rate.start)} — {formatDate(rate.endInclusive)}</Text><Text style={styles.rateCode}>{rate.mealPlan} · {rate.active ? "Active" : "Inactive"}</Text></View>
         <Text style={styles.ratePrice}>{formatCents(rate.nightlyBaseCents)}</Text>
         <Edit3 size={17} color={theme.colors.action} />
       </View>
@@ -912,9 +947,13 @@ const amenityOptions = [
   "Balcony",
   "Sea view",
   "City view",
+  "Cort view",
   "Kitchen",
   "Minibar",
+  "Coffee machine",
   "TV",
+  "Sky TV",
+  "Beach service",
   "Safe",
   "Workspace",
   "Soundproofing",
@@ -1011,6 +1050,7 @@ const styles = StyleSheet.create({
   fieldRow: { flexDirection: "row", gap: theme.spacing[3] },
   fieldHalf: { flex: 1 },
   fieldLabel: { ...theme.typography.bodySmallMedium, color: theme.colors.text },
+  featurePicker: { gap: theme.spacing[3] },
   bedPickerGrid: { flexDirection: "row", flexWrap: "wrap", gap: theme.spacing[3] },
   bedPickerRow: { width: Platform.OS === "web" ? "48%" : "100%", minWidth: 280, minHeight: 72, flexGrow: 1, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: theme.spacing[3], borderRadius: theme.radii.lg, borderWidth: 1, borderColor: theme.colors.border, backgroundColor: theme.colors.surface, paddingHorizontal: theme.spacing[3], paddingVertical: theme.spacing[2] },
   bedPickerRowSelected: { borderColor: theme.colors.action, backgroundColor: theme.colors.actionTint },

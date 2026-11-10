@@ -1,25 +1,45 @@
-import { useEffect, useMemo, useState } from "react";
+import { requestStatusLabels } from "../requests/status";
+import { DASHBOARD_PAGE_SIZE, type DashboardQuery } from "@hotel/contracts";
+import { RequestCard } from "@/components/RequestCard";
+import { actionStyles } from "@/components/actionStyles";
+import { PaymentLinkSentAction } from "@/components/PaymentLinkSentAction";
+import { Tooltip } from "@/components/Tooltip";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, FlatList, Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from "react-native";
-import { AlertTriangle, ArrowRight, BedDouble, Building2, CalendarDays, Check, CheckCircle2, ChevronDown, ChevronRight, ChevronUp, Clock3, Code2, Mail, MessageCircle, Search, Users, X } from "lucide-react-native";
-import { theme } from "@hotel/design";
+import { AlertTriangle, ArrowDown, ArrowUp, BedDouble, Building2, Check, CheckCircle2, ChevronRight, Code2, Mail, MessageCircle, Plus, Search, X } from "lucide-react-native";
+import { requestStatusAppearance, theme, type StatusColors } from "@hotel/design";
 import { apiClient } from "@/api/client";
-import type { ConnectionStatus, DashboardSnapshot, DeliverySummary, HotelProfile, HotelRequest, RequestStatus } from "@/api/types";
+import type { ConnectionStatus, DashboardSnapshot, HotelProfile, HotelRequest, RequestStatus } from "@/api/types";
 import { Button, EmptyState, InlineState, uiStyles } from "@/components/ui";
+import { ManualRequestModal } from "../requests/ManualRequestModal";
 
 type ViewMode = "actions" | "all";
 type ActionFilter = "payment" | "attention";
 type AllFilter = "all" | RequestStatus;
+type FilterColors = { backgroundColor: string; textColor: string };
+
+const filterAppearance = {
+  all: { backgroundColor: "#BCC9DE", textColor: "#243752" },
+  new: { backgroundColor: "#CBBBD4", textColor: "#3C2C45" },
+  waiting: { backgroundColor: "#E4C98D", textColor: "#4B3A19" },
+  payment: { backgroundColor: "#C2B5D4", textColor: "#35253F" },
+  completed: { backgroundColor: "#AFCEBD", textColor: "#193D2F" },
+  attention: { backgroundColor: "#D9B5B8", textColor: "#512029" },
+} as const satisfies Record<AllFilter, FilterColors>;
 
 type RequestsScreenProps = {
   profile: HotelProfile;
   demo: boolean;
+  reloadVersion: number;
   onOpenProfile: () => void;
   onOpenInventory: () => void;
   onOpenConnections: () => void;
   onOpenSiteIntegration: () => void;
+  onOpenRequest: (id: string) => void;
+  onOpenClient: (id: string) => void;
 };
 
-export function RequestsScreen({ profile, demo, onOpenProfile, onOpenInventory, onOpenConnections, onOpenSiteIntegration }: RequestsScreenProps) {
+export function RequestsScreen({ profile, demo, reloadVersion, onOpenProfile, onOpenInventory, onOpenConnections, onOpenSiteIntegration, onOpenRequest, onOpenClient }: RequestsScreenProps) {
   const [dashboard, setDashboard] = useState<DashboardSnapshot | null>(null);
   const [connections, setConnections] = useState<ConnectionStatus[]>([]);
   const [roomCount, setRoomCount] = useState(demo ? 2 : 0);
@@ -30,80 +50,87 @@ export function RequestsScreen({ profile, demo, onOpenProfile, onOpenInventory, 
   const [actionFilter, setActionFilter] = useState<ActionFilter>("payment");
   const [allFilter, setAllFilter] = useState<AllFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [sort, setSort] = useState<DashboardQuery["sort"]>("desc");
+  const [page, setPage] = useState(1);
+  const [listLoading, setListLoading] = useState(true);
+  const requestSequence = useRef(0);
+  const listRef = useRef<FlatList<HotelRequest>>(null);
   const [busyRequestId, setBusyRequestId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [nowMs, setNowMs] = useState(Date.now());
+  const [creating, setCreating] = useState(false);
+  const [createdMessage, setCreatedMessage] = useState<string | null>(null);
 
-  const load = async (refresh = false) => {
-    refresh ? setRefreshing(true) : setLoading(true);
+  const status = viewMode === "actions" ? actionFilter : allFilter;
+  const search = viewMode === "all" ? debouncedSearch : "";
+  const load = useCallback(async (refresh = false) => {
+    const sequence = ++requestSequence.current;
+    setListLoading(true);
+    setRefreshing(refresh);
     setError(null);
     try {
-      const inventory = demo
-        ? Promise.resolve({ roomCount: 2, hasRates: true })
-        : apiClient.listRooms()
-            .then(async (rooms) => {
-              const rates = await Promise.all(rooms.map((room) => apiClient.listRates(room.id).catch(() => [])));
-              return { roomCount: rooms.length, hasRates: rates.some((roomRates) => roomRates.some((rate) => rate.active)) };
-            })
-            .catch(() => ({ roomCount: 0, hasRates: false }));
-      const [nextDashboard, nextConnections, nextInventory] = await Promise.all([
-        apiClient.getDashboard({ demo }),
-        demo ? Promise.resolve([]) : apiClient.getConnections().catch(() => []),
-        inventory,
-      ]);
-      setDashboard(nextDashboard);
+      const nextDashboard = await apiClient.getDashboard({ demo, status, search, sort, page, limit: DASHBOARD_PAGE_SIZE });
+      if (sequence === requestSequence.current) setDashboard(nextDashboard);
+    } catch {
+      if (sequence === requestSequence.current) setError("Could not load requests. Check your connection and try again.");
+    } finally {
+      if (sequence === requestSequence.current) {
+        setLoading(false);
+        setListLoading(false);
+        setRefreshing(false);
+      }
+    }
+  }, [demo, status, search, sort, page]);
+  const latestLoad = useRef(load);
+  latestLoad.current = load;
+
+  useEffect(() => {
+    listRef.current?.scrollToOffset({ offset: 0, animated: false });
+    void load();
+    return () => { requestSequence.current++; };
+  }, [load, reloadVersion]);
+  useEffect(() => {
+    const timer = setTimeout(() => { setDebouncedSearch(searchQuery.trim()); setPage(1); }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const inventory = demo
+      ? Promise.resolve({ roomCount: 2, hasRates: true })
+      : apiClient.listRooms()
+          .then(async (rooms) => {
+            const rates = await Promise.all(rooms.map((room) => apiClient.listRates(room.id).catch(() => [])));
+            return { roomCount: rooms.length, hasRates: rates.some((roomRates) => roomRates.some((rate) => rate.active)) };
+          })
+          .catch(() => ({ roomCount: 0, hasRates: false }));
+    void Promise.all([
+      demo ? Promise.resolve([]) : apiClient.getConnections().catch(() => []),
+      inventory,
+    ]).then(([nextConnections, nextInventory]) => {
+      if (cancelled) return;
       setConnections(nextConnections);
       setRoomCount(nextInventory.roomCount);
       setHasRates(nextInventory.hasRates);
-      setNowMs(Date.now());
-    } catch {
-      setError("Could not load requests. Check your connection and try again.");
-    } finally {
-      refresh ? setRefreshing(false) : setLoading(false);
-    }
-  };
-
-  useEffect(() => { void load(); }, [demo]);
-  useEffect(() => {
-    const timer = setInterval(() => setNowMs(Date.now()), 60_000);
-    return () => clearInterval(timer);
-  }, []);
+    });
+    return () => { cancelled = true; };
+  }, [demo, reloadVersion]);
 
   const connectionIssues = useMemo(
     () => connections.filter((connection) => connection.configured && connection.state !== "connected"),
     [connections],
   );
-  const failedDeliveryCount = dashboard?.requests.filter(hasFailedDelivery).length ?? 0;
+  const failedDeliveryCount = dashboard?.failedDeliveryCount ?? 0;
   const actionableCount = (dashboard?.paymentPendingCount ?? 0) + (dashboard?.attentionCount ?? 0) + connectionIssues.length;
-  const visibleRequests = useMemo(() => {
-    if (!dashboard) return [];
-    if (viewMode === "actions") return dashboard.requests.filter((request) => request.status === actionFilter);
-    const query = searchQuery.trim().toLocaleLowerCase();
-    return dashboard.requests.filter((request) => {
-      if (allFilter !== "all" && request.status !== allFilter) return false;
-      if (!query) return true;
-      return [request.guestName, request.stayLabel, request.roomLabel, request.guestLabel, request.statusLabel]
-        .some((value) => value.toLocaleLowerCase().includes(query));
-    });
-  }, [actionFilter, allFilter, dashboard, searchQuery, viewMode]);
+  const visibleRequests = listLoading || error ? [] : dashboard?.requests ?? [];
 
   const markPaymentLinkSent = async (request: HotelRequest) => {
     setBusyRequestId(request.id);
     setActionError(null);
     try {
-      if (!demo) await apiClient.markPaymentLinkSent(request.id);
-      setDashboard((current) => current ? {
-        ...current,
-        paymentPendingCount: Math.max(0, current.paymentPendingCount - 1),
-        paymentPendingTotalCents: Math.max(0, current.paymentPendingTotalCents - request.totalCents),
-        requests: current.requests.map((item) => {
-          if (item.id !== request.id) return item;
-          const { nextAction: _nextAction, ...completedRequest } = item;
-          return { ...completedRequest, status: "completed", statusLabel: "Payment link sent" };
-        }),
-      } : current);
+      await apiClient.markPaymentLinkSent(request.id, { demo });
+      await latestLoad.current(true);
     } catch {
       setActionError("Could not mark the payment link as sent. Try again.");
     } finally {
@@ -111,8 +138,20 @@ export function RequestsScreen({ profile, demo, onOpenProfile, onOpenInventory, 
     }
   };
 
+  const createForm = creating ? <ManualRequestModal locale={profile.locale} demo={demo} onClose={() => setCreating(false)} onCreated={(result) => {
+    setCreating(false);
+    setViewMode("all");
+    setAllFilter("all");
+    setSearchQuery(`#${result.reservationNumber}`);
+    setDebouncedSearch(`#${result.reservationNumber}`);
+    setPage(1);
+    setCreatedMessage(demo ? `Request #${result.reservationNumber} added to this demo. No messages were sent.`
+      : result.deliveriesScheduled > 0 ? `Request #${result.reservationNumber} created. The offer is queued for delivery.`
+      : `Request #${result.reservationNumber} saved for review. No guest message was sent.`);
+  }} /> : null;
+
   if (loading) return <View style={[uiStyles.screen, styles.loading]} accessibilityLabel="Loading requests"><ActivityIndicator color={theme.colors.action} size="large" /><Text style={styles.loadingText}>Loading today’s worklist…</Text></View>;
-  if (error || !dashboard) return <View style={[uiStyles.screen, styles.errorState]}><EmptyState title="Requests unavailable" description={error ?? "Try loading again."} /><Button onPress={() => void load()}>Try again</Button></View>;
+  if (!dashboard) return <View style={[uiStyles.screen, styles.errorState]}><EmptyState title="Requests unavailable" description={error ?? "Try loading again."} /><Button onPress={() => void load()}>Try again</Button></View>;
 
   const setupComplete = Boolean(profile.name && profile.city && profile.countryCode)
     && roomCount > 0
@@ -122,7 +161,7 @@ export function RequestsScreen({ profile, demo, onOpenProfile, onOpenInventory, 
     && profile.allowedOrigins.length > 0;
 
   if (!demo && dashboard.totalCount === 0 && !setupComplete) {
-    return <SetupPath
+    return <><SetupPath
       profile={profile}
       connections={connections}
       roomCount={roomCount}
@@ -133,18 +172,20 @@ export function RequestsScreen({ profile, demo, onOpenProfile, onOpenInventory, 
       onOpenInventory={onOpenInventory}
       onOpenConnections={onOpenConnections}
       onOpenSiteIntegration={onOpenSiteIntegration}
-    />;
+      onCreateRequest={() => setCreating(true)}
+    />{createForm}</>;
   }
 
-  return <FlatList
+  return <><FlatList
+    ref={listRef}
     style={uiStyles.screen}
     contentContainerStyle={styles.content}
     data={visibleRequests}
     keyExtractor={(item) => item.id}
-    renderItem={({ item }) => viewMode === "actions"
-      ? <ActionRequestCard request={item} nowMs={nowMs} expanded={expandedId === item.id} busy={busyRequestId === item.id} onToggle={() => setExpandedId((current) => current === item.id ? null : item.id)} onPaymentLinkSent={() => void markPaymentLinkSent(item)} />
-      : <AllRequestRow request={item} nowMs={nowMs} expanded={expandedId === item.id} onToggle={() => setExpandedId((current) => current === item.id ? null : item.id)} />}
-    ItemSeparatorComponent={() => <View style={{ height: viewMode === "actions" ? theme.spacing[3] : 1, backgroundColor: viewMode === "actions" ? "transparent" : theme.colors.border }} />}
+    renderItem={({ item }) => <RequestCard request={item} onOpen={() => onOpenRequest(item.id)} onOpenClient={onOpenClient}>
+      {viewMode === "actions" && item.status === "payment" ? <PaymentLinkSentAction busy={busyRequestId === item.id} onPress={() => void markPaymentLinkSent(item)} /> : null}
+    </RequestCard>}
+    ItemSeparatorComponent={() => <View style={{ height: theme.spacing[3] }} />}
     ListHeaderComponent={<>
       <DashboardHeader
         hotelName={profile.name}
@@ -153,25 +194,31 @@ export function RequestsScreen({ profile, demo, onOpenProfile, onOpenInventory, 
         failedDeliveryCount={failedDeliveryCount}
         actionableCount={actionableCount}
         viewMode={viewMode}
-        setViewMode={(mode) => { setViewMode(mode); setExpandedId(null); }}
+        setViewMode={(value) => { setViewMode(value); setPage(1); }}
         actionFilter={actionFilter}
-        setActionFilter={(filter) => { setActionFilter(filter); setExpandedId(null); }}
+        setActionFilter={(value) => { setActionFilter(value); setPage(1); }}
         allFilter={allFilter}
-        setAllFilter={(filter) => { setAllFilter(filter); setExpandedId(null); }}
+        setAllFilter={(value) => { setAllFilter(value); setPage(1); }}
         searchQuery={searchQuery}
         setSearchQuery={setSearchQuery}
-        shownCount={visibleRequests.length}
+        sort={sort}
+        setSort={(value) => { setSort(value); setPage(1); }}
+        onCreateRequest={() => setCreating(true)}
       />
-      {actionError ? <InlineState tone="danger"><AlertTriangle size={15} color={theme.colors.danger} /> {actionError}</InlineState> : null}
+      {createdMessage ? <View style={styles.requestAlert}><InlineState tone="success">{createdMessage}</InlineState></View> : null}
+      {actionError ? <View style={styles.requestAlert}><InlineState tone="danger">{actionError}</InlineState></View> : null}
     </>}
-    ListEmptyComponent={viewMode === "actions" ? <ActionEmptyState filter={actionFilter} /> : <EmptyState title="No matching requests" description="Try another filter or search." />}
+    ListEmptyComponent={listLoading ? <View style={styles.listState}><ActivityIndicator accessibilityLabel="Loading requests" color={theme.colors.action} /></View>
+      : error ? <View style={styles.listState}><InlineState tone="danger">{error}</InlineState><Button variant="secondary" onPress={() => void load()}>Try again</Button></View>
+      : viewMode === "actions" ? <ActionEmptyState filter={actionFilter} /> : <EmptyState title="No matching requests" description="Try another filter or search." />}
+    ListFooterComponent={!error ? <RequestPagination shownCount={visibleRequests.length} total={dashboard.pagination.total} page={dashboard.pagination.page} limit={dashboard.pagination.limit} loading={listLoading} onPage={setPage} /> : undefined}
     refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void load(true)} tintColor={theme.colors.action} />}
     initialNumToRender={14}
     maxToRenderPerBatch={20}
     windowSize={8}
     removeClippedSubviews
     showsVerticalScrollIndicator={false}
-  />;
+  />{createForm}</>;
 }
 
 function SetupPath(props: {
@@ -185,8 +232,9 @@ function SetupPath(props: {
   onOpenInventory: () => void;
   onOpenConnections: () => void;
   onOpenSiteIntegration: () => void;
+  onCreateRequest: () => void;
 }) {
-  const { profile, connections, roomCount, hasRates, refreshing, onRefresh, onOpenProfile, onOpenInventory, onOpenConnections, onOpenSiteIntegration } = props;
+  const { profile, connections, roomCount, hasRates, refreshing, onRefresh, onOpenProfile, onOpenInventory, onOpenConnections, onOpenSiteIntegration, onCreateRequest } = props;
   const mailConnected = connections.some((connection) => connection.kind === "mail" && connection.state === "connected");
   const whatsappConnected = connections.some((connection) => connection.kind === "waha" && connection.state === "connected");
   const steps = [
@@ -210,9 +258,10 @@ function SetupPath(props: {
         <View style={styles.hotelAvatar}><Text style={styles.hotelAvatarText}>{profile.name.slice(0, 1).toUpperCase()}</Text></View>
         <View style={{ flex: 1 }}><Text style={styles.greeting}>Welcome to</Text><Text style={styles.hotelName} numberOfLines={1}>{profile.name}</Text></View>
       </View>
+      <View style={styles.createAction}><Button icon={Plus} onPress={onCreateRequest}>New request</Button><Text style={styles.createHint}>Add an enquiry from a call or walk-in at any time.</Text></View>
       <View style={styles.setupIntro}>
         <Text style={styles.setupTitle}>{completed === steps.length ? "Ready for your first request" : "Set up your hotel"}</Text>
-        <Text style={styles.setupSubtitle}>{completed === steps.length ? "Your form and sending channels are ready." : "Complete these steps before your first request."}</Text>
+        <Text style={styles.setupSubtitle}>{completed === steps.length ? "Your form and sending channels are ready." : "Complete these steps to receive and send offers automatically."}</Text>
         <View style={styles.setupProgressRow}><Text style={styles.setupProgressLabel}>{completed} of {steps.length}</Text><Text style={styles.setupProgressPercent}>{progress}</Text></View>
         <View style={styles.setupProgressTrack}><View style={[styles.setupProgressFill, { width: progress }]} /></View>
       </View>
@@ -238,9 +287,11 @@ function DashboardHeader(props: {
   actionableCount: number; viewMode: ViewMode; setViewMode: (mode: ViewMode) => void;
   actionFilter: ActionFilter; setActionFilter: (filter: ActionFilter) => void;
   allFilter: AllFilter; setAllFilter: (filter: AllFilter) => void;
-  searchQuery: string; setSearchQuery: (value: string) => void; shownCount: number;
+  searchQuery: string; setSearchQuery: (value: string) => void;
+  sort: DashboardQuery["sort"]; setSort: (value: DashboardQuery["sort"]) => void;
+  onCreateRequest: () => void;
 }) {
-  const { hotelName, dashboard, connectionIssues, failedDeliveryCount, actionableCount, viewMode, setViewMode, actionFilter, setActionFilter, allFilter, setAllFilter, searchQuery, setSearchQuery, shownCount } = props;
+  const { hotelName, dashboard, connectionIssues, failedDeliveryCount, actionableCount, viewMode, setViewMode, actionFilter, setActionFilter, allFilter, setAllFilter, searchQuery, setSearchQuery, sort, setSort, onCreateRequest } = props;
   const issueCount = dashboard.attentionCount + connectionIssues.length;
   const connectionNames = connectionIssues.map((connection) => connection.kind === "mail" ? "Mail" : "WhatsApp");
   const alerts = [
@@ -254,6 +305,7 @@ function DashboardHeader(props: {
       <View style={{ flex: 1 }}><Text style={styles.greeting}>Today at</Text><Text style={styles.hotelName} numberOfLines={1}>{hotelName}</Text></View>
       <View style={styles.livePill}><View style={styles.liveDot} /><Text style={styles.liveLabel}>LIVE</Text></View>
     </View>
+    <View style={styles.createAction}><Button icon={Plus} onPress={onCreateRequest}>New request</Button></View>
     <View style={styles.modeSwitch}>
       <ModeButton selected={viewMode === "actions"} label="To do" count={actionableCount} onPress={() => setViewMode("actions")} />
       <ModeButton selected={viewMode === "all"} label="All incoming" count={dashboard.totalCount} onPress={() => setViewMode("all")} />
@@ -261,26 +313,51 @@ function DashboardHeader(props: {
 
     {viewMode === "actions" ? <>
       <View style={styles.actionMetrics}>
-        <ActionMetric selected={actionFilter === "payment"} tone="action" icon={CheckCircle2} count={dashboard.paymentPendingCount} label="Waiting payment link" onPress={() => setActionFilter("payment")} />
-        <ActionMetric selected={actionFilter === "attention"} tone="danger" icon={AlertTriangle} count={issueCount} label="Not delivered" onPress={() => setActionFilter("attention")} />
+        <ActionMetric selected={actionFilter === "payment"} appearance={requestStatusAppearance.confirmation} icon={CheckCircle2} count={dashboard.paymentPendingCount} label={requestStatusLabels.payment} onPress={() => setActionFilter("payment")} />
+        <ActionMetric selected={actionFilter === "attention"} appearance={requestStatusAppearance.deliveryFailed} icon={AlertTriangle} count={issueCount} label="Not delivered" onPress={() => setActionFilter("attention")} />
       </View>
-      {alerts.length && actionFilter === "attention" ? <InlineState tone="danger"><AlertTriangle size={15} color={theme.colors.danger} /> {alerts.join(" · ")}</InlineState> : null}
+      {alerts.length && actionFilter === "attention" ? <View style={styles.requestAlert}><InlineState tone="danger">{alerts.join(" · ")}</InlineState></View> : null}
     </> : <>
       <View style={styles.titleBlock}><Text style={styles.pageTitle}>All incoming</Text><Text style={styles.pageSubtitle}>{dashboard.totalCount} requests received today.</Text></View>
       <View style={styles.searchField}>
         <Search size={20} color={theme.colors.textMuted} />
-        <TextInput value={searchQuery} onChangeText={setSearchQuery} placeholder="Search guest, room or date" placeholderTextColor={theme.colors.textMuted} style={styles.searchInput} returnKeyType="search" />
-        {searchQuery ? <Pressable accessibilityRole="button" accessibilityLabel="Clear search" onPress={() => setSearchQuery("")} style={styles.clearSearch}><X size={17} color={theme.colors.textMuted} /></Pressable> : null}
+        <TextInput accessibilityLabel="Search requests by reservation number, guest, room or board" value={searchQuery} onChangeText={setSearchQuery} maxLength={160} placeholder="Search #number, guest, room or board" placeholderTextColor={theme.colors.textMuted} style={styles.searchInput} returnKeyType="search" />
+        {searchQuery ? <Pressable accessibilityRole="button" accessibilityLabel="Clear search" onPress={() => setSearchQuery("")} style={styles.clearSearch}><X size={theme.controls.actionIconSize} color={theme.colors.textMuted} /></Pressable> : null}
       </View>
       <View style={styles.filters}>
-        <FilterChip selected={allFilter === "all"} label="All" onPress={() => setAllFilter("all")} />
-        <FilterChip selected={allFilter === "payment"} label="To confirm" onPress={() => setAllFilter("payment")} />
-        <FilterChip selected={allFilter === "new"} label="New" onPress={() => setAllFilter("new")} />
-        <FilterChip selected={allFilter === "waiting"} label="Waiting" onPress={() => setAllFilter("waiting")} />
-        <FilterChip selected={allFilter === "attention"} label="Not delivered" onPress={() => setAllFilter("attention")} />
+        <FilterChip selected={allFilter === "all"} label="All" description="All requests, regardless of their status." onPress={() => setAllFilter("all")} />
+        <FilterChip appearance={filterAppearance.new} selected={allFilter === "new"} label="New" description="New requests whose offers have not been sent yet." onPress={() => setAllFilter("new")} />
+        <FilterChip appearance={filterAppearance.waiting} selected={allFilter === "waiting"} label={requestStatusLabels.waiting} description="The offer was sent. Waiting for the guest to reply or accept it." onPress={() => setAllFilter("waiting")} />
+        <FilterChip appearance={filterAppearance.payment} selected={allFilter === "payment"} label={requestStatusLabels.payment} description="Action needed from us: the guest accepted the offer and needs a payment link." onPress={() => setAllFilter("payment")} />
+        <FilterChip appearance={filterAppearance.completed} selected={allFilter === "completed"} label={requestStatusLabels.completed} description="Our work is done: the payment link was sent. Waiting for the client to proceed; payment is not confirmed here." onPress={() => setAllFilter("completed")} />
+        <FilterChip appearance={filterAppearance.attention} selected={allFilter === "attention"} label="Not delivered" description="Requests needing attention because an offer could not be sent, has expired, or needs review." onPress={() => setAllFilter("attention")} />
       </View>
-      <View style={styles.listHeading}><Text style={styles.listTitle}>Requests</Text><Text style={styles.shownCount}>{shownCount} shown</Text></View>
     </>}
+    <View style={styles.listHeading}>
+      <Text style={styles.listTitle}>Requests</Text>
+      <View accessibilityLabel="Sort by time received" style={styles.sortControls}>
+        {(["asc", "desc"] as const).map((value) => {
+          const Icon = value === "asc" ? ArrowUp : ArrowDown;
+          const label = value === "asc" ? "Oldest first" : "Newest first";
+          return <Pressable key={value} accessibilityRole="button" accessibilityLabel={`Time received: ${label.toLowerCase()}`} accessibilityState={{ selected: sort === value }} onPress={() => setSort(value)} style={({ pressed }) => [styles.sortButton, sort === value && styles.sortSelected, pressed && styles.pressed]}>
+            <Icon size={theme.controls.helperIconSize} color={sort === value ? theme.colors.action : theme.colors.textMuted} />
+            <Text style={[styles.shownCount, sort === value && styles.sortSelectedText]}>{label}</Text>
+          </Pressable>;
+        })}
+      </View>
+    </View>
+  </View>;
+}
+
+function RequestPagination({ shownCount, total, page, limit, loading, onPage }: { shownCount: number; total: number; page: number; limit: number; loading: boolean; onPage: (page: number) => void }) {
+  const pages = Math.max(1, Math.ceil(total / limit));
+  return <View style={styles.pagination}>
+    <Text accessibilityLiveRegion="polite" style={styles.shownCount}>{loading ? "Loading…" : `${shownCount} out of ${total}`}</Text>
+    <View style={styles.paginationControls}>
+      <Button variant="secondary" disabled={loading || page <= 1} onPress={() => onPage(page - 1)}>Previous</Button>
+      <Text style={styles.shownCount}>Page {page} of {pages}</Text>
+      <Button variant="secondary" disabled={loading || page >= pages} onPress={() => onPage(page + 1)}>Next</Button>
+    </View>
   </View>;
 }
 
@@ -291,117 +368,43 @@ function ModeButton({ selected, label, count, onPress }: { selected: boolean; la
   </Pressable>;
 }
 
-function ActionMetric({ selected, tone, icon: Icon, count, label, onPress }: { selected: boolean; tone: "action" | "danger"; icon: typeof CheckCircle2; count: number; label: string; onPress: () => void }) {
-  const color = tone === "danger" ? theme.colors.danger : theme.colors.action;
-  const tint = tone === "danger" ? theme.colors.dangerTint : theme.colors.actionTint;
+function ActionMetric({ selected, appearance, icon: Icon, count, label, onPress }: { selected: boolean; appearance: StatusColors; icon: typeof CheckCircle2; count: number; label: string; onPress: () => void }) {
+  const { color, backgroundColor: tint } = appearance;
   return <Pressable onPress={onPress} style={({ pressed }) => [styles.actionMetric, selected && { borderColor: color, backgroundColor: tint }, pressed && styles.pressed]}>
     <View style={styles.metricTop}><Icon size={20} color={color} /><Text style={[styles.metricCount, { color }]}>{count}</Text></View>
     <Text style={styles.metricLabel}>{label}</Text>
   </Pressable>;
 }
 
-function ActionRequestCard({ request, nowMs, expanded, busy, onToggle, onPaymentLinkSent }: { request: HotelRequest; nowMs: number; expanded: boolean; busy: boolean; onToggle: () => void; onPaymentLinkSent: () => void }) {
-  const issue = request.status === "attention";
-  const accent = issue ? theme.colors.danger : theme.colors.action;
-  return <View style={styles.actionCard}>
-    <View style={[styles.actionRail, { backgroundColor: accent }]} />
-    <View style={styles.actionCardBody}>
-      <View style={styles.actionEyebrow}>
-        {issue ? <AlertTriangle size={16} color={accent} /> : <Clock3 size={16} color={accent} />}
-        <Text style={[styles.waitingText, { color: accent }]}>{waitingLabel(request.receivedAt, nowMs)}</Text>
-      </View>
-      <View style={styles.actionNameRow}><Text numberOfLines={1} style={styles.actionGuest}>{request.guestName}</Text><Text style={[styles.actionPrice, { color: accent }]}>{request.totalLabel}</Text></View>
-      <DetailLine icon={CalendarDays} text={request.stayLabel} />
-      <DetailLine icon={BedDouble} text={request.roomLabel} />
-      <DetailLine icon={Users} text={request.guestLabel} />
-      {expanded ? <RequestDetails request={request} /> : null}
-      <Pressable accessibilityRole="button" accessibilityState={{ expanded: issue ? expanded : undefined, disabled: busy }} disabled={busy} onPress={issue ? onToggle : onPaymentLinkSent} style={({ pressed }) => [styles.reviewButton, { backgroundColor: accent }, (pressed || busy) && styles.pressed]}>
-        {busy ? <ActivityIndicator color={theme.colors.onAction} /> : <>
-          <Text style={styles.reviewButtonText}>{issue ? (expanded ? "Close details" : "View details") : "Payment link sent"}</Text>
-          {issue ? (expanded ? <ChevronUp size={18} color={theme.colors.onAction} /> : <ArrowRight size={18} color={theme.colors.onAction} />) : <Check size={18} color={theme.colors.onAction} strokeWidth={3} />}
-        </>}
-      </Pressable>
-    </View>
-  </View>;
-}
-
-function DetailLine({ icon: Icon, text }: { icon: typeof CalendarDays; text: string }) {
-  return <View style={styles.detailLine}><Icon size={18} color={theme.colors.textMuted} /><Text style={styles.detailText}>{text}</Text></View>;
-}
-
-function AllRequestRow({ request, nowMs, expanded, onToggle }: { request: HotelRequest; nowMs: number; expanded: boolean; onToggle: () => void }) {
-  const presentation = statusPresentation(request.status);
-  return <Pressable accessibilityRole="button" accessibilityState={{ expanded }} accessibilityLabel={`${request.guestName}, ${request.statusLabel}, ${request.totalLabel}`} accessibilityHint="Expands delivery and offer details" onPress={onToggle} style={({ pressed }) => [styles.requestRow, pressed && styles.rowPressed]}>
-    <View style={[styles.statusRail, { backgroundColor: presentation.color }]} />
-    <View style={styles.rowBody}>
-      <View style={styles.rowTop}><Text numberOfLines={1} style={styles.guestName}>{request.guestName}</Text><Text style={styles.price}>{request.totalLabel}</Text>{expanded ? <ChevronUp size={16} color={theme.colors.textMuted} /> : <ChevronDown size={16} color={theme.colors.textMuted} />}</View>
-      <Text numberOfLines={2} style={styles.stayText}>{request.stayLabel} · {request.roomLabel} · {request.guestLabel}</Text>
-      <View style={styles.rowBottom}>
-        <View style={[styles.statusBadge, { backgroundColor: presentation.tint }]}><Text style={[styles.statusText, { color: presentation.color }]}>{request.statusLabel}</Text></View>
-        <Text style={styles.rowWaiting}>{waitingLabel(request.receivedAt, nowMs)}</Text>
-        <View style={styles.channels}><ChannelCompact icon={Mail} detail={request.email} /><ChannelCompact icon={MessageCircle} detail={request.whatsapp} /></View>
-      </View>
-      {expanded ? <RequestDetails request={request} /> : null}
-    </View>
-  </Pressable>;
-}
-
-function RequestDetails({ request }: { request: HotelRequest }) {
-  return <View style={styles.expanded}>
-    <View style={styles.offerSummary}><Text style={styles.expandedLabel}>OFFER</Text><Text style={styles.expandedText}>{request.roomLabel} · {request.stayLabel} · {request.guestLabel} · {request.totalLabel}</Text></View>
-    <DeliveryLine label="Email" icon={Mail} detail={request.email} />
-    <DeliveryLine label="WhatsApp" icon={MessageCircle} detail={request.whatsapp} />
-    {request.attentionReason ? <Text style={styles.errorCode}>Issue: {request.attentionReason}</Text> : null}
-  </View>;
-}
-
 function ActionEmptyState({ filter }: { filter: ActionFilter }) {
   return <View style={styles.actionEmpty}><View style={styles.actionEmptyIcon}><CheckCircle2 size={26} color={theme.colors.success} /></View><Text style={styles.actionEmptyTitle}>{filter === "payment" ? "Nothing to confirm" : "No unresolved issues"}</Text><Text style={styles.actionEmptyText}>You’re all caught up. New tasks will appear here automatically.</Text></View>;
 }
 
-function FilterChip({ selected, label, onPress }: { selected: boolean; label: string; onPress: () => void }) {
-  return <Pressable accessibilityRole="button" accessibilityState={{ selected }} onPress={onPress} style={({ pressed }) => [styles.filter, selected && styles.filterSelected, pressed && styles.pressed]}><Text style={[styles.filterText, selected && styles.filterTextSelected]}>{label}</Text></Pressable>;
+function FilterChip({ selected, label, description, onPress, appearance = filterAppearance.all }: { selected: boolean; label: string; description: string; onPress: () => void; appearance?: FilterColors }) {
+  return <Tooltip content={description}>{({ triggerProps, toggle }) => <Pressable
+    {...triggerProps}
+    accessibilityRole="button"
+    accessibilityState={{ selected }}
+    onPress={onPress}
+    onLongPress={toggle}
+    style={[styles.filter, { backgroundColor: appearance.backgroundColor, borderColor: selected ? appearance.textColor : "transparent" }]}
+  >
+    <Text style={[styles.filterText, { color: appearance.textColor }]}>{label}</Text>
+  </Pressable>}</Tooltip>;
 }
-
-function ChannelCompact({ icon: Icon, detail }: { icon: typeof Mail; detail: DeliverySummary }) {
-  const color = deliveryColor(detail.status);
-  return <View style={styles.channelCompact}><Icon size={15} color={color} /><View style={[styles.channelDot, { backgroundColor: color }]} /></View>;
-}
-
-function DeliveryLine({ label, icon: Icon, detail }: { label: string; icon: typeof Mail; detail: DeliverySummary }) {
-  const color = deliveryColor(detail.status);
-  return <View style={styles.deliveryLine}><Icon size={17} color={color} /><View style={{ flex: 1 }}><Text style={styles.deliveryTitle}>{label} · {deliveryLabel(detail.status)}</Text><Text style={styles.deliveryMeta}>{detail.recipient ?? "No recipient"}{detail.processedAt ? ` · ${formatTime(detail.processedAt)}` : ""}</Text>{detail.lastErrorCode ? <Text style={styles.errorCode}>{detail.lastErrorCode}</Text> : null}</View></View>;
-}
-
-function hasFailedDelivery(request: HotelRequest): boolean { return request.email.status === "failed" || request.whatsapp.status === "failed"; }
-function waitingLabel(value: string, nowMs: number): string {
-  const receivedMs = Date.parse(value);
-  if (!Number.isFinite(receivedMs)) return value;
-  const minutes = Math.max(1, Math.floor((nowMs - receivedMs) / 60_000));
-  if (minutes < 60) return `${minutes} min waiting`;
-  if (minutes < 1_440) { const hours = Math.floor(minutes / 60); const rest = minutes % 60; return rest ? `${hours} h ${rest} min waiting` : `${hours} h waiting`; }
-  return `${Math.floor(minutes / 1_440)} d waiting`;
-}
-function statusPresentation(status: RequestStatus) {
-  if (status === "payment") return { color: theme.colors.action, tint: theme.colors.actionTint };
-  if (status === "completed") return { color: theme.colors.success, tint: theme.colors.successTint };
-  if (status === "attention") return { color: theme.colors.danger, tint: theme.colors.dangerTint };
-  if (status === "new") return { color: theme.colors.success, tint: theme.colors.successTint };
-  return { color: theme.colors.warning, tint: theme.colors.warningTint };
-}
-function deliveryColor(status: DeliverySummary["status"]): string { return status === "failed" ? theme.colors.danger : status === "pending" ? theme.colors.warning : status === "sent" ? theme.colors.success : theme.colors.textMuted; }
-function deliveryLabel(status: DeliverySummary["status"]): string { return status === "sent" ? "Sent" : status === "pending" ? "Pending" : status === "failed" ? "Failed" : "Not used"; }
-function formatTime(value: string): string { const date = new Date(value); return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit" }).format(date); }
 
 const styles = StyleSheet.create({
   content: { paddingHorizontal: theme.controls.contentInset, paddingBottom: theme.spacing[8] },
+  requestAlert: { marginBottom: theme.spacing[3] },
+  createAction: { marginTop: theme.spacing[4], gap: theme.spacing[2] },
+  createHint: { ...theme.typography.caption, color: theme.colors.textSecondary },
   setupContent: { paddingHorizontal: theme.controls.contentInset, paddingBottom: theme.spacing[8] },
   loading: { flex: 1, alignItems: "center", justifyContent: "center", gap: theme.spacing[3] }, loadingText: { ...theme.typography.bodySmall, color: theme.colors.textSecondary },
   errorState: { flex: 1, justifyContent: "center", padding: theme.spacing[5], gap: theme.spacing[3] },
   header: { flexDirection: "row", alignItems: "center", gap: theme.spacing[3], paddingTop: theme.spacing[3] },
   hotelAvatar: { width: 40, height: 40, borderRadius: theme.radii.md, backgroundColor: theme.colors.action, alignItems: "center", justifyContent: "center" }, hotelAvatarText: { ...theme.typography.h4, color: theme.colors.onAction },
   greeting: { ...theme.typography.caption, color: theme.colors.textMuted }, hotelName: { ...theme.typography.bodySmallMedium, color: theme.colors.text },
-  livePill: { minHeight: 32, flexDirection: "row", alignItems: "center", gap: 6, borderRadius: theme.radii.pill, paddingHorizontal: theme.spacing[3], backgroundColor: theme.colors.successTint }, liveDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: theme.colors.success }, liveLabel: { ...theme.typography.captionMedium, color: theme.colors.success },
+  livePill: { minHeight: theme.controls.actionSize, flexDirection: "row", alignItems: "center", gap: theme.controls.actionGap, borderRadius: theme.radii.pill, paddingHorizontal: theme.spacing[3], backgroundColor: theme.colors.successTint }, liveDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: theme.colors.success }, liveLabel: { ...theme.typography.captionMedium, color: theme.colors.success },
   setupIntro: { marginTop: theme.spacing[8], marginBottom: theme.spacing[5] },
   setupTitle: { ...theme.typography.h2, color: theme.colors.text },
   setupSubtitle: { ...theme.typography.bodySmall, color: theme.colors.textSecondary, marginTop: theme.spacing[2] },
@@ -420,24 +423,22 @@ const styles = StyleSheet.create({
   setupStepTitle: { ...theme.typography.bodySmallMedium, color: theme.colors.text },
   setupStepDetail: { ...theme.typography.caption, color: theme.colors.textMuted, marginTop: 3 },
   setupFooter: { ...theme.typography.caption, color: theme.colors.textMuted, textAlign: "center", marginTop: theme.spacing[5], paddingHorizontal: theme.spacing[4] },
-  modeSwitch: { flexDirection: "row", gap: theme.spacing[2], marginTop: theme.spacing[5], padding: 4, borderRadius: theme.radii.lg, backgroundColor: theme.colors.surfaceMuted },
-  modeButton: { flex: 1, minHeight: 48, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: theme.spacing[2], borderRadius: theme.radii.md },
+  modeSwitch: { flexDirection: "row", gap: theme.controls.actionGap, marginTop: theme.spacing[5], padding: 4, borderRadius: theme.radii.lg, backgroundColor: theme.colors.surfaceMuted },
+  modeButton: { flex: 1, minHeight: theme.controls.actionSize, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: theme.controls.actionGap, borderRadius: theme.radii.md },
   modeButtonSelected: { backgroundColor: theme.colors.surface, shadowColor: "#000", shadowOpacity: 0.08, shadowRadius: 5, shadowOffset: { width: 0, height: 2 }, elevation: 2 },
   modeLabel: { ...theme.typography.bodySmallMedium, color: theme.colors.textMuted }, modeLabelSelected: { color: theme.colors.text },
   modeCount: { minWidth: 25, height: 25, borderRadius: theme.radii.pill, paddingHorizontal: 7, alignItems: "center", justifyContent: "center", backgroundColor: theme.colors.border }, modeCountSelected: { backgroundColor: theme.colors.action }, modeCountText: { ...theme.typography.captionMedium, color: theme.colors.textSecondary }, modeCountTextSelected: { color: theme.colors.onAction },
   titleBlock: { marginTop: theme.spacing[6], marginBottom: theme.spacing[4], gap: 3 }, pageTitle: { ...theme.typography.h2, color: theme.colors.text }, pageSubtitle: { ...theme.typography.bodySmall, color: theme.colors.textMuted },
   actionMetrics: { flexDirection: "row", gap: theme.spacing[3], marginTop: theme.spacing[5], marginBottom: theme.spacing[3] },
   actionMetric: { flex: 1, minHeight: 92, padding: theme.spacing[3], borderRadius: theme.radii.lg, backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border }, metricTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: theme.spacing[2] }, metricCount: { ...theme.typography.h2 }, metricLabel: { ...theme.typography.bodySmallMedium, color: theme.colors.text },
-  listHeading: { marginTop: theme.spacing[5], marginBottom: theme.spacing[3], flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, listTitle: { ...theme.typography.h3, color: theme.colors.text }, shownCount: { ...theme.typography.captionMedium, color: theme.colors.textMuted },
-  searchField: { minHeight: 52, flexDirection: "row", alignItems: "center", gap: theme.spacing[2], paddingHorizontal: theme.spacing[3], borderWidth: 1, borderColor: theme.colors.border, borderRadius: theme.radii.md, backgroundColor: theme.colors.surface }, searchInput: { flex: 1, ...theme.typography.bodySmall, color: theme.colors.text, paddingVertical: theme.spacing[2] }, clearSearch: { width: 32, height: 32, borderRadius: theme.radii.pill, alignItems: "center", justifyContent: "center", backgroundColor: theme.colors.surfaceMuted },
-  filters: { flexDirection: "row", gap: 6, marginTop: theme.spacing[3], flexWrap: "wrap" }, filter: { minHeight: 36, justifyContent: "center", borderRadius: theme.radii.pill, backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, paddingHorizontal: theme.spacing[3] }, filterSelected: { backgroundColor: theme.colors.action, borderColor: theme.colors.action }, filterText: { ...theme.typography.captionMedium, color: theme.colors.textSecondary }, filterTextSelected: { color: theme.colors.onAction }, pressed: { opacity: 0.7 },
-  actionCard: { flexDirection: "row", overflow: "hidden", borderRadius: theme.radii.xl, backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, shadowColor: "#000", shadowOpacity: 0.06, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 2 }, actionRail: { width: 5 }, actionCardBody: { flex: 1, padding: theme.spacing[4], gap: theme.spacing[2] },
-  actionEyebrow: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: theme.spacing[1] }, waitingText: { ...theme.typography.captionMedium },
-  actionNameRow: { flexDirection: "row", alignItems: "baseline", gap: theme.spacing[3], marginBottom: theme.spacing[1] }, actionGuest: { ...theme.typography.h3, color: theme.colors.text, flex: 1 }, actionPrice: { ...theme.typography.h3 },
-  detailLine: { minHeight: 25, flexDirection: "row", alignItems: "center", gap: theme.spacing[2] }, detailText: { ...theme.typography.bodySmall, color: theme.colors.textSecondary, flex: 1 },
-  reviewButton: { minHeight: 48, marginTop: theme.spacing[2], borderRadius: theme.radii.md, paddingHorizontal: theme.spacing[4], flexDirection: "row", alignItems: "center", justifyContent: "center", gap: theme.spacing[2] }, reviewButtonText: { ...theme.typography.button, color: theme.colors.onAction },
+  listHeading: { marginTop: theme.spacing[5], marginBottom: theme.spacing[3], flexDirection: "row", flexWrap: "wrap", gap: theme.spacing[2], alignItems: "center", justifyContent: "space-between" }, listTitle: { ...theme.typography.h3, color: theme.colors.text }, shownCount: { ...theme.typography.captionMedium, color: theme.colors.textMuted },
+  sortControls: { flexDirection: "row", flexWrap: "wrap", gap: theme.controls.actionGap },
+  sortButton: { ...actionStyles.control, gap: theme.controls.helperGap, paddingHorizontal: theme.spacing[2], borderRadius: theme.radii.md },
+  sortSelected: { backgroundColor: theme.colors.actionTint }, sortSelectedText: { color: theme.colors.action },
+  listState: { alignItems: "center", paddingVertical: theme.spacing[6], gap: theme.spacing[3] },
+  pagination: { alignItems: "center", gap: theme.spacing[3], marginTop: theme.spacing[5] },
+  paginationControls: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", justifyContent: "center", gap: theme.spacing[3] },
+  searchField: { minHeight: 52, flexDirection: "row", alignItems: "center", gap: theme.spacing[2], paddingHorizontal: theme.spacing[3], borderWidth: 1, borderColor: theme.colors.border, borderRadius: theme.radii.md, backgroundColor: theme.colors.surface }, searchInput: { flex: 1, ...theme.typography.bodySmall, color: theme.colors.text, paddingVertical: theme.spacing[2] }, clearSearch: { ...actionStyles.iconButton, borderRadius: theme.radii.pill, backgroundColor: theme.colors.surfaceMuted },
+  filters: { flexDirection: "row", gap: theme.controls.actionGap, marginTop: theme.spacing[3], flexWrap: "wrap" }, filter: { minHeight: theme.controls.actionSize, alignItems: "center", justifyContent: "center", borderRadius: theme.radii.pill, borderWidth: 1, paddingHorizontal: theme.spacing[3] }, filterText: { ...actionStyles.label }, pressed: { opacity: 0.7 },
   actionEmpty: { alignItems: "center", paddingVertical: theme.spacing[10], paddingHorizontal: theme.spacing[5] }, actionEmptyIcon: { width: 52, height: 52, borderRadius: 26, alignItems: "center", justifyContent: "center", backgroundColor: theme.colors.successTint, marginBottom: theme.spacing[3] }, actionEmptyTitle: { ...theme.typography.h4, color: theme.colors.text, textAlign: "center" }, actionEmptyText: { ...theme.typography.bodySmall, color: theme.colors.textMuted, textAlign: "center", marginTop: theme.spacing[2] },
-  requestRow: { minHeight: 92, flexDirection: "row", backgroundColor: theme.colors.background }, rowPressed: { backgroundColor: theme.colors.surfaceMuted }, statusRail: { width: 3, borderRadius: theme.radii.pill, marginVertical: 10 }, rowBody: { flex: 1, paddingVertical: 10, paddingLeft: theme.spacing[3] }, rowTop: { flexDirection: "row", alignItems: "center", gap: theme.spacing[2] }, guestName: { ...theme.typography.bodySmallMedium, color: theme.colors.text, flex: 1 }, price: { ...theme.typography.bodySmallMedium, color: theme.colors.text, minWidth: 62, textAlign: "right" }, stayText: { ...theme.typography.caption, color: theme.colors.textSecondary, marginTop: 4, paddingRight: theme.spacing[3] },
-  rowBottom: { minHeight: 22, flexDirection: "row", alignItems: "center", gap: theme.spacing[2], marginTop: 7 }, statusBadge: { borderRadius: theme.radii.pill, paddingHorizontal: 8, paddingVertical: 3 }, statusText: { ...theme.typography.captionMedium, fontSize: 10 }, rowWaiting: { ...theme.typography.caption, color: theme.colors.textMuted, flex: 1 }, channels: { flexDirection: "row", gap: theme.spacing[2] }, channelCompact: { flexDirection: "row", alignItems: "center", gap: 3 }, channelDot: { width: 5, height: 5, borderRadius: 3 },
-  expanded: { gap: theme.spacing[3], marginTop: theme.spacing[3], paddingTop: theme.spacing[3], borderTopWidth: 1, borderTopColor: theme.colors.border }, offerSummary: { gap: 3 }, expandedLabel: { ...theme.typography.captionMedium, color: theme.colors.textMuted, fontSize: 10, letterSpacing: 0.5 }, expandedText: { ...theme.typography.bodySmall, color: theme.colors.textSecondary }, deliveryLine: { flexDirection: "row", gap: theme.spacing[2], alignItems: "flex-start" }, deliveryTitle: { ...theme.typography.bodySmallMedium, color: theme.colors.text }, deliveryMeta: { ...theme.typography.caption, color: theme.colors.textMuted, marginTop: 2 }, errorCode: { ...theme.typography.captionMedium, color: theme.colors.danger, marginTop: 2 },
 });

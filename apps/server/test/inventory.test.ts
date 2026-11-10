@@ -152,9 +152,9 @@ describe("inventory API", () => {
 
     const otherPlan = await createRate(app, token, roomId, {
       ...ratePayload("2026-01-01", "2026-01-31", 9_000),
-      planCode: "room_only",
+      planCode: "HB",
       planName: "Room only",
-      mealPlan: "room_only",
+      mealPlan: "HB",
     });
     expect(otherPlan.statusCode).toBe(201);
   });
@@ -170,7 +170,8 @@ describe("inventory API", () => {
       url: `/v1/rooms/${roomId}/rates/preview`,
       headers: auth(token),
       payload: {
-        planCode: "breakfast",
+        planCode: "BB",
+        mealPlan: "BB",
         checkIn: "2026-01-31",
         checkOut: "2026-02-02",
         occupancy: { adults: 2, childAges: [] },
@@ -183,8 +184,8 @@ describe("inventory API", () => {
         currency: "EUR",
         totalCents: 26_800,
         nights: [
-          { date: "2026-01-31", baseCents: 10_000, breakfastCents: 2_400, totalCents: 12_400 },
-          { date: "2026-02-01", baseCents: 12_000, breakfastCents: 2_400, totalCents: 14_400 },
+          { date: "2026-01-31", baseCents: 10_000, boardCents: 2_400, totalCents: 12_400 },
+          { date: "2026-02-01", baseCents: 12_000, boardCents: 2_400, totalCents: 14_400 },
         ],
       },
     });
@@ -194,7 +195,8 @@ describe("inventory API", () => {
       url: `/v1/rooms/${roomId}/rates/preview`,
       headers: auth(token),
       payload: {
-        planCode: "breakfast",
+        planCode: "BB",
+        mealPlan: "BB",
         checkIn: "2026-03-01",
         checkOut: "2026-03-02",
         occupancy: { adults: 2, childAges: [] },
@@ -211,7 +213,8 @@ describe("inventory API", () => {
       url: `/v1/rooms/${roomId}/rates/preview`,
       headers: auth(token),
       payload: {
-        planCode: "breakfast",
+        planCode: "BB",
+        mealPlan: "BB",
         checkIn: "2026-01-10",
         checkOut: "2026-01-11",
         occupancy: { adults: 3, childAges: [] },
@@ -328,9 +331,9 @@ function roomPayload() {
 
 function ratePayload(start: string, endInclusive: string, nightlyBaseCents: number) {
   return {
-    planCode: "breakfast",
+    planCode: "BB",
     planName: "Breakfast included",
-    mealPlan: "breakfast",
+    mealPlan: "BB",
     start,
     endInclusive,
     nightlyBaseCents,
@@ -338,8 +341,8 @@ function ratePayload(start: string, endInclusive: string, nightlyBaseCents: numb
     includedChildren: 0,
     extraAdultCents: 3_000,
     extraChildCents: 1_500,
-    breakfastAdultCents: 1_200,
-    breakfastChildCents: 600,
+    boardAdultCents: 1_200,
+    boardChildCents: 600,
     maxChildAge: 12,
     minNights: 1,
   };

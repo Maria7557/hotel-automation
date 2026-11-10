@@ -1,3 +1,4 @@
+import { requestLabel } from "../requests/status";
 import type { DashboardSnapshot, HotelProfile, HotelRequest } from "./types";
 
 const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
@@ -23,7 +24,12 @@ export const mockProfile: HotelProfile = {
 const primaryRequests: HotelRequest[] = [
     {
       id: "req_1008",
+      reservationNumber: "1",
       guestName: "Anna Rossi",
+      mealPlan: "HB",
+      checkIn: "2026-11-12",
+      checkOut: "2026-11-16",
+      occupancy: { adults: 2, childAges: [7] },
       stayLabel: "12–16 November · 4 nights",
       guestLabel: "2 adults · 1 child",
       roomLabel: "Deluxe Room",
@@ -31,15 +37,21 @@ const primaryRequests: HotelRequest[] = [
       totalCents: 64_000,
       currency: "EUR",
       receivedAt: minutesAgo(3),
+      acceptedAt: minutesAgo(2),
       status: "payment",
-      statusLabel: "To confirm",
+      statusLabel: requestLabel("payment"),
       nextAction: "Review availability",
       email: { status: "sent", recipient: "anna@example.com", processedAt: "2026-10-31T12:11:00.000Z" },
       whatsapp: { status: "sent", recipient: "+393331234567", processedAt: "2026-10-31T12:11:10.000Z" },
     },
     {
       id: "req_1007",
+      reservationNumber: "2",
       guestName: "Luca Bianchi",
+      mealPlan: "BB",
+      checkIn: "2026-11-20",
+      checkOut: "2026-11-23",
+      occupancy: { adults: 2, childAges: [] },
       stayLabel: "20–23 November · 3 nights",
       guestLabel: "2 adults",
       roomLabel: "Junior Suite",
@@ -48,7 +60,7 @@ const primaryRequests: HotelRequest[] = [
       currency: "EUR",
       receivedAt: minutesAgo(5),
       status: "attention",
-      statusLabel: "Not delivered",
+      statusLabel: requestLabel("attention", true),
       nextAction: "Retry WhatsApp",
       attentionReason: "WHATSAPP_DELIVERY_FAILED",
       email: { status: "sent", recipient: "luca@example.com", processedAt: "2026-10-31T11:43:00.000Z" },
@@ -56,7 +68,12 @@ const primaryRequests: HotelRequest[] = [
     },
     {
       id: "req_1006",
+      reservationNumber: "3",
       guestName: "Sofia Müller",
+      mealPlan: "FB",
+      checkIn: "2026-12-02",
+      checkOut: "2026-12-07",
+      occupancy: { adults: 2, childAges: [5, 9] },
       stayLabel: "2–7 December · 5 nights",
       guestLabel: "2 adults · 2 children",
       roomLabel: "Family Room",
@@ -64,8 +81,9 @@ const primaryRequests: HotelRequest[] = [
       totalCents: 105_000,
       currency: "EUR",
       receivedAt: minutesAgo(20),
+      acceptedAt: minutesAgo(15),
       status: "payment",
-      statusLabel: "To confirm",
+      statusLabel: requestLabel("payment"),
       nextAction: "Review availability",
       email: { status: "sent", recipient: "sofia@example.com", processedAt: "2026-10-31T10:19:00.000Z" },
       whatsapp: { status: "sent", recipient: "+491701234567", processedAt: "2026-10-31T10:19:08.000Z" },
@@ -76,10 +94,16 @@ const demoNames = ["Emma Wilson", "Noah Martin", "Olivia Brown", "Liam Garcia", 
 const generatedRequests: HotelRequest[] = Array.from({ length: 283 }, (_, index) => {
   const status: HotelRequest["status"] = index < 22 ? "payment" : index < 25 ? "attention" : index < 97 ? "waiting" : "new";
   const totalCents = 28_000 + (index % 7) * 9_500;
-  const failed = status === "attention";
+  const review = status === "attention" && index === 24;
+  const failed = status === "attention" && !review;
   return {
     id: `req_demo_${index}`,
+    reservationNumber: String(index + 4),
     guestName: demoNames[index % demoNames.length]!,
+    mealPlan: (["BB", "HB", "FB"] as const)[index % 3]!,
+    checkIn: `2026-11-${String(3 + index % 20).padStart(2, "0")}`,
+    checkOut: `2026-11-${String(5 + index % 20).padStart(2, "0")}`,
+    occupancy: { adults: 2, childAges: index % 4 === 0 ? [7] : [] },
     stayLabel: `${3 + (index % 20)}–${5 + (index % 20)} November · 2 nights`,
     guestLabel: index % 4 === 0 ? "2 adults · 1 child" : "2 adults",
     roomLabel: index % 3 === 0 ? "Deluxe Room" : index % 3 === 1 ? "Classic Double" : "Junior Suite",
@@ -87,9 +111,11 @@ const generatedRequests: HotelRequest[] = Array.from({ length: 283 }, (_, index)
     totalCents,
     currency: "EUR",
     receivedAt: minutesAgo(28 + (index % 180) * 4),
+    ...(status === "waiting" ? { offerSentAt: minutesAgo(26 + (index % 180) * 4) } : {}),
     status,
-    statusLabel: status === "payment" ? "To confirm" : status === "attention" ? "Not delivered" : status === "new" ? "New request" : "Waiting for guest",
-    ...(status === "payment" ? { nextAction: "Review availability" } : failed ? { nextAction: "Review delivery" } : {}),
+    statusLabel: requestLabel(status, failed),
+    ...(status === "payment" ? { nextAction: "Review availability", acceptedAt: minutesAgo(24 + index * 4) } : review ? { nextAction: "Review rates and request" } : failed ? { nextAction: "Review delivery" } : {}),
+    ...(review ? { attentionReason: "manual_review" } : {}),
     ...(failed ? { attentionReason: "EMAIL_DELIVERY_FAILED" } : {}),
     email: { status: failed ? "failed" : "sent", recipient: `guest${index + 1}@example.com`, lastErrorCode: failed ? "GMAIL_ACCESS_REVOKED" : null },
     whatsapp: { status: index % 4 === 0 ? "unused" : "sent", recipient: `+39333000${String(index).padStart(4, "0")}` },
@@ -103,5 +129,7 @@ export const mockDashboard: DashboardSnapshot = {
   paymentPendingCount: 24,
   paymentPendingTotalCents: 1_584_000,
   attentionCount: 4,
+  failedDeliveryCount: 3,
+  pagination: { page: 1, limit: 30, total: 286 },
   requests: [...primaryRequests, ...generatedRequests],
 };

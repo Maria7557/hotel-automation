@@ -11,6 +11,7 @@ export const colors = {
     100: "#F1F1F1",
     200: "#E5E5E5",
     300: "#C7C7C7",
+    400: "#8A8A8A",
     500: "#6F6F6F",
     700: "#4A4A4A",
     950: "#202020",
@@ -65,6 +66,13 @@ export const typography = {
 
 export const controls = {
   minTarget: 44,
+  actionSize: 44,
+  actionIconSize: 20,
+  actionGap: spacing[3],
+  helperSize: 32,
+  helperIconSize: 16,
+  helperGap: spacing[1],
+  helperHitSlop: 6,
   buttonHeight: 54,
   inputHeight: 54,
   contentInset: 20,

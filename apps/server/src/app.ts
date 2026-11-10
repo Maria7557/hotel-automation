@@ -1,3 +1,5 @@
+import { registerClientRoutes } from "./http/routes/clients.js";
+import type { ClientRepository } from "./repositories/clients.js";
 import cors from "@fastify/cors";
 import cookie from "@fastify/cookie";
 import formbody from "@fastify/formbody";
@@ -50,6 +52,7 @@ type AppOptions = {
       >
     >;
   repositories: Repositories;
+  clients?: ClientRepository;
   providerFetch?: ProviderFetch;
   socialTokenVerifier?: SocialTokenVerifier;
   logger?: boolean;
@@ -169,6 +172,7 @@ export async function createApp(options: AppOptions): Promise<FastifyInstance> {
   await registerMediaRoutes(app, authService, options.env.PUBLIC_BASE_URL);
   await registerAutomationRoutes(app, authService, automationService);
   await registerEmbedRoutes(app);
+  if (options.clients) await registerClientRoutes(app, authService, options.clients);
 
   app.setNotFoundHandler(async (_request, reply) => {
     return reply.code(404).send({ error: { code: "NOT_FOUND", message: "Route was not found." } });

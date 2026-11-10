@@ -1,0 +1,2 @@
+ALTER TABLE "inquiries" ADD COLUMN "reservation_number" bigint NOT NULL GENERATED ALWAYS AS IDENTITY (sequence name "inquiries_reservation_number_seq" INCREMENT BY 1 MINVALUE 1 MAXVALUE 9223372036854775807 START WITH 1 CACHE 1);--> statement-breakpoint
+CREATE UNIQUE INDEX "inquiries_reservation_number_unique" ON "inquiries" USING btree ("reservation_number");

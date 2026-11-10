@@ -10,7 +10,9 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "tsx src/db/migrate.ts"
+    "db:migrate": "tsx src/db/migrate.ts",
+    "dev:clients": "tsx watch src/client-worker.ts",
+    "start:clients": "node dist/client-worker.js"
   },
   "dependencies": {
     "@fastify/cookie": "^11.1.5",
