@@ -122,6 +122,19 @@ export function renderPublicOfferPage(snapshot: OfferSnapshot, context: PageRend
   const copy = copyFor(context.locale);
   const action = requireAcceptActionPath(context.acceptActionPath);
   const lang = languageFor(context.locale);
+  const languageHref = (language: "en" | "it"): string => {
+    const query = new URLSearchParams();
+    // Preview selection lives in the URL; real acceptance remains repository-backed.
+    if (context.testMode) {
+      if (context.state === "accepted") query.set("accepted", "1");
+      const selectedIndex = context.selectedOptionIndex ?? 0;
+      if (Number.isInteger(selectedIndex) && selectedIndex >= 0 && selectedIndex < snapshot.options.length) {
+        query.set("option", String(selectedIndex));
+      }
+    }
+    query.set("lang", language);
+    return escapeHtml(`?${query}`);
+  };
   const logoUrl = safeImageUrl(snapshot.hotelSnapshot.logoUrl);
   const websiteUrl = safeWebsiteUrl(context.websiteUrl ?? snapshot.hotelSnapshot.websiteUrl);
   const expiredContent = `<section class="confirmation" aria-labelledby="expired-title">
@@ -169,7 +182,7 @@ export function renderPublicOfferPage(snapshot: OfferSnapshot, context: PageRend
   </style>
 </head>
 <body><main>
-  <nav aria-label="${lang === "it" ? "Lingua" : "Language"}" style="display:flex;justify-content:flex-end;gap:16px;margin-bottom:16px"><a href="?${context.testMode && context.state === "accepted" ? "accepted=1&" : ""}lang=en" lang="en" ${lang === "en" ? 'aria-current="true"' : ""}>English</a><a href="?${context.testMode && context.state === "accepted" ? "accepted=1&" : ""}lang=it" lang="it" ${lang === "it" ? 'aria-current="true"' : ""}>Italiano</a></nav>
+  <nav aria-label="${lang === "it" ? "Lingua" : "Language"}" style="display:flex;justify-content:flex-end;gap:16px;margin-bottom:16px"><a href="${languageHref("en")}" lang="en" ${lang === "en" ? 'aria-current="true"' : ""}>English</a><a href="${languageHref("it")}" lang="it" ${lang === "it" ? 'aria-current="true"' : ""}>Italiano</a></nav>
   ${context.testMode ? `<p class="test-banner">${escapeHtml(copy.testMode)}</p>\n  ` : ""}<header class="brand">${logoUrl ? `<img class="logo" src="${escapeHtml(logoUrl)}" alt="">` : ""}<span class="brand-name">${escapeHtml(snapshot.hotelSnapshot.name)}</span></header>
   ${context.state === "accepted" ? acceptedContent : context.state === "expired" || context.state === "revoked" ? expiredContent : standardContent}
 </main></body>

@@ -15,6 +15,10 @@ import {
   acceptOfferSchema,
 } from "../public-schemas.js";
 
+function previewOptionSchema(optionCount: number) {
+  return z.coerce.number().int().min(0).max(optionCount - 1);
+}
+
 export async function registerAutomationRoutes(
   app: FastifyInstance,
   authService: AuthService,
@@ -65,7 +69,7 @@ export async function registerAutomationRoutes(
   );
 
   app.get(DEMO_OFFER_PATH, async (request, reply) => {
-    const query = z.object({ accepted: z.literal("1").optional(), lang: z.enum(["en", "it"]).default("it"), option: z.coerce.number().int().min(0).max(demoOfferSnapshot.options.length - 1).default(0) }).parse(request.query);
+    const query = z.object({ accepted: z.literal("1").optional(), lang: z.enum(["en", "it"]).default("it"), option: previewOptionSchema(demoOfferSnapshot.options.length).prefault(0) }).parse(request.query);
     return reply
       .header("Cache-Control", "private, no-store")
       .header("X-Robots-Tag", "noindex, nofollow, noarchive, nosnippet")
@@ -74,18 +78,20 @@ export async function registerAutomationRoutes(
   });
 
   app.post(`${DEMO_OFFER_PATH}/accept`, async (request, reply) => {
-    const { option } = z.object({ option: z.coerce.number().int().min(0).max(demoOfferSnapshot.options.length - 1).default(0) }).parse(request.body ?? {});
+    const { option } = z.object({ option: previewOptionSchema(demoOfferSnapshot.options.length).prefault(0) }).parse(request.body ?? {});
     return reply.redirect(`${DEMO_OFFER_PATH}?accepted=1&option=${option}${supportedLanguage((request.body as { lang?: string } | undefined)?.lang) ? `&lang=${supportedLanguage((request.body as { lang?: string }).lang)}` : ""}`, 303);
   });
 
   app.get("/proposal/test/:token", async (request, reply) => {
     const { token } = publicOfferParamsSchema.parse(request.params);
     const snapshot = await automationService.testProposalPage(token);
+    const { option } = z.object({ option: previewOptionSchema(snapshot.options.length).optional() }).parse(request.query);
     const accepted = (request.query as { accepted?: unknown }).accepted === "1";
     const html = renderPublicOfferPage(snapshot as unknown as OfferSnapshot, {
       state: accepted ? "accepted" : "active",
       acceptActionPath: `/proposal/test/${token}/accept`,
       testMode: true,
+      ...(option === undefined ? {} : { selectedOptionIndex: option }),
       ...(supportedLanguage((request.query as { lang?: string }).lang) ? { locale: supportedLanguage((request.query as { lang?: string }).lang)! } : {}),
     });
     return reply
@@ -97,8 +103,9 @@ export async function registerAutomationRoutes(
 
   app.post("/proposal/test/:token/accept", async (request, reply) => {
     const { token } = publicOfferParamsSchema.parse(request.params);
-    await automationService.testProposalPage(token);
-    return reply.redirect(`/proposal/test/${token}?accepted=1${supportedLanguage((request.body as { lang?: string } | undefined)?.lang) ? `&lang=${supportedLanguage((request.body as { lang?: string }).lang)}` : ""}`, 303);
+    const snapshot = await automationService.testProposalPage(token);
+    const { option } = z.object({ option: previewOptionSchema(snapshot.options.length).prefault(0) }).parse(request.body ?? {});
+    return reply.redirect(`/proposal/test/${token}?accepted=1&option=${option}${supportedLanguage((request.body as { lang?: string } | undefined)?.lang) ? `&lang=${supportedLanguage((request.body as { lang?: string }).lang)}` : ""}`, 303);
   });
 
   app.get("/proposal/:token", async (request, reply) => {

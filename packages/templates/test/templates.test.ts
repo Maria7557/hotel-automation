@@ -97,6 +97,41 @@ describe("message renderers", () => {
 });
 
 describe("public offer page", () => {
+  it.each(["active", "accepted"] as const)("preserves the selected preview option in %s language links", (state) => {
+    for (const selectedOptionIndex of [0, 1]) {
+      const html = renderPublicOfferPage(offerSnapshot(), {
+        state, selectedOptionIndex, testMode: true, acceptActionPath: "/proposal/test/token/accept", locale: "it",
+      });
+      for (const language of ["en", "it"]) {
+        expect(html).toContain(`href="?${state === "accepted" ? "accepted=1&amp;" : ""}option=${selectedOptionIndex}&amp;lang=${language}"`);
+      }
+      expect(html).toContain('name="referrer" content="no-referrer"');
+      expect(html).toContain("form-action 'self'");
+    }
+  });
+
+  it("leaves accepted real-offer selection in persisted state rather than language URLs", () => {
+    const html = renderPublicOfferPage(offerSnapshot(), {
+      state: "accepted", selectedOptionIndex: 1, acceptActionPath: "/proposal/token/accept",
+    });
+    expect(html).toContain("Junior Suite");
+    expect(html).toContain('href="?lang=en"');
+    expect(html).toContain('href="?lang=it"');
+    expect(html).not.toContain("accepted=1");
+    expect(html).not.toContain("option=1");
+  });
+
+  it.each([-1, 0.5, 2, NaN, Infinity, '1&next=https://evil.example' as unknown as number])(
+    "does not put an invalid preview option into language links: %s", (selectedOptionIndex) => {
+      const html = renderPublicOfferPage(offerSnapshot(), {
+        state: "accepted", selectedOptionIndex, testMode: true, acceptActionPath: "/proposal/test/token/accept",
+      });
+      expect(html).toContain('href="?accepted=1&amp;lang=en"');
+      expect(html).toContain('href="?accepted=1&amp;lang=it"');
+      expect(html).not.toContain("evil.example");
+    },
+  );
+
   it("links expired reservations back to the hotel booking website", () => {
     const html = renderPublicOfferPage(offerSnapshot(), {
       state: "expired", acceptActionPath: "/o/token/accept", websiteUrl: "https://hotel.example/book?availability=1&new=1", locale: "en",
