@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { detectMailProvider } from "../src/services/mail-detection.js";
 import { parseSmtpCredentials, resolveSafeSmtpHost } from "../src/providers/smtp.js";
-import { MicrosoftProvider } from "../src/providers/microsoft.js";
+import { MicrosoftProvider, parseMicrosoftCredentials } from "../src/providers/microsoft.js";
 
 describe("mail provider detection", () => {
   it("detects Gmail without DNS", async () => expect(await detectMailProvider("hotel@gmail.com", vi.fn())).toEqual({ provider: "google", confidence: "high" }));
@@ -25,5 +25,25 @@ describe("Microsoft Graph", () => {
     const result = await provider.send({ accessToken: "old", refreshToken: "refresh", accessTokenExpiresAt: new Date(0).toISOString(), scope: null }, { clientId: "id", clientSecret: "secret", redirectUri: "https://example.com/callback" }, { to: "owner@example.com", subject: "Test", html: "<p>Test</p>" });
     expect(result.providerMessageId).toBe("request-1"); expect(fetcher.mock.calls[1]?.[0]).toBe("https://graph.microsoft.com/v1.0/me/sendMail");
     expect(String(fetcher.mock.calls[1]?.[1]?.body)).toContain('"saveToSentItems":true');
+  });
+});
+
+
+describe("Microsoft credential persistence", () => {
+  it("reloads the serialized credentials returned by an OAuth exchange", async () => {
+    const provider = new MicrosoftProvider(vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      access_token: "synthetic-access", refresh_token: "synthetic-refresh", expires_in: 3600, scope: "Mail.Send",
+    }), { status: 200 })));
+    const credentials = await provider.exchangeAuthorizationCode("synthetic-code", { clientId: "id", clientSecret: "secret", redirectUri: "https://example.com/callback" });
+    expect(parseMicrosoftCredentials(JSON.parse(JSON.stringify(credentials)))).toEqual(credentials);
+  });
+
+  it("preserves the original expiry rather than extending it when stored credentials reload", () => {
+    const credentials = { accessToken: "access", refreshToken: "refresh", accessTokenExpiresAt: "2000-01-01T00:00:00.000Z", scope: null };
+    expect(parseMicrosoftCredentials(credentials)).toEqual(credentials);
+  });
+
+  it.each(["", "not-a-date"])("rejects invalid stored expiry %s", (accessTokenExpiresAt) => {
+    expect(() => parseMicrosoftCredentials({ accessToken: "access", refreshToken: "refresh", accessTokenExpiresAt })).toThrow();
   });
 });

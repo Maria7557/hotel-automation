@@ -19,6 +19,9 @@ export function NotificationSettingsScreen({ onBack, demo }: { onBack: () => voi
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const emailError = emailIncomingRequests && emailAddress.trim().length > 0 && !/^\S+@\S+\.\S+$/.test(emailAddress.trim())
+    ? t("Enter a valid notification email address.")
+    : null;
 
   const apply = (next: NotificationSettings) => {
     setSettings(next);
@@ -120,7 +123,8 @@ export function NotificationSettingsScreen({ onBack, demo }: { onBack: () => voi
             </View>
             {emailIncomingRequests ? <View style={[styles.emailField, styles.divider]}>
               <Text style={styles.label}>{t("Notification email")}</Text>
-              <TextInput value={emailAddress} onChangeText={setEmailAddress} keyboardType="email-address" autoCapitalize="none" autoCorrect={false} placeholder="manager@hotel.com" style={styles.input} />
+              <TextInput accessibilityLabel={t("Notification email")} accessibilityHint={emailError ?? t("Every incoming request notification will be sent to this address.")} value={emailAddress} onChangeText={(value) => { setEmailAddress(value); setError(null); setSaved(false); }} keyboardType="email-address" autoCapitalize="none" autoCorrect={false} placeholder="manager@hotel.com" style={[styles.input, emailError && styles.inputError]} />
+              <Text accessibilityRole={emailError ? "alert" : undefined} style={emailError ? styles.fieldError : styles.fieldHelper}>{emailError ?? t("Every incoming request notification will be sent to this address.")}</Text>
             </View> : null}
           </View>
         </View>
@@ -168,6 +172,9 @@ const styles = StyleSheet.create({
   emailField: { gap: theme.spacing[2], padding: theme.spacing[4] },
   label: { ...theme.typography.captionMedium, color: theme.colors.text },
   input: { minHeight: 52, paddingHorizontal: theme.spacing[3], borderWidth: 1, borderColor: theme.colors.border, borderRadius: theme.radii.md, backgroundColor: theme.colors.surface, color: theme.colors.text, fontSize: 16 },
+  inputError: { borderWidth: 2, borderColor: theme.colors.danger },
+  fieldHelper: { ...theme.typography.caption, color: theme.colors.textMuted },
+  fieldError: { ...theme.typography.captionMedium, color: theme.colors.danger },
   save: { minHeight: theme.controls.buttonHeight, alignItems: "center", justifyContent: "center", borderRadius: theme.radii.md, backgroundColor: theme.colors.action },
   saveText: { ...theme.typography.button, color: theme.colors.onAction },
   pressed: { opacity: 0.72 },

@@ -179,6 +179,20 @@ export async function registerAutomationRoutes(
     reply.header("Cache-Control", "private, no-store");
     return { data: { inquiry: await automationService.request(request.currentUser!.id, inquiryId) } };
   });
+  app.get("/v1/inquiries/:inquiryId/share-message", { preHandler: authenticate }, async (request, reply) => {
+    const { inquiryId } = z.object({ inquiryId: z.uuid() }).parse(request.params);
+    const { channel, language } = z.object({ channel: z.enum(["email", "whatsapp"]), language: z.enum(["en", "it"]).optional() }).parse(request.query);
+    reply.header("Cache-Control", "private, no-store");
+    return { data: { message: await automationService.offerShareMessage(request.currentUser!.id, inquiryId, channel, language) } };
+  });
+  app.post("/v1/inquiries/:inquiryId/manual-sent", { preHandler: authenticate }, async (request, reply) => {
+    const { inquiryId } = z.object({ inquiryId: z.uuid() }).parse(request.params);
+    const key = z.string().trim().min(1).max(153).safeParse(request.headers["idempotency-key"]);
+    if (!key.success) throw errors.idempotencyKeyRequired();
+    const { offerId, channel, language } = z.object({ offerId: z.uuid(), channel: z.enum(["email", "whatsapp"]), language: z.enum(["en", "it"]) }).parse(request.body);
+    reply.header("Cache-Control", "private, no-store");
+    return { data: await automationService.markManualOfferSent(request.currentUser!.id, inquiryId, key.data, offerId, channel, language) };
+  });
   app.post("/v1/inquiries/summaries", { preHandler: authenticate }, async (request, reply) => {
     const { inquiryIds } = z.object({ inquiryIds: z.array(z.uuid()).min(1).max(100) }).parse(request.body);
     reply.header("Cache-Control", "private, no-store");

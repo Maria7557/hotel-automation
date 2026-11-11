@@ -17,7 +17,7 @@ import {
 } from "react-native";
 import { ArrowLeft, Building2, Check, ExternalLink, Eye, Mail, MessageCircle, Send, Variable } from "lucide-react-native";
 import { theme } from "@hotel/design";
-import { ApiError, apiClient, authErrorMessage } from "@/api/client";
+import { apiClient, authErrorMessage } from "@/api/client";
 import { renderDemoMessagePreview } from "@/api/demo-message-preview";
 import type {
   MessageChannel,
@@ -91,6 +91,7 @@ export function MessageSettingsScreen({ onBack, demo }: { onBack: () => void; de
   };
 
   useEffect(() => { void load(); }, [demo]);
+  useEffect(() => { setPreview(null); }, [subject, emailBody, whatsappBody, templateLanguage]);
 
   const current = useMemo<MessageSettingsInput>(() => ({
     emailSubjectTemplate: subject,
@@ -130,7 +131,7 @@ export function MessageSettingsScreen({ onBack, demo }: { onBack: () => void; de
     setNotice(null);
     setPreviewing(channel);
     try {
-      setPreview(demo ? renderDemoPreview(channel, current) : await apiClient.previewMessage(channel, templateLanguage));
+      setPreview(demo || dirty ? renderDemoPreview(channel, current) : await apiClient.previewMessage(channel, templateLanguage));
     } catch (nextError) { setError(authErrorMessage(nextError)); }
     finally { setPreviewing(null); }
   };
@@ -227,10 +228,10 @@ export function MessageSettingsScreen({ onBack, demo }: { onBack: () => void; de
 
             <View style={styles.section}>
               <SectionTitle>{t("Preview")}</SectionTitle>
-              {dirty && !demo ? <InlineState tone="warning">{t("Save changes before generating a server preview")}</InlineState> : null}
+              {dirty && !demo ? <InlineState tone="warning">{t("This is a draft preview with sample guest data. Save when you are ready.")}</InlineState> : null}
               <View style={styles.actionRow}>
-                <View style={styles.actionHalf}><Button variant="secondary" icon={Mail} disabled={dirty && !demo} loading={previewing === "email"} onPress={() => void showPreview("email")}>{t("Email")}</Button></View>
-                <View style={styles.actionHalf}><Button variant="secondary" icon={MessageCircle} disabled={dirty && !demo} loading={previewing === "whatsapp"} onPress={() => void showPreview("whatsapp")}>WhatsApp</Button></View>
+                <View style={styles.actionHalf}><Button variant="secondary" icon={Mail} loading={previewing === "email"} onPress={() => void showPreview("email")}>{t("Preview email")}</Button></View>
+                <View style={styles.actionHalf}><Button variant="secondary" icon={MessageCircle} loading={previewing === "whatsapp"} onPress={() => void showPreview("whatsapp")}>{t("Preview WhatsApp")}</Button></View>
               </View>
               {preview ? <PreviewCard preview={preview} /> : null}
             </View>
@@ -298,10 +299,11 @@ function OfferLinkCard({ offer }: { offer: MessagePreview["offer"] }) {
     catch { setLinkError("Could not open the offer. Please try again."); }
   };
   return <View style={styles.offerContext}>
+    <Text style={styles.offerContextEyebrow}>{t("Guest offer page preview")}</Text>
     <View style={styles.offerContextHeading}><Building2 size={17} color={theme.colors.action} /><Text style={styles.offerContextTitle}>{offer.hotelName}</Text></View>
     <Text style={styles.offerContextMeta}>{offer.checkIn} → {offer.checkOut}</Text>
     <Text style={styles.offerContextMeta}>{offer.roomNames.length > 0 ? offer.roomNames.join(" · ") : t("No priced rooms are available for this test period")}</Text>
-    <Button variant="secondary" icon={ExternalLink} onPress={() => void openOffer()}>{t("Open test offer")}</Button>
+    <Button variant="secondary" icon={ExternalLink} onPress={() => void openOffer()}>{t("Preview the page guests open")}</Button>
     {linkError ? <InlineState tone="danger">{linkError}</InlineState> : null}
   </View>;
 }
@@ -323,8 +325,7 @@ function phoneDigits(value: string): string {
 }
 
 function renderDemoPreview(channel: MessageChannel, settings: MessageSettingsInput): MessagePreview {
-  const origin = Platform.OS === "web" ? window.location.origin : process.env.EXPO_PUBLIC_API_URL;
-  if (!origin) throw new ApiError("API_NOT_CONFIGURED", t("Set EXPO_PUBLIC_API_URL to open the demo offer preview."));
+  const origin = Platform.OS === "web" && typeof window !== "undefined" ? window.location.origin : process.env.EXPO_PUBLIC_API_URL ?? "https://ospio.online";
   return renderDemoMessagePreview(channel, settings, origin);
 }
 
@@ -358,6 +359,7 @@ const styles = StyleSheet.create({
   previewSubject: { ...theme.typography.h4, color: theme.colors.text },
   previewText: { ...theme.typography.bodySmall, color: theme.colors.textSecondary },
   offerContext: { gap: theme.spacing[2], padding: theme.spacing[3], borderRadius: theme.radii.md, backgroundColor: theme.colors.actionTint },
+  offerContextEyebrow: { ...theme.typography.captionMedium, color: theme.colors.action },
   offerContextHeading: { flexDirection: "row", alignItems: "center", gap: theme.spacing[2] },
   offerContextTitle: { ...theme.typography.bodySmallMedium, color: theme.colors.text },
   offerContextMeta: { ...theme.typography.caption, color: theme.colors.textSecondary },

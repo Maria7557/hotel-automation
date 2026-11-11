@@ -82,7 +82,7 @@ export function ClientsScreen({ demo, onOpenClient, reloadVersion }: { demo: boo
       refreshControl={<RefreshControl refreshing={waiting && page.clients.length > 0} onRefresh={() => setReload((v) => v + 1)} tintColor={theme.colors.action} />}
       keyboardShouldPersistTaps="handled"
       ListHeaderComponent={<>
-        <View style={styles.heading}><View style={{ flex: 1 }}><Text style={styles.title}>{t("Clients")}</Text><Text style={styles.subtitle}>{t("Your contacts and their enquiries")}</Text></View>
+        <View style={styles.heading}><View style={{ flex: 1 }}><Text style={styles.title}>{t("Clients")}</Text><Text style={styles.subtitle}>{t("Contacts and requests")}</Text></View>
           <Pressable accessibilityRole="button" accessibilityLabel={t("Create client")} onPress={() => { setSuccess(null); setCreating(true); }} style={styles.create}><Plus size={theme.controls.actionIconSize} color={theme.colors.onAction} /><Text style={styles.createText}>{t("Add client")}</Text></Pressable>
         </View>
         <View style={styles.search}><Search size={theme.controls.actionIconSize} color={theme.colors.textMuted} /><TextInput accessibilityLabel={t("Search clients")} placeholder={t("Search name, email or phone")} placeholderTextColor={theme.colors.textMuted} value={search} onChangeText={setSearch} maxLength={160} style={styles.searchInput} />{search ? <Pressable accessibilityRole="button" accessibilityLabel={t("Clear client search")} onPress={() => setSearch("")} style={actionStyles.iconButton}><X size={theme.controls.actionIconSize} color={theme.colors.textMuted} /></Pressable> : null}</View>
@@ -98,8 +98,8 @@ export function ClientsScreen({ demo, onOpenClient, reloadVersion }: { demo: boo
         {success ? <View style={styles.feedback}><InlineState tone="success">{translateLabel(success)}</InlineState></View> : null}
         {error ? <View style={styles.feedback}><InlineState tone="danger">{translateLabel(error)}</InlineState><Button variant="tertiary" onPress={() => setReload((v) => v + 1)}>{t("Try again")}</Button></View> : null}
       </>}
-      ListEmptyComponent={waiting ? <ActivityIndicator style={{ marginTop: 35 }} color={theme.colors.action} /> : error ? <View /> : <View style={{ gap: 8 }}><EmptyState title={hasQuery ? t("No matching clients") : t("Your contacts start here")} description={hasQuery ? t("Try a wider reservation period, adjust your filters, or change your search.") : t("Clients appear after their first enquiry. You can also add a contact yourself.")} />{hasQuery ? <Button variant="tertiary" onPress={() => { setFilters({}); setSearch(""); }}>{t("Clear search & filters")}</Button> : null}</View>}
-      ListFooterComponent={page.nextCursor && !waiting ? <View style={{ marginTop: 16 }}><Button variant="secondary" loading={moreLoading} onPress={() => void loadMore()}>{t("Load more clients")}</Button></View> : undefined}
+      ListEmptyComponent={waiting ? <ActivityIndicator style={{ marginTop: 35 }} color={theme.colors.action} /> : error ? <View /> : <View style={{ gap: 8 }}><EmptyState title={hasQuery ? t("No matching clients") : t("No clients")} description={hasQuery ? t("Change filters or search.") : t("Clients appear after a request.")} />{hasQuery ? <Button variant="tertiary" onPress={() => { setFilters({}); setSearch(""); }}>{t("Clear all")}</Button> : null}</View>}
+      ListFooterComponent={page.nextCursor && !waiting ? <View style={{ marginTop: 16 }}><Button variant="secondary" loading={moreLoading} onPress={() => void loadMore()}>{t("Load more")}</Button></View> : undefined}
       initialNumToRender={12} maxToRenderPerBatch={15} windowSize={7}
     />
     {filtersOpen ? <ClientFiltersModal filters={filters} options={options} optionsLoading={optionsLoading} optionsError={optionsError} onRetryOptions={() => setOptionsRetry((value) => value + 1)} onClose={() => setFiltersOpen(false)} onApply={(value) => { setFilters(value); setFiltersOpen(false); }} /> : null}
@@ -110,12 +110,12 @@ export function ClientsScreen({ demo, onOpenClient, reloadVersion }: { demo: boo
 function ClientCard({ client, onOpenClient }: { client: ClientProfile; onOpenClient: (id: string) => void }) {
   return <View style={styles.card}>
     <DetailLink kind="client" id={client.id} label={t("Open client {{v0}}", { v0: client.name })} onOpen={() => onOpenClient(client.id)} style={styles.cardHeader}>
-      <View style={styles.clientIdentity}><View style={styles.avatar}><Users size={theme.controls.actionIconSize} color={theme.colors.action} /></View><View style={{ flex: 1 }}><Text style={styles.name}>{client.name}</Text><Text style={styles.meta}>{client.source === "manual" ? t("Added manually") : t("From enquiry")} · {client.requestCount} {client.requestCount === 1 ? t("enquiry") : t("enquiries")}</Text></View></View>
+      <View style={styles.clientIdentity}><View style={styles.avatar}><Users size={theme.controls.actionIconSize} color={theme.colors.action} /></View><View style={{ flex: 1 }}><Text style={styles.name}>{client.name}</Text><Text style={styles.meta}>{client.source === "manual" ? t("Added manually") : t("From request")} · {client.requestCount} {client.requestCount === 1 ? t("request") : t("requests")}</Text></View></View>
     </DetailLink>
     {client.email ? <View style={styles.contactLine}><Mail size={theme.controls.actionIconSize} color={theme.colors.textMuted} /><Text selectable style={styles.contactText}>{client.email}</Text></View> : null}
     {client.phone ? <View style={styles.contactLine}><Phone size={theme.controls.actionIconSize} color={theme.colors.textMuted} /><Text selectable style={styles.contactText}>{client.phone}</Text></View> : null}
-    <DetailLink kind="client" id={client.id} label={t("View reservations for {{v0}}", { v0: client.name })} onOpen={() => onOpenClient(client.id)} style={styles.reservationLink}>
-      <Text style={styles.reservationLinkText}>{t("View reservations")}</Text>
+    <DetailLink kind="client" id={client.id} label={t("View requests for {{v0}}", { v0: client.name })} onOpen={() => onOpenClient(client.id)} style={styles.reservationLink}>
+      <Text style={styles.reservationLinkText}>{t("View requests")}</Text>
     </DetailLink>
   </View>;
 }
@@ -136,12 +136,12 @@ function ClientHistoryPanel({ id, demo, onOpenRequest, onOpenClient }: { id: str
     try { const next = await apiClient.getClientHistory(id, history.nextCursor); setHistory((old) => ({ requests: [...old!.requests, ...next.requests], nextCursor: next.nextCursor })); setError(false); }
     catch { setError(true); } finally { setBusy(false); }
   };
-  return <View style={{ gap: 8 }}><Text style={styles.historyTitle}>{t("Reservations")}</Text>
-    {error ? <><Text style={styles.error}>{t("Could not load reservations.")}</Text><Button variant="tertiary" onPress={() => setRetry((v) => v + 1)}>{t("Retry reservations")}</Button></> : null}
+  return <View style={{ gap: 8 }}><Text style={styles.historyTitle}>{t("Requests")}</Text>
+    {error ? <><Text style={styles.error}>{t("Could not load requests.")}</Text><Button variant="tertiary" onPress={() => setRetry((v) => v + 1)}>{t("Retry requests")}</Button></> : null}
     {!history && !error ? <ActivityIndicator color={theme.colors.action} /> : null}
-    {history?.requests.map((request) => <RequestCard key={request.id} request={request} onOpen={() => onOpenRequest(request.id)} onOpenClient={onOpenClient} />)}
-    {history && !history.requests.length ? <Text style={styles.meta}>{t("No reservations linked to this client yet.")}</Text> : null}
-    {history?.nextCursor ? <Button variant="tertiary" loading={busy} onPress={() => void more()}>{t("More reservations")}</Button> : null}
+    {history?.requests.map((request) => <RequestCard key={request.id} request={request} demo={demo} onOpen={() => onOpenRequest(request.id)} onOpenClient={onOpenClient} onManualSent={(updated) => setHistory((current) => current ? { ...current, requests: current.requests.map((item) => item.id === updated.id ? updated : item) } : current)} />)}
+    {history && !history.requests.length ? <Text style={styles.meta}>{t("No requests yet.")}</Text> : null}
+    {history?.nextCursor ? <Button variant="tertiary" loading={busy} onPress={() => void more()}>{t("More requests")}</Button> : null}
   </View>;
 }
 
@@ -167,7 +167,7 @@ export function ClientScreen({ id, demo, onBack, onOpenRequest, onOpenClient }: 
         {client.email ? <ContactDetail channel="email" detail={{ status: "unused", recipient: client.email }} showDeliveryStatus={false} /> : null}
         {client.phone ? <ContactDetail channel="whatsapp" detail={{ status: "unused", recipient: client.phone }} showDeliveryStatus={false} /> : null}
         <Text style={styles.meta}>{t("Language:")}{" "}{client.locale}</Text>
-        <Text style={styles.meta}>{client.requestCount} {client.requestCount === 1 ? t("enquiry") : t("enquiries")}</Text>
+        <Text style={styles.meta}>{client.requestCount} {client.requestCount === 1 ? t("request") : t("requests")}</Text>
         {client.notes ? <Text style={styles.contactText}>{client.notes}</Text> : null}
       </View>
       <ClientHistoryPanel id={client.id} demo={demo} onOpenRequest={onOpenRequest} onOpenClient={onOpenClient} />
@@ -193,7 +193,7 @@ function CreateClientModal({ demo, onClose, onCreated }: { demo: boolean; onClos
     <SafeAreaView style={uiStyles.screen}><KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
       <View style={styles.modalHeading}><Text style={styles.modalTitle}>{t("Add client")}</Text><Pressable accessibilityRole="button" accessibilityLabel={t("Close client form")} disabled={saving} onPress={onClose} style={styles.close}><X size={theme.controls.actionIconSize} color={theme.colors.text} /></Pressable></View>
       <ScrollView contentContainerStyle={styles.form} keyboardShouldPersistTaps="handled">
-        <Text style={styles.subtitle}>{t("Add a contact without creating a reservation request.")}</Text>
+        <Text style={styles.subtitle}>{t("Contact only")}</Text>
         <Field accessibilityLabel={t("Client name")} label={t("Name")} value={name} onChangeText={setName} maxLength={160} editable={!saving} autoCapitalize="words" />
         <Field accessibilityLabel={t("Client email")} label={t("Email")} value={email} onChangeText={setEmail} maxLength={320} keyboardType="email-address" autoCapitalize="none" editable={!saving} />
         <Field accessibilityLabel={t("Client phone")} label={t("Phone")} value={phone} onChangeText={setPhone} maxLength={50} keyboardType="phone-pad" placeholder="+39 333 1234567" editable={!saving} />

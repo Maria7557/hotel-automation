@@ -137,6 +137,9 @@ export async function createApp(options: AppOptions): Promise<FastifyInstance> {
       ...(options.env.WAHA_BASE_URL ? { baseUrl: options.env.WAHA_BASE_URL } : {}),
       ...(options.env.WAHA_API_KEY ? { apiKey: options.env.WAHA_API_KEY } : {}),
     },
+    options.env,
+    new MicrosoftProvider(options.providerFetch ?? fetch),
+    new SmtpProvider(),
   );
   const mailService = new MailConnectionService(
     options.repositories.channels, options.repositories.hotels, options.env.AUTH_SECRET, options.env,

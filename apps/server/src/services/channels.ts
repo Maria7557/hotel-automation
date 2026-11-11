@@ -8,7 +8,7 @@ import {
   type previewInputSchema,
   type testSendInputSchema,
 } from "../http/channel-schemas.js";
-import { errors } from "../lib/errors.js";
+import { AppError, errors } from "../lib/errors.js";
 import {
   createOAuthNonce,
   createOAuthState,
@@ -17,7 +17,11 @@ import {
 } from "../lib/oauth-state.js";
 import { sealPrivateValue } from "../lib/public-token.js";
 import { unsealPrivateValue } from "../lib/public-token.js";
-import { GoogleProvider, parseGoogleCredentials } from "../providers/google.js";
+import { GoogleProvider } from "../providers/google.js";
+import { MicrosoftProvider } from "../providers/microsoft.js";
+import { SmtpProvider } from "../providers/smtp.js";
+import { isMailConnection, selectMailConnection } from "../repositories/mail-selection.js";
+import { MailSender, type MailConfig } from "./mail-sender.js";
 import { ProviderError } from "../providers/http.js";
 import { WahaProvider, type WahaConfig } from "../providers/waha.js";
 import type {
@@ -53,6 +57,9 @@ export class ChannelService {
     private readonly googleProvider: GoogleProvider,
     private readonly wahaProvider: WahaProvider,
     private readonly waha: WahaPlatformConfig = {},
+    private readonly microsoft: MailConfig = {},
+    private readonly microsoftProvider = new MicrosoftProvider(fetch),
+    private readonly smtpProvider = new SmtpProvider(),
   ) {}
 
   async getMessageSettings(userId: string) {
@@ -83,43 +90,37 @@ export class ChannelService {
     const settings = await this.effectiveSettings(userId);
     const testOffer = await this.automation.createTestProposal(userId, input.sample);
     const rendered = this.renderTestPreview(hotel, settings, input, testOffer);
-    const connectionKind = input.channel === "email" ? "google" : "waha";
-    const connection = await this.repository.findConnectionForUser(userId, connectionKind);
+    const mail = input.channel === "email"
+      ? selectMailConnection((await this.repository.listConnectionsForUser(userId)) ?? [])
+      : null;
+    const connection = input.channel === "email"
+      ? mail!.connection
+      : await this.repository.findConnectionForUser(userId, "waha");
     if (connection?.state !== "connected" || !connection.encryptedCredentials) {
       return this.saveTestResult(userId, input, rendered, {
         provider: "fake",
         accepted: false,
         state: "unknown",
         providerMessageId: null,
-        lastErrorCode: "FAKE_PROVIDER",
+        lastErrorCode: mail?.ambiguous ? "MAIL_CONNECTION_AMBIGUOUS" : "FAKE_PROVIDER",
         lastErrorMessage: "No external provider call was made.",
       });
     }
 
+    const connectionKind = connection.kind;
     try {
       if (input.channel === "email") {
-        const config = this.requireGoogleConfig();
-        const credentials = parseGoogleCredentials(
-          JSON.parse(unsealPrivateValue(connection.encryptedCredentials, this.authSecret)) as unknown,
-        );
         if (!("subject" in rendered) || typeof rendered.html !== "string") {
           throw new ProviderError("GMAIL_MESSAGE_INVALID", false);
         }
-        const sent = await this.googleProvider.send(credentials, config, {
+        const sender = new MailSender(this.repository, this.authSecret, { ...this.google, ...this.microsoft }, this.googleProvider, this.microsoftProvider, this.smtpProvider);
+        const sent = await sender.send(connection, {
           to: input.recipient,
           subject: rendered.subject,
           html: rendered.html,
         });
-        await this.repository.updateConnectionForHotel({
-          hotelId: hotel.id,
-          kind: "google",
-          state: "connected",
-          encryptedCredentials: sealPrivateValue(JSON.stringify(sent.credentials), this.authSecret),
-          lastCheckedAt: new Date(),
-          lastErrorCode: null,
-        });
         return this.saveTestResult(userId, input, rendered, {
-          provider: "gmail",
+          provider: connectionKind === "google" ? "gmail" : connectionKind,
           accepted: true,
           state: "provider_accepted",
           providerMessageId: sent.providerMessageId,
@@ -170,11 +171,12 @@ export class ChannelService {
         hotelId: hotel.id,
         kind: connectionKind,
         state: "attention",
+        expectedEncryptedCredentials: connection.encryptedCredentials,
         lastCheckedAt: new Date(),
         lastErrorCode: failure.code,
       });
       return this.saveTestResult(userId, input, rendered, {
-        provider: connectionKind === "google" ? "gmail" : "waha",
+        provider: connectionKind === "google" ? "gmail" : connectionKind,
         accepted: false,
         state: failure.retryable ? "unknown" : "failed",
         providerMessageId: null,
@@ -188,13 +190,16 @@ export class ChannelService {
     await this.requireHotel(userId);
     const records = await this.repository.listConnectionsForUser(userId);
     if (!records) throw errors.hotelNotFound();
-    const mail = records.find((record) => ["google", "microsoft", "smtp"].includes(record.kind) && record.state === "connected")
-      ?? records.find((record) => ["google", "microsoft", "smtp"].includes(record.kind)) ?? null;
+    const selected = selectMailConnection(records);
+    const mail = selected.connection ?? records.find(isMailConnection) ?? null;
     const storedWaha = records.find((record) => record.kind === "waha") ?? null;
     const waha = storedWaha?.encryptedCredentials
       ? await this.checkWaha(userId)
       : this.publicConnection("waha", storedWaha);
-    return [this.publicMailConnection(mail), waha];
+    const mailStatus = selected.ambiguous
+      ? { ...this.publicMailConnection(null), available: true, state: "attention", lastErrorCode: "MAIL_CONNECTION_AMBIGUOUS" }
+      : this.publicMailConnection(mail);
+    return [mailStatus, waha];
   }
 
   async wahaStatus(userId: string) {
@@ -346,10 +351,10 @@ export class ChannelService {
     if (!connection) throw errors.oauthStateInvalid();
     try {
       const credentials = await this.googleProvider.exchangeAuthorizationCode(authorizationCode, config);
-      const completed = await this.repository.updateConnectionForHotel({
+      const completed = await this.repository.activateMailConnectionForHotel({
         hotelId: connection.hotelId,
         kind: "google",
-        state: "connected",
+        expectedOAuthAttemptId: hashOAuthNonce(verified.n),
         encryptedCredentials: sealPrivateValue(JSON.stringify(credentials), this.authSecret),
         metadata: {
           ...connection.metadata,
@@ -362,14 +367,16 @@ export class ChannelService {
         lastCheckedAt: now,
         lastErrorCode: null,
       });
-      if (!completed) throw new ProviderError("GOOGLE_CONNECTION_NOT_FOUND", false);
+      if (!completed) throw errors.oauthStateInvalid();
       return { status: "connected" as const, connection: this.publicConnection("google", completed) };
     } catch (error) {
+      if (error instanceof AppError && error.code === "OAUTH_STATE_INVALID") throw error;
       const failure = providerFailure(error, "GOOGLE_TOKEN");
       await this.repository.updateConnectionForHotel({
         hotelId: connection.hotelId,
         kind: "google",
         state: "attention",
+        expectedOAuthAttemptId: hashOAuthNonce(verified.n),
         metadata: { authorizationFailedAt: now.toISOString() },
         lastCheckedAt: now,
         lastErrorCode: failure.code,
@@ -468,7 +475,7 @@ export class ChannelService {
     input: TestSendInput,
     rendered: ReturnType<ChannelService["renderTestPreview"]>,
     result: {
-      provider: "fake" | "gmail" | "waha";
+      provider: "fake" | "gmail" | "microsoft" | "smtp" | "waha";
       accepted: boolean;
       state: "provider_accepted" | "failed" | "unknown";
       providerMessageId: string | null;

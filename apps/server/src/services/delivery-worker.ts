@@ -1,7 +1,7 @@
-import { sealPrivateValue, unsealPrivateValue } from "../lib/public-token.js";
-import { GoogleProvider, parseGoogleCredentials } from "../providers/google.js";
-import { MicrosoftProvider, parseMicrosoftCredentials } from "../providers/microsoft.js";
-import { parseSmtpCredentials, SmtpProvider } from "../providers/smtp.js";
+import { unsealPrivateValue } from "../lib/public-token.js";
+import { GoogleProvider } from "../providers/google.js";
+import { MicrosoftProvider } from "../providers/microsoft.js";
+import { SmtpProvider } from "../providers/smtp.js";
 import { ProviderError } from "../providers/http.js";
 import { WahaProvider, type WahaConfig } from "../providers/waha.js";
 import type {
@@ -9,6 +9,7 @@ import type {
   ClaimedOfferDelivery,
   DeliveryWorkerRepository,
 } from "../repositories/types.js";
+import { MailSender } from "./mail-sender.js";
 import { renderOfferDelivery } from "./offer-delivery-renderer.js";
 import type { NotificationService } from "./notifications.js";
 
@@ -67,14 +68,16 @@ export class DeliveryWorker {
         await this.deferWithoutAttempt(delivery.id, delivery.attemptCount, now, `${delivery.channel.toUpperCase()}_CONNECTION_NOT_READY`);
         return;
       }
-      if (delivery.channel === "email" && job.connection.kind === "google" && !this.googleIsConfigured()) {
-        await this.deferWithoutAttempt(
-          delivery.id,
-          delivery.attemptCount,
-          now,
-          "GOOGLE_CONFIG_REQUIRED",
-        );
-        return;
+      if (delivery.channel === "email") {
+        try {
+          this.mailSender().assertConfigured(job.connection.kind);
+        } catch (error) {
+          if (error instanceof ProviderError && error.code.endsWith("_CONFIG_REQUIRED")) {
+            await this.deferWithoutAttempt(delivery.id, delivery.attemptCount, now, error.code);
+            return;
+          }
+          throw error;
+        }
       }
 
       const sealedUrl = delivery.payload.proposalUrlCiphertext;
@@ -92,22 +95,10 @@ export class DeliveryWorker {
 
       if (delivery.channel === "email") {
         if (rendered.channel !== "email") throw new Error("Email render mismatch.");
-        const sent = await this.sendEmail(job.connection, { to: delivery.recipient, subject: rendered.subject, html: rendered.html });
+        const sent = await this.mailSender().send(job.connection, { to: delivery.recipient, subject: rendered.subject, html: rendered.html });
         await this.succeed(delivery.id, nextAttempt, now, sent.providerMessageId);
-        try {
-          await this.channels.updateConnectionForHotel({
-            hotelId: delivery.hotelId,
-            kind: job.connection.kind,
-            state: "connected",
-            encryptedCredentials: sealPrivateValue(JSON.stringify(sent.credentials), this.authSecret),
-            lastCheckedAt: now,
-            lastErrorCode: null,
-          });
-        } catch {
-          this.logger.error(
-            { deliveryId: delivery.id, code: "CONNECTION_STATE_UPDATE_FAILED" },
-            "Provider accepted delivery but connection state update failed",
-          );
+        if (sent.connectionUpdateFailed) {
+          this.logger.error({ deliveryId: delivery.id, code: "CONNECTION_STATE_UPDATE_FAILED" }, "Provider accepted delivery but connection state update failed");
         }
       } else {
         if (rendered.channel !== "whatsapp") throw new Error("WhatsApp render mismatch.");
@@ -138,6 +129,10 @@ export class DeliveryWorker {
       );
     } catch (error) {
       if (error instanceof ProviderError) {
+        if (error.code === "EMAIL_CONNECTION_NOT_READY") {
+          await this.deferWithoutAttempt(delivery.id, delivery.attemptCount, now, error.code);
+          return;
+        }
         if (error.ambiguous || error.code.endsWith("_NETWORK_ERROR")) {
           await this.unknown(delivery.id, nextAttempt, now, error.code);
           await this.notifyError(job, error.code);
@@ -187,35 +182,8 @@ export class DeliveryWorker {
     }
   }
 
-  private requireGoogleConfig() {
-    if (!this.googleIsConfigured()) {
-      throw new ProviderError("GOOGLE_CONFIG_REQUIRED", true);
-    }
-    return {
-      clientId: this.googleConfig.GOOGLE_CLIENT_ID!,
-      clientSecret: this.googleConfig.GOOGLE_CLIENT_SECRET!,
-      redirectUri: this.googleConfig.GOOGLE_REDIRECT_URI!,
-    };
-  }
-
-  private async sendEmail(connection: NonNullable<ClaimedOfferDelivery["connection"]>, message: { to: string; subject: string; html: string }) {
-    const raw = JSON.parse(unsealPrivateValue(connection.encryptedCredentials!, this.authSecret)) as unknown;
-    if (connection.kind === "google") return this.googleProvider.send(parseGoogleCredentials(raw), this.requireGoogleConfig(), message);
-    if (connection.kind === "microsoft") {
-      const { MICROSOFT_CLIENT_ID: clientId, MICROSOFT_CLIENT_SECRET: clientSecret, MICROSOFT_REDIRECT_URI: redirectUri } = this.microsoftConfig;
-      if (!clientId || !clientSecret || !redirectUri) throw new ProviderError("MICROSOFT_CONFIG_REQUIRED", true);
-      return this.microsoftProvider.send(parseMicrosoftCredentials(raw), { clientId, clientSecret, redirectUri }, message);
-    }
-    if (connection.kind === "smtp") return { ...(await this.smtpProvider.send(parseSmtpCredentials(raw), message)), credentials: raw };
-    throw new ProviderError("MAIL_PROVIDER_INVALID", false);
-  }
-
-  private googleIsConfigured(): boolean {
-    return Boolean(
-      this.googleConfig.GOOGLE_CLIENT_ID &&
-        this.googleConfig.GOOGLE_CLIENT_SECRET &&
-        this.googleConfig.GOOGLE_REDIRECT_URI,
-    );
+  private mailSender() {
+    return new MailSender(this.channels, this.authSecret, { ...this.googleConfig, ...this.microsoftConfig }, this.googleProvider, this.microsoftProvider, this.smtpProvider);
   }
 
   private async deferWithoutAttempt(

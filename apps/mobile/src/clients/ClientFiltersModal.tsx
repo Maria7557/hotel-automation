@@ -54,11 +54,10 @@ export function ClientFiltersModal({ filters, options, optionsLoading, optionsEr
         <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
           <Text style={styles.intro}>{t("Find contacts by their stay or contact details. Leave any field empty to include all.")}</Text>
           <View style={styles.section}>
-            <View style={styles.sectionTitle}><CalendarDays size={18} color={theme.colors.action} /><Text style={styles.sectionText}>{t("Reservation")}</Text></View>
-            <Text style={styles.hint}>{t("Matches any linked stay overlapping these dates. Check-out day is excluded. All reservation filters apply to the same stay.")}</Text>
+            <View style={styles.sectionTitle}><CalendarDays size={18} color={theme.colors.action} /><Text style={styles.sectionText}>{t("Request")}</Text></View>
             {dateRange("stayFrom", "stayTo", t("Stay from"), t("Stay until"))}
             {countRange(t("Total guests"), "minGuests", "maxGuests")}
-            {choice("status", t("Reservation status"), statusOptions)}
+            {choice("status", t("Request status"), statusOptions)}
             <View style={styles.sectionTitle}><BedDouble size={18} color={theme.colors.textMuted} /><Text style={styles.label}>{t("Room & board")}</Text></View>
             {optionsLoading ? <View style={styles.loading}><ActivityIndicator color={theme.colors.action} /><Text style={styles.hint}>{t("Loading rooms and languages…")}</Text></View> : null}
             {optionsError ? <><InlineState tone="danger">{t("Could not load rooms and languages.")}</InlineState><Button variant="tertiary" onPress={onRetryOptions}>{t("Retry filter options")}</Button></> : null}
@@ -67,17 +66,17 @@ export function ClientFiltersModal({ filters, options, optionsLoading, optionsEr
             {countRange(t("Nights"), "minNights", "maxNights")}
           </View>
           <View style={styles.section}>
-            <View style={styles.sectionTitle}><Users size={18} color={theme.colors.action} /><Text style={styles.sectionText}>{t("Guests per reservation")}</Text></View>
+            <View style={styles.sectionTitle}><Users size={18} color={theme.colors.action} /><Text style={styles.sectionText}>{t("Guests")}</Text></View>
             <Text style={styles.hint}>{t("Total guests includes adults and children across all rooms in a request. Use the same minimum and maximum for an exact count.")}</Text>
             {countRange(t("Adults"), "minAdults", "maxAdults")}
             {countRange(t("Children"), "minChildren", "maxChildren")}
           </View>
           <View style={styles.section}>
             <Text style={styles.sectionText}>{t("Contact details")}</Text>
-            {choice("source", t("Contact source"), [{ value: "inquiry", label: t("From enquiry") }, { value: "manual", label: t("Added manually") }])}
+            {choice("source", t("Contact source"), [{ value: "inquiry", label: t("From request") }, { value: "manual", label: t("Added manually") }])}
             {choice("locale", t("Language"), options.locales.map((locale) => ({ value: locale, label: languageLabel(locale) })))}
             {choice("contact", t("Contact method"), [{ value: "email", label: t("Has email") }, { value: "phone", label: t("Has phone") }, { value: "both", label: t("Has email & phone") }])}
-            {choice("reservations", t("Reservation history"), [{ value: "with", label: t("With reservations") }, { value: "without", label: t("No reservations") }])}
+            {choice("reservations", t("Request history"), [{ value: "with", label: t("With requests") }, { value: "without", label: t("No requests") }])}
             {errors.reservations ? <Text style={styles.error}>{errors.reservations}</Text> : null}
             {choice("notes", t("Client notes"), [{ value: "with", label: t("Has notes") }, { value: "without", label: t("No notes") }])}
             {dateRange("addedFrom", "addedTo", t("Added from (UTC)"), t("Added until (UTC)"))}

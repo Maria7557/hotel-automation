@@ -25,22 +25,32 @@ export async function resolveSafeSmtpHost(hostname: string, resolver: AddressRes
 }
 
 export class SmtpProvider {
-  async send(credentials: SmtpCredentials, message: GmailMessage) {
+  async send(credentials: SmtpCredentials, message: GmailMessage, signal?: AbortSignal) {
+    signal?.throwIfAborted();
     const safe = await resolveSafeSmtpHost(credentials.hostname);
+    signal?.throwIfAborted();
     const pinned = safe.addresses[0]!;
     const options: SMTPTransport.Options & { lookup: (hostname: string, options: object, callback: (error: NodeJS.ErrnoException | null, address: string, family: number) => void) => void } = {
+      connectionTimeout: 10_000, greetingTimeout: 10_000, socketTimeout: 20_000,
       host: safe.hostname, port: credentials.port, secure: credentials.port === 465, requireTLS: credentials.port === 587,
       auth: { user: credentials.username, pass: credentials.appPassword }, tls: { rejectUnauthorized: true, servername: safe.hostname },
       lookup: (_hostname, _options, callback) => callback(null, pinned, isIP(pinned)),
     };
     const transport = nodemailer.createTransport(options);
+    const abort = () => transport.close();
+    signal?.addEventListener("abort", abort, { once: true });
     try {
+      signal?.throwIfAborted();
       const result = await transport.sendMail({ from: credentials.email, to: message.to, subject: message.subject, html: message.html });
       if (!result.accepted.length) throw new ProviderError("SMTP_NOT_ACCEPTED", false);
       return { providerMessageId: result.messageId || null };
     } catch (error) {
+      if (signal?.aborted) throw new ProviderError("SMTP_SEND_INTERRUPTED", false, true);
       if (error instanceof ProviderError) throw error;
       throw new ProviderError("SMTP_SEND_FAILED", false);
+    } finally {
+      signal?.removeEventListener("abort", abort);
+      transport.close();
     }
   }
 }

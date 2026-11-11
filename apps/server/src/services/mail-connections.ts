@@ -4,7 +4,7 @@ import { createOAuthNonce, createOAuthState, hashOAuthNonce, verifyOAuthState } 
 import { sealPrivateValue } from "../lib/public-token.js";
 import { GoogleProvider } from "../providers/google.js";
 import { MicrosoftProvider } from "../providers/microsoft.js";
-import { resolveSafeSmtpHost, SmtpProvider, type SmtpCredentials } from "../providers/smtp.js";
+import { SmtpProvider, type SmtpCredentials } from "../providers/smtp.js";
 import type { ChannelRepository, HotelRepository } from "../repositories/types.js";
 import { detectMailProvider } from "./mail-detection.js";
 
@@ -32,37 +32,50 @@ export class MailConnectionService {
     const connection = await this.repository.consumeMailOAuthState({ hotelId: verified.h, kind: provider, nonceHash: hashOAuthNonce(verified.n), now }); if (!connection) throw errors.oauthStateInvalid();
     const cfg = this.oauthConfig(provider);
     const credentials = provider === "google" ? await this.google.exchangeAuthorizationCode(code, cfg) : await this.microsoft.exchangeAuthorizationCode(code, cfg);
-    const senderEmail = String(connection.metadata.senderEmail ?? "");
-    const test = { to: senderEmail, subject: "Your hotel mail connection is ready", html: "<p>This test confirms that your hotel can send email.</p>" };
-    const sent = provider === "google" ? await this.google.send(credentials as never, cfg, test) : await this.microsoft.send(credentials as never, cfg, test);
-    const updated = await this.repository.updateConnectionForHotel({ hotelId: connection.hotelId, kind: provider, state: "connected", encryptedCredentials: sealPrivateValue(JSON.stringify(sent.credentials), this.secret), metadata: { senderEmail, provider, connectedAt: now.toISOString() }, lastCheckedAt: now, lastErrorCode: null });
-    return { status: "connected", connection: updated ? publicMail(updated) : null };
+    return this.repository.withMailConnectionLock(connection.hotelId, async (repository) => {
+      const attemptId = hashOAuthNonce(verified.n);
+      const current = (await repository.listConnectionsForHotel(connection.hotelId)).find((row) => row.kind === provider);
+      if (current?.state !== "connecting" || current.metadata.oauthAttemptId !== attemptId) throw errors.oauthStateInvalid();
+      const senderEmail = String(connection.metadata.senderEmail ?? "");
+      const test = { to: senderEmail, subject: "Your hotel mail connection is ready", html: "<p>This test confirms that your hotel can send email.</p>" };
+      const sent = provider === "google" ? await this.google.send(credentials as never, cfg, test, undefined, repository.mailConnectionSignal()) : await this.microsoft.send(credentials as never, cfg, test, undefined, repository.mailConnectionSignal());
+      const updated = await repository.activateMailConnectionForHotel({
+        hotelId: connection.hotelId, kind: provider, expectedOAuthAttemptId: attemptId,
+        encryptedCredentials: sealPrivateValue(JSON.stringify(sent.credentials), this.secret),
+        metadata: { senderEmail, provider, connectedAt: now.toISOString() }, lastCheckedAt: now, lastErrorCode: null,
+      });
+      if (!updated) throw errors.oauthStateInvalid();
+      return { status: "connected", connection: publicMail(updated) };
+    });
   }
 
   async connectSmtp(userId: string, credentials: SmtpCredentials) {
-    await resolveSafeSmtpHost(credentials.hostname);
     const hotel = await this.hotels.findForUser(userId); if (!hotel) throw errors.hotelNotFound();
-    await this.smtp.send(credentials, { to: credentials.email, subject: "Your hotel mail connection is ready", html: "<p>This test confirms that your hotel can send email.</p>" });
-    const record = await this.repository.configureMailForUser({ userId, kind: "smtp", encryptedCredentials: sealPrivateValue(JSON.stringify(credentials), this.secret), metadata: { senderEmail: credentials.email.toLowerCase(), provider: "smtp", hostname: credentials.hostname, port: credentials.port, encryption: credentials.encryption } });
-    if (!record) throw errors.hotelNotFound(); return publicMail(record);
+    return this.repository.withMailConnectionLock(hotel.id, async (repository) => {
+      await this.smtp.send(credentials, { to: credentials.email, subject: "Your hotel mail connection is ready", html: "<p>This test confirms that your hotel can send email.</p>" }, repository.mailConnectionSignal());
+      const record = await repository.configureMailForUser({ userId, kind: "smtp", encryptedCredentials: sealPrivateValue(JSON.stringify(credentials), this.secret), metadata: { senderEmail: credentials.email.toLowerCase(), provider: "smtp", hostname: credentials.hostname, port: credentials.port, encryption: credentials.encryption } });
+      if (!record) throw errors.hotelNotFound(); return publicMail(record);
+    });
   }
 
   async disconnect(userId: string) {
     const hotel = await this.hotels.findForUser(userId); if (!hotel) throw errors.hotelNotFound();
-    const records = await this.repository.listConnectionsForUser(userId); if (!records) throw errors.hotelNotFound();
-    const now = new Date();
-    for (const record of records.filter(({ kind }) => ["google", "microsoft", "smtp"].includes(kind))) {
-      await this.repository.updateConnectionForHotel({
-        hotelId: hotel.id,
-        kind: record.kind,
-        state: "disconnected",
-        encryptedCredentials: null,
-        metadata: { ...record.metadata, senderEmail: null, disconnectedAt: now.toISOString() },
-        lastCheckedAt: now,
-        lastErrorCode: null,
-      });
-    }
-    return { kind: "mail" as const, provider: null, configured: false, available: true, state: "disconnected", senderEmail: null, lastCheckedAt: now.toISOString(), lastErrorCode: null };
+    return this.repository.withMailConnectionLock(hotel.id, async (repository) => {
+      const records = await repository.listConnectionsForHotel(hotel.id);
+      const now = new Date();
+      for (const record of records.filter(({ kind }) => ["google", "microsoft", "smtp"].includes(kind))) {
+        await repository.updateConnectionForHotel({
+          hotelId: hotel.id,
+          kind: record.kind,
+          state: "disconnected",
+          encryptedCredentials: null,
+          metadata: { ...record.metadata, senderEmail: null, oauthAttemptId: null, disconnectedAt: now.toISOString() },
+          lastCheckedAt: now,
+          lastErrorCode: null,
+        });
+      }
+      return { kind: "mail" as const, provider: null, configured: false, available: true, state: "disconnected", senderEmail: null, lastCheckedAt: now.toISOString(), lastErrorCode: null };
+    });
   }
 
   private oauthConfig(provider: "google" | "microsoft") {

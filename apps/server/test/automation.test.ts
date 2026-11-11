@@ -58,6 +58,110 @@ describe("public intake and proposal automation", () => {
     expect(replacement.snapshot.guestSnapshot).toMatchObject({ language: expected });
   });
 
+  it("previews the current offer in either language without changing delivery or its immutable snapshot", async () => {
+    const owner = await setupHotel(app, "share-owner@example.com", true);
+    const created = await intake(app, owner.publicKey, "share-preview");
+    expect(created.statusCode, created.body).toBe(202);
+    const inquiryId = created.json().data.inquiryId as string;
+    const offerId = repositories.automation.inquiries.get(inquiryId)!.currentOfferId!;
+    const beforeOffer = structuredClone(repositories.automation.offers.get(offerId));
+    const beforeDeliveries = structuredClone([...repositories.automation.deliveries.values()]);
+    for (const channel of ["email", "whatsapp"] as const) {
+      for (const language of ["en", "it"] as const) {
+        const response = await app.inject({ method: "GET", url: `/v1/inquiries/${inquiryId}/share-message?channel=${channel}&language=${language}`, headers: auth(owner.token) });
+        expect(response.statusCode, response.body).toBe(200);
+        expect(response.headers["cache-control"]).toBe("private, no-store");
+        const message = response.json().data.message;
+        expect(message).toMatchObject({ channel, offerId, offers: [{ roomName: "Camera Deluxe", checkIn: "2026-06-10", checkOut: "2026-06-12" }] });
+        expect(new URL(message.proposalUrl).searchParams.get("lang")).toBe(language);
+        expect(message.text).toContain(message.proposalUrl);
+        const url = new URL(message.proposalUrl);
+        const page = await app.inject({ method: "GET", url: url.pathname + url.search });
+        expect(page.statusCode).toBe(200);
+        expect(page.body).toContain(`<html lang="${language}">`);
+      }
+    }
+    expect(repositories.automation.offers.get(offerId)).toEqual(beforeOffer);
+    expect([...repositories.automation.deliveries.values()]).toEqual(beforeDeliveries);
+  });
+
+  it("returns the same current version for preview content and message after an offer replacement", async () => {
+    const owner = await setupHotel(app, "share-replace@example.com", true);
+    const created = await intake(app, owner.publicKey, "share-replace");
+    const inquiryId = created.json().data.inquiryId as string;
+    const oldOfferId = repositories.automation.inquiries.get(inquiryId)!.currentOfferId!;
+    const replacement = await app.inject({ method: "POST", url: `/v1/inquiries/${inquiryId}/offers`,
+      headers: { ...auth(owner.token), "idempotency-key": "share-replaced" },
+      payload: { baseOfferId: oldOfferId, offers: [{ roomId: owner.roomId, planName: "Changed offer", totalCents: 12345,
+        checkIn: "2026-06-15", checkOut: "2026-06-18" }] } });
+    expect(replacement.statusCode, replacement.body).toBe(201);
+    const newOfferId = replacement.json().data.inquiry.currentOfferId;
+    expect(newOfferId).not.toBe(oldOfferId);
+    const preview = await app.inject({ method: "GET", url: `/v1/inquiries/${inquiryId}/share-message?channel=email&language=en`, headers: auth(owner.token) });
+    expect(preview.statusCode, preview.body).toBe(200);
+    const message = preview.json().data.message;
+    expect(message).toMatchObject({ offerId: newOfferId, offers: [{ totalCents: 12345, checkIn: "2026-06-15", checkOut: "2026-06-18" }] });
+    expect(message.offers[0].id).toBe(`${newOfferId}:0`);
+    expect(message.text).toContain(message.proposalUrl);
+    expect(repositories.automation.offers.get(oldOfferId)?.state).toBe("expired");
+  });
+
+  it("protects offer preview from other hotels, anonymous access, invalid inputs and unavailable offers", async () => {
+    const owner = await setupHotel(app, "share-private@example.com", true);
+    const other = await setupHotel(app, "share-other@example.com", true);
+    const created = await intake(app, owner.publicKey, "share-private");
+    const inquiryId = created.json().data.inquiryId as string;
+    const path = `/v1/inquiries/${inquiryId}/share-message`;
+    expect((await app.inject({ method: "GET", url: `${path}?channel=email` })).statusCode).toBe(401);
+    expect((await app.inject({ method: "GET", url: `${path}?channel=email`, headers: auth(other.token) })).statusCode).toBe(404);
+    for (const query of ["channel=sms", "channel=email&language=de", "language=en"]) {
+      expect((await app.inject({ method: "GET", url: `${path}?${query}`, headers: auth(owner.token) })).statusCode).toBe(400);
+    }
+    const offer = repositories.automation.offers.get(repositories.automation.inquiries.get(inquiryId)!.currentOfferId!)!;
+    offer.state = "expired";
+    expect((await app.inject({ method: "GET", url: `${path}?channel=email`, headers: auth(owner.token) })).statusCode).toBe(410);
+    offer.state = "revoked";
+    expect((await app.inject({ method: "GET", url: `${path}?channel=whatsapp`, headers: auth(owner.token) })).statusCode).toBe(410);
+  });
+
+  it("records manual sending only after confirmation and cancels the queued duplicate channel", async () => {
+    const owner = await setupHotel(app, "manual-send@example.com", true);
+    const created = await manualIntake(app, owner.token, "manual-send", {
+      guest: { name: "Manual Guest", email: "manual@example.com", phone: "+393331234567", language: "en" },
+      sendOffer: true,
+    });
+    const inquiryId = created.json().data.inquiryId as string;
+    expect([...repositories.automation.deliveries.values()].filter(({ state }) => state === "scheduled")).toHaveLength(2);
+
+    const confirmed = await app.inject({
+      method: "POST",
+      url: `/v1/inquiries/${inquiryId}/manual-sent`,
+      headers: { ...auth(owner.token), "idempotency-key": "manual-email-confirmation" },
+      payload: { offerId: repositories.automation.inquiries.get(inquiryId)!.currentOfferId, channel: "email", language: "en" },
+    });
+    expect(confirmed.statusCode, confirmed.body).toBe(200);
+    expect(confirmed.headers["cache-control"]).toBe("private, no-store");
+    expect(confirmed.json().data.inquiry).toMatchObject({
+      id: inquiryId,
+      workflowState: "offer_sent",
+      channelStates: { email: "provider_accepted", whatsapp: "scheduled" },
+    });
+    const emailDeliveries = [...repositories.automation.deliveries.values()].filter(({ channel }) => channel === "email");
+    expect(emailDeliveries).toEqual(expect.arrayContaining([
+      expect.objectContaining({ state: "cancelled" }),
+      expect.objectContaining({ state: "provider_accepted", recipient: "manual@example.com", payload: expect.objectContaining({ source: "manual", actorUserId: owner.userId, language: "en" }) }),
+    ]));
+
+    const replay = await app.inject({
+      method: "POST",
+      url: `/v1/inquiries/${inquiryId}/manual-sent`,
+      headers: { ...auth(owner.token), "idempotency-key": "manual-email-confirmation" },
+      payload: { offerId: repositories.automation.inquiries.get(inquiryId)!.currentOfferId, channel: "email", language: "en" },
+    });
+    expect(replay.statusCode, replay.body).toBe(200);
+    expect([...repositories.automation.deliveries.values()].filter(({ channel, state }) => channel === "email" && state === "provider_accepted")).toHaveLength(1);
+  });
+
   it("submits the settings form as an ordinary website enquiry with real offers and deliveries", async () => {
     const owner = await setupHotel(app, "form-owner@example.com", true);
     await app.inject({ method: "PUT", url: "/v1/hotel/intake-settings", headers: auth(owner.token), payload: { allowedOrigins: [] } });
@@ -1039,6 +1143,7 @@ async function setupHotel(app: FastifyInstance, email: string, withRate: boolean
     payload: { email, password: "a-strong-password", displayName: "Owner" },
   });
   const token = registration.json().data.accessToken as string;
+  const userId = registration.json().data.user.id as string;
   const created = await app.inject({
     method: "POST",
     url: "/v1/hotel",
@@ -1087,7 +1192,7 @@ async function setupHotel(app: FastifyInstance, email: string, withRate: boolean
       },
     });
   }
-  return { token, publicKey: hotel.publicKey as string, roomId: room.json().data.room.id as string };
+  return { token, userId, publicKey: hotel.publicKey as string, roomId: room.json().data.room.id as string };
 }
 
 function intake(app: FastifyInstance, publicKey: string, key: string, requestOrigin = origin, mealPlan: "BB" | "HB" | "FB" = "BB") {

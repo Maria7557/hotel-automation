@@ -4,8 +4,13 @@ import type { OfferQuote, ReservationOffer } from "@hotel/contracts";
 import { theme } from "@hotel/design";
 import { extraChargeLabels, offerMoney } from "./offer-format";
 
-export function OfferDetails({ offer }: { offer: ReservationOffer | OfferQuote }) {
+export function OfferDetails({ offer, compact = false }: { offer: ReservationOffer | OfferQuote; compact?: boolean }) {
   const occupancy = offer.occupancy;
+  if (compact) return <View style={styles.content}>
+    <Text style={styles.body}>{offer.planName} · {offer.mealPlan ?? t("Board needed")}</Text>
+    {offer.extras?.length ? <Text style={styles.hint}>{t("Extras")}: {offer.extras.map(({ name }) => name).join(", ")}</Text> : null}
+    <View style={styles.total}><Text style={styles.strong}>{t("Total")}</Text><Text selectable style={styles.price}>{offerMoney(offer.totalCents, offer.currency)}</Text></View>
+  </View>;
   return <View style={styles.content}>
     {offer.checkIn && offer.checkOut ? <Text selectable style={styles.body}>{offer.checkIn} — {offer.checkOut} · {(Date.parse(offer.checkOut) - Date.parse(offer.checkIn)) / 86400000} {" "}{t("nights")}</Text> : null}
     <Text style={styles.body}>{occupancy ? t("{{v0}} adults{{v1}} · ", { v0: occupancy.adults, v1: occupancy.childAges.length ? t(" · children aged {{v0}}", { v0: occupancy.childAges.join(", ") }) : "" }) : ""}{offer.mealPlan ?? t("Board needed")}</Text>

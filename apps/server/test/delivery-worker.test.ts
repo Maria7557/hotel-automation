@@ -1,8 +1,10 @@
+import { MicrosoftProvider } from "../src/providers/microsoft.js";
+import { SmtpProvider } from "../src/providers/smtp.js";
 import { randomUUID } from "node:crypto";
 
 import { describe, expect, it, vi } from "vitest";
 
-import { sealPrivateValue } from "../src/lib/public-token.js";
+import { sealPrivateValue, unsealPrivateValue } from "../src/lib/public-token.js";
 import { GoogleProvider } from "../src/providers/google.js";
 import type { ProviderFetch } from "../src/providers/http.js";
 import { WahaProvider } from "../src/providers/waha.js";
@@ -444,3 +446,123 @@ function setConnection(
     updatedAt: now,
   });
 }
+
+describe("queued mail provider selection", () => {
+  const microsoftConfig = { MICROSOFT_CLIENT_ID: "id", MICROSOFT_CLIENT_SECRET: "secret", MICROSOFT_REDIRECT_URI: "https://api.example/callback" };
+  const smtpCredentials = { email: "sender@example.com", hostname: "smtp.example.com", username: "sender", appPassword: "synthetic-password", port: 465, encryption: "tls" };
+
+  function worker(repositories: MemoryRepositories, fetcher: ProviderFetch, smtp = new SmtpProvider(), configured = true) {
+    return new DeliveryWorker(repositories.deliveryWorker, repositories.channels, secret, googleConfig, new GoogleProvider(fetcher), new WahaProvider(fetcher), 5, undefined, {}, configured ? microsoftConfig : {}, new MicrosoftProvider(fetcher), smtp);
+  }
+
+  function connectMicrosoft(repositories: MemoryRepositories, hotelId: string) {
+    setConnection(repositories, hotelId, "microsoft", {
+      credentials: sealPrivateValue(JSON.stringify({ accessToken: "synthetic-access", refreshToken: "synthetic-refresh", accessTokenExpiresAt: "2099-01-01T00:00:00.000Z", scope: "Mail.Send" }), secret), metadata: {},
+    });
+  }
+
+  it("uses persisted Microsoft credentials instead of an earlier disconnected Google row", async () => {
+    const repositories = createMemoryRepositories();
+    const { hotel, delivery } = seedDelivery(repositories, "email");
+    connectGoogle(repositories, hotel.id);
+    repositories.channels.connections.get(`${hotel.id}:google`)!.state = "disconnected";
+    connectMicrosoft(repositories, hotel.id);
+    const fetcher = vi.fn(async () => new Response(null, { status: 202, headers: { "request-id": "ms-queued-1" } }));
+    await worker(repositories, fetcher).processNext(now);
+    expect(repositories.automation.deliveries.get(delivery.id)).toMatchObject({ state: "provider_accepted", providerMessageId: "ms-queued-1" });
+    expect(fetcher).toHaveBeenCalledWith("https://graph.microsoft.com/v1.0/me/sendMail", expect.objectContaining({ headers: expect.objectContaining({ Authorization: "Bearer synthetic-access" }) }));
+  });
+
+  it("refreshes stored Microsoft credentials and saves the rotated refresh token", async () => {
+    const repositories = createMemoryRepositories();
+    const { hotel, delivery } = seedDelivery(repositories, "email");
+    connectMicrosoft(repositories, hotel.id);
+    repositories.channels.connections.get(`${hotel.id}:microsoft`)!.encryptedCredentials = sealPrivateValue(JSON.stringify({ accessToken: "old", refreshToken: "old-refresh", accessTokenExpiresAt: "2000-01-01T00:00:00.000Z", scope: null }), secret);
+    const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ access_token: "new", refresh_token: "new-refresh", expires_in: 3600 }), { status: 200 })).mockResolvedValueOnce(new Response(null, { status: 202 }));
+    await worker(repositories, fetcher).processNext(now);
+    expect(repositories.automation.deliveries.get(delivery.id)?.state).toBe("provider_accepted");
+    const saved = repositories.channels.connections.get(`${hotel.id}:microsoft`)!.encryptedCredentials!;
+    expect(JSON.parse(unsealPrivateValue(saved, secret))).toMatchObject({ accessToken: "new", refreshToken: "new-refresh" });
+  });
+
+  it("sends SMTP offers with the stored account and no OAuth calls", async () => {
+    const repositories = createMemoryRepositories();
+    const { hotel, delivery } = seedDelivery(repositories, "email");
+    setConnection(repositories, hotel.id, "smtp", { credentials: sealPrivateValue(JSON.stringify(smtpCredentials), secret), metadata: {} });
+    const fetcher = vi.fn();
+    const smtp = new SmtpProvider();
+    const send = vi.spyOn(smtp, "send").mockResolvedValue({ providerMessageId: "smtp-queued-1" });
+    await worker(repositories, fetcher, smtp).processNext(now);
+    expect(repositories.automation.deliveries.get(delivery.id)).toMatchObject({ state: "provider_accepted", providerMessageId: "smtp-queued-1" });
+    expect(send).toHaveBeenCalledWith(smtpCredentials, expect.objectContaining({ to: "anna@example.com" }), undefined);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("defers ambiguous legacy accounts without sending or consuming an attempt", async () => {
+    const repositories = createMemoryRepositories();
+    const { hotel, delivery } = seedDelivery(repositories, "email");
+    connectGoogle(repositories, hotel.id);
+    connectMicrosoft(repositories, hotel.id);
+    const fetcher = vi.fn();
+    await worker(repositories, fetcher).processNext(now);
+    expect(repositories.automation.deliveries.get(delivery.id)).toMatchObject({ state: "scheduled", attemptCount: 0, lastErrorCode: "EMAIL_CONNECTION_NOT_READY" });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("defers Microsoft when platform configuration is missing, without spending an attempt", async () => {
+    const repositories = createMemoryRepositories();
+    const { hotel, delivery } = seedDelivery(repositories, "email");
+    connectMicrosoft(repositories, hotel.id);
+    const fetcher = vi.fn();
+    await worker(repositories, fetcher, undefined, false).processNext(now);
+    expect(repositories.automation.deliveries.get(delivery.id)).toMatchObject({ state: "scheduled", attemptCount: 0, lastErrorCode: "MICROSOFT_CONFIG_REQUIRED" });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("serializes a provider switch behind an in-flight send without reactivating the old account", async () => {
+    const repositories = createMemoryRepositories();
+    const { hotel, delivery } = seedDelivery(repositories, "email");
+    connectGoogle(repositories, hotel.id);
+    connectMicrosoft(repositories, hotel.id);
+    repositories.channels.connections.get(`${hotel.id}:microsoft`)!.state = "disconnected";
+    let switching: Promise<unknown> | undefined;
+    const fetcher = vi.fn(async () => {
+      switching = repositories.channels.activateMailConnectionForHotel({ hotelId: hotel.id, kind: "microsoft", encryptedCredentials: "replacement-ciphertext", metadata: {}, lastCheckedAt: now, lastErrorCode: null });
+      return new Response(JSON.stringify({ id: "already-accepted" }), { status: 200 });
+    });
+    await worker(repositories, fetcher).processNext(now);
+    await switching;
+    expect(repositories.automation.deliveries.get(delivery.id)?.state).toBe("provider_accepted");
+    expect(repositories.channels.connections.get(`${hotel.id}:google`)).toMatchObject({ state: "disconnected", encryptedCredentials: null });
+    expect(repositories.channels.connections.get(`${hotel.id}:microsoft`)).toMatchObject({ state: "connected", encryptedCredentials: "replacement-ciphertext" });
+  });
+});
+
+describe("concurrent mail credential persistence", () => {
+  it("does not reseal an unchanged send and block another send from saving refreshed credentials", async () => {
+    const repositories = createMemoryRepositories();
+    const { hotel, delivery } = seedDelivery(repositories, "email");
+    connectGoogle(repositories, hotel.id);
+    const originalCiphertext = repositories.channels.connections.get(`${hotel.id}:google`)!.encryptedCredentials;
+    repositories.automation.deliveries.set("second", { ...delivery, id: "second", idempotencyKey: "second" });
+    let release!: () => void;
+    const firstCompleted = new Promise<void>((resolve) => { release = resolve; });
+    let sends = 0;
+    const fetcher = vi.fn(async (input: string | URL) => {
+      if (String(input).includes("oauth2.googleapis.com")) return new Response(JSON.stringify({ access_token: "rotated", refresh_token: "rotated-refresh", expires_in: 3600 }), { status: 200 });
+      sends += 1;
+      if (sends === 2) { await firstCompleted; return new Response(null, { status: 401 }); }
+      return new Response(JSON.stringify({ id: `accepted-${sends}` }), { status: 200 });
+    });
+    const worker = createWorker(repositories, fetcher);
+    const first = worker.processNext(now);
+    const second = worker.processNext(now);
+    await first;
+    expect(repositories.channels.connections.get(`${hotel.id}:google`)!.encryptedCredentials).toBe(originalCiphertext);
+    release();
+    await second;
+    const saved = repositories.channels.connections.get(`${hotel.id}:google`)!.encryptedCredentials!;
+    expect(JSON.parse(unsealPrivateValue(saved, secret))).toMatchObject({ accessToken: "rotated", refreshToken: "rotated-refresh" });
+    expect(repositories.automation.deliveries.get("second")?.state).toBe("provider_accepted");
+  });
+});

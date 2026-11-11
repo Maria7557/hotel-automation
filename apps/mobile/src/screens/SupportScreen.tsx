@@ -21,7 +21,7 @@ type ContactMethod = {
 
 const methods: ContactMethod[] = [
   { id: "whatsapp", title: "WhatsApp", icon: MessageCircle, color: "#168A52", background: "#E8F8EF", url: whatsappUrl(supportWhatsApp) },
-  { id: "phone", title: "Call", icon: Phone, color: theme.colors.action, background: theme.colors.actionTint, url: supportPhone ? `tel:${supportPhone.replace(/[^+\d]/g, "")}` : null },
+  { id: "phone", title: "Phone", icon: Phone, color: theme.colors.action, background: theme.colors.actionTint, url: supportPhone ? `tel:${supportPhone.replace(/[^+\d]/g, "")}` : null },
   { id: "telegram", title: "Telegram", icon: Send, color: "#168AC0", background: "#E8F5FB", url: telegramUrl(supportTelegram) },
   { id: "email", title: "Email", icon: Mail, color: "#7C3AED", background: "#F3E8FF", url: `mailto:${supportEmail}?subject=${encodeURIComponent("Hotel Automation support")}` },
 ];

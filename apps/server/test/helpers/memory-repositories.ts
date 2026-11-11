@@ -1,3 +1,4 @@
+import { isMailConnection, selectMailConnection } from "../../src/repositories/mail-selection.js";
 import { randomUUID } from "node:crypto";
 import { dashboardIncludesRequest } from "@hotel/contracts";
 import type { DashboardQuery, OfferSettings } from "@hotel/contracts";
@@ -24,6 +25,7 @@ import type {
   InquiryRecord,
   MessageSettings,
   MessageSettingsUpdate,
+  ManualOfferSentCreate,
   NotificationPreferences,
   NotificationRepository,
   OfferRecord,
@@ -215,6 +217,10 @@ class MemoryAutomationRepository implements AutomationRepository {
     return this.offerSettings.get(hotelId) ?? null;
   }
 
+  async findMessageSettingsForHotel(_hotelId: string) {
+    return null;
+  }
+
   async saveOfferSettingsForUser(userId: string, settings: OfferSettings): Promise<OfferSettings | null> {
     const hotel = await this.hotels.findForUser(userId);
     if (!hotel) return null;
@@ -336,6 +342,37 @@ class MemoryAutomationRepository implements AutomationRepository {
     const updated = { ...inquiry, closedAt: now, updatedAt: now };
     this.inquiries.set(inquiry.id, updated);
     return updated;
+  }
+
+  async recordManualOfferSentForUser(input: ManualOfferSentCreate): Promise<DeliveryRecord | null> {
+    const hotel = await this.hotels.findForUser(input.userId);
+    const inquiry = this.inquiries.get(input.inquiryId);
+    if (!hotel || !inquiry || inquiry.hotelId !== hotel.id || !inquiry.currentOfferId) return null;
+    const storageKey = `manual:${input.idempotencyKey}`;
+    const existing = [...this.deliveries.values()].find((delivery) => delivery.hotelId === hotel.id && delivery.idempotencyKey === storageKey);
+    if (existing) {
+      if (existing.inquiryId !== input.inquiryId || existing.offerVersionId !== input.offerId || existing.channel !== input.channel
+        || existing.payload.language !== input.language || existing.payload.actorUserId !== input.userId || existing.payload.source !== "manual") throw errors.idempotencyConflict();
+      return existing;
+    }
+    if (inquiry.currentOfferId !== input.offerId) throw errors.offersChanged();
+    const offer = this.offers.get(inquiry.currentOfferId);
+    const recipient = input.channel === "email" ? inquiry.guestEmail : inquiry.guestPhone;
+    if (inquiry.closedAt || !offer || offer.state !== "active" || offer.expiresAt <= input.now || !recipient) return null;
+    for (const delivery of this.deliveries.values()) {
+      if (delivery.offerVersionId === offer.id && delivery.channel === input.channel && delivery.kind === "offer" && delivery.state === "scheduled") {
+        this.deliveries.set(delivery.id, { ...delivery, state: "cancelled", updatedAt: input.now });
+      }
+    }
+    const created: DeliveryRecord = {
+      id: randomUUID(), hotelId: hotel.id, inquiryId: inquiry.id, offerVersionId: offer.id,
+      kind: "offer", channel: input.channel, state: "provider_accepted", idempotencyKey: storageKey, recipient,
+      payload: { schemaVersion: 1, source: "manual", actorUserId: input.userId, confirmedAt: input.now.toISOString(), language: input.language },
+      attemptCount: 0, nextAttemptAt: input.now, providerMessageId: null, lastErrorCode: null, lastErrorMessage: null,
+      processedAt: input.now, createdAt: input.now, updatedAt: input.now,
+    };
+    this.deliveries.set(created.id, created);
+    return created;
   }
 
   async dashboardPageForUser(userId: string, query: DashboardQuery): Promise<DashboardPageFacts | null> {
@@ -603,16 +640,51 @@ class MemoryNotificationRepository implements NotificationRepository {
 }
 
 class MemoryChannelRepository implements ChannelRepository {
-  readonly settings = new Map<string, MessageSettings>();
-  readonly connections = new Map<string, ConnectionRecord>();
+  readonly settings: Map<string, MessageSettings>;
+  readonly connections: Map<string, ConnectionRecord>;
+  private readonly mailLocks: Map<string, Promise<void>>;
 
   constructor(
     private readonly hotels: MemoryHotelRepository,
     private readonly automation: MemoryAutomationRepository,
-  ) {}
+    shared?: MemoryChannelRepository,
+    private readonly mailLockHotelId?: string,
+  ) {
+    this.settings = shared?.settings ?? new Map();
+    this.connections = shared?.connections ?? new Map();
+    this.mailLocks = shared?.mailLocks ?? new Map();
+  }
+
+  mailConnectionSignal(): AbortSignal | undefined { return undefined; }
+
+  private assertMailScope(hotelId: string) {
+    if (this.mailLockHotelId && this.mailLockHotelId !== hotelId) throw new Error("MAIL_LOCK_SCOPE_MISMATCH");
+  }
+
+  async withMailConnectionLock<T>(hotelId: string, work: (repository: ChannelRepository) => Promise<T>): Promise<T> {
+    this.assertMailScope(hotelId);
+    if (this.mailLockHotelId) return work(this);
+    const previous = this.mailLocks.get(hotelId) ?? Promise.resolve();
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const tail = previous.then(() => held);
+    this.mailLocks.set(hotelId, tail);
+    await previous;
+    try { return await work(new MemoryChannelRepository(this.hotels, this.automation, this, hotelId)); }
+    finally {
+      release();
+      if (this.mailLocks.get(hotelId) === tail) this.mailLocks.delete(hotelId);
+    }
+  }
+
+  async listConnectionsForHotel(hotelId: string): Promise<ConnectionRecord[]> {
+    this.assertMailScope(hotelId);
+    return [...this.connections.values()].filter((connection) => connection.hotelId === hotelId);
+  }
 
   async findMessageSettingsForUser(userId: string): Promise<MessageSettings | null> {
     const hotelId = this.hotels.memberships.get(userId);
+    if (hotelId) this.assertMailScope(hotelId);
     return hotelId ? (this.settings.get(hotelId) ?? null) : null;
   }
 
@@ -621,6 +693,7 @@ class MemoryChannelRepository implements ChannelRepository {
     input: MessageSettingsUpdate,
   ): Promise<MessageSettings | null> {
     const hotelId = this.hotels.memberships.get(userId);
+    if (hotelId) this.assertMailScope(hotelId);
     if (!hotelId) return null;
     const current = this.settings.get(hotelId);
     const now = new Date();
@@ -636,8 +709,9 @@ class MemoryChannelRepository implements ChannelRepository {
 
   async listConnectionsForUser(userId: string): Promise<ConnectionRecord[] | null> {
     const hotelId = this.hotels.memberships.get(userId);
+    if (hotelId) this.assertMailScope(hotelId);
     if (!hotelId) return null;
-    return [...this.connections.values()].filter((connection) => connection.hotelId === hotelId);
+    return this.listConnectionsForHotel(hotelId);
   }
 
   async findConnectionForUser(
@@ -645,6 +719,7 @@ class MemoryChannelRepository implements ChannelRepository {
     kind: ConnectionKind,
   ): Promise<ConnectionRecord | null> {
     const hotelId = this.hotels.memberships.get(userId);
+    if (hotelId) this.assertMailScope(hotelId);
     return hotelId ? (this.connections.get(`${hotelId}:${kind}`) ?? null) : null;
   }
 
@@ -667,18 +742,22 @@ class MemoryChannelRepository implements ChannelRepository {
   async configureMailForUser(input: { userId: string; kind: "smtp"; encryptedCredentials: string; metadata: Record<string, unknown> }) {
     const hotelId = this.hotels.memberships.get(input.userId);
     if (!hotelId) return null;
-    return this.saveConnection(hotelId, input.kind, { state: "connected", encryptedCredentials: input.encryptedCredentials, metadata: input.metadata, lastCheckedAt: new Date(), lastErrorCode: null });
+    return this.activateMailConnectionForHotel({ ...input, hotelId, lastCheckedAt: new Date(), lastErrorCode: null });
   }
 
   async beginMailOAuthForUser(input: { userId: string; kind: "google" | "microsoft"; nonceHash: string; expiresAt: Date; metadata: Record<string, unknown> }) {
     const hotelId = this.hotels.memberships.get(input.userId); if (!hotelId) return null;
-    const connection = this.saveConnection(hotelId, input.kind, { state: "connecting", encryptedCredentials: this.connections.get(`${hotelId}:${input.kind}`)?.encryptedCredentials ?? null, metadata: { ...input.metadata, oauthNonceHash: input.nonceHash, oauthExpiresAt: input.expiresAt.toISOString() }, lastCheckedAt: null, lastErrorCode: null });
+    this.assertMailScope(hotelId);
+    if (!this.mailLockHotelId) return this.withMailConnectionLock(hotelId, (repository) => repository.beginMailOAuthForUser(input));
+    const connection = this.saveConnection(hotelId, input.kind, { state: "connecting", encryptedCredentials: this.connections.get(`${hotelId}:${input.kind}`)?.encryptedCredentials ?? null, metadata: { ...input.metadata, oauthAttemptId: input.nonceHash, oauthNonceHash: input.nonceHash, oauthExpiresAt: input.expiresAt.toISOString() }, lastCheckedAt: null, lastErrorCode: null });
     return { hotelId, connection };
   }
 
   async consumeMailOAuthState(input: { hotelId: string; kind: "google" | "microsoft"; nonceHash: string; now: Date }) {
+    this.assertMailScope(input.hotelId);
+    if (!this.mailLockHotelId) return this.withMailConnectionLock(input.hotelId, (repository) => repository.consumeMailOAuthState(input));
     const current = this.connections.get(`${input.hotelId}:${input.kind}`); const expires = current?.metadata.oauthExpiresAt;
-    if (!current || current.metadata.oauthNonceHash !== input.nonceHash || typeof expires !== "string" || new Date(expires) <= input.now) return null;
+    if (!current || current.state !== "connecting" || current.metadata.oauthNonceHash !== input.nonceHash || typeof expires !== "string" || new Date(expires) <= input.now) return null;
     return this.saveConnection(input.hotelId, input.kind, { state: "connecting", encryptedCredentials: current.encryptedCredentials, metadata: { ...current.metadata, oauthNonceHash: null, oauthExpiresAt: null }, lastCheckedAt: input.now, lastErrorCode: "TOKEN_EXCHANGE_PENDING" });
   }
 
@@ -689,10 +768,13 @@ class MemoryChannelRepository implements ChannelRepository {
   }): Promise<{ hotelId: string; connection: ConnectionRecord } | null> {
     const hotelId = this.hotels.memberships.get(input.userId);
     if (!hotelId) return null;
+    this.assertMailScope(hotelId);
+    if (!this.mailLockHotelId) return this.withMailConnectionLock(hotelId, (repository) => repository.beginGoogleOAuthForUser(input));
     const connection = this.saveConnection(hotelId, "google", {
       state: "connecting",
       encryptedCredentials: this.connections.get(`${hotelId}:google`)?.encryptedCredentials ?? null,
       metadata: {
+        oauthAttemptId: input.nonceHash,
         oauthNonceHash: input.nonceHash,
         oauthExpiresAt: input.expiresAt.toISOString(),
       },
@@ -707,10 +789,13 @@ class MemoryChannelRepository implements ChannelRepository {
     nonceHash: string;
     now: Date;
   }): Promise<ConnectionRecord | null> {
+    this.assertMailScope(input.hotelId);
+    if (!this.mailLockHotelId) return this.withMailConnectionLock(input.hotelId, (repository) => repository.consumeGoogleOAuthState(input));
     const current = this.connections.get(`${input.hotelId}:google`);
     const expiresAt = current?.metadata.oauthExpiresAt;
     if (
       !current ||
+      current.state !== "connecting" ||
       current.metadata.oauthNonceHash !== input.nonceHash ||
       typeof expiresAt !== "string" ||
       new Date(expiresAt) <= input.now
@@ -731,17 +816,40 @@ class MemoryChannelRepository implements ChannelRepository {
     });
   }
 
+  async activateMailConnectionForHotel(input: Parameters<ChannelRepository["activateMailConnectionForHotel"]>[0]) {
+    this.assertMailScope(input.hotelId);
+    if (!this.mailLockHotelId) return this.withMailConnectionLock(input.hotelId, (repository) => repository.activateMailConnectionForHotel(input));
+    if (input.expectedOAuthAttemptId !== undefined) {
+      const current = this.connections.get(`${input.hotelId}:${input.kind}`);
+      if (current?.state !== "connecting" || current.metadata.oauthAttemptId !== input.expectedOAuthAttemptId) return null;
+    }
+    if (!this.hotels.hotels.has(input.hotelId)) return null;
+    for (const current of this.connections.values()) {
+      if (current.hotelId === input.hotelId && isMailConnection(current) && current.kind !== input.kind) {
+        this.saveConnection(input.hotelId, current.kind, { ...current, state: "disconnected", encryptedCredentials: null, lastCheckedAt: input.lastCheckedAt, lastErrorCode: null });
+      }
+    }
+    return this.saveConnection(input.hotelId, input.kind, { state: "connected", encryptedCredentials: input.encryptedCredentials, metadata: { ...input.metadata, mailGeneration: randomUUID(), oauthAttemptId: null }, lastCheckedAt: input.lastCheckedAt, lastErrorCode: null });
+  }
+
   async updateConnectionForHotel(input: {
     hotelId: string;
     kind: ConnectionKind;
     state: ConnectionRecord["state"];
     encryptedCredentials?: string | null;
+    expectedEncryptedCredentials?: string;
+    expectedOAuthAttemptId?: string;
     metadata?: Record<string, unknown>;
     lastCheckedAt: Date;
     lastErrorCode: string | null;
   }): Promise<ConnectionRecord | null> {
+    this.assertMailScope(input.hotelId);
+    if (input.kind !== "waha" && !this.mailLockHotelId) return this.withMailConnectionLock(input.hotelId, (repository) => repository.updateConnectionForHotel(input));
     const current = this.connections.get(`${input.hotelId}:${input.kind}`);
-    if (!current) return null;
+    if (!current || (input.expectedEncryptedCredentials !== undefined &&
+      (current.encryptedCredentials !== input.expectedEncryptedCredentials || current.state !== "connected"))) return null;
+    if (input.expectedOAuthAttemptId !== undefined &&
+      (current.state !== "connecting" || current.metadata.oauthAttemptId !== input.expectedOAuthAttemptId)) return null;
     return this.saveConnection(input.hotelId, input.kind, {
       state: input.state,
       encryptedCredentials: input.encryptedCredentials === undefined
@@ -758,6 +866,7 @@ class MemoryChannelRepository implements ChannelRepository {
     input: Omit<DeliveryRecord, "hotelId" | "createdAt" | "updatedAt">,
   ): Promise<DeliveryRecord | null> {
     const hotelId = this.hotels.memberships.get(userId);
+    if (hotelId) this.assertMailScope(hotelId);
     if (!hotelId) return null;
     const now = new Date();
     const delivery = { hotelId, ...input, createdAt: now, updatedAt: now };
@@ -854,6 +963,9 @@ class MemoryDeliveryWorkerRepository implements DeliveryWorkerRepository {
         (delivery) =>
           delivery.kind === "offer" &&
           delivery.state === "scheduled" &&
+          ![...this.automation.deliveries.values()].some((manual) => manual.hotelId === delivery.hotelId
+            && manual.offerVersionId === delivery.offerVersionId && manual.channel === delivery.channel
+            && manual.payload.source === "manual" && (manual.state === "provider_accepted" || manual.state === "delivered")) &&
           delivery.nextAttemptAt <= now &&
           (delivery.channel === "email" || delivery.channel === "whatsapp"),
       )
@@ -866,7 +978,9 @@ class MemoryDeliveryWorkerRepository implements DeliveryWorkerRepository {
     const claimed = { ...candidate, state: "processing" as const, updatedAt: now };
     this.automation.deliveries.set(claimed.id, claimed);
     const hotel = this.hotels.hotels.get(claimed.hotelId) ?? null;
-    const connectionKind = claimed.channel === "email" ? "google" : "waha";
+    const connection = claimed.channel === "email"
+      ? selectMailConnection([...this.channels.connections.values()].filter((record) => record.hotelId === claimed.hotelId)).connection
+      : this.channels.connections.get(`${claimed.hotelId}:waha`) ?? null;
     return {
       delivery: claimed,
       offer: claimed.offerVersionId
@@ -874,7 +988,7 @@ class MemoryDeliveryWorkerRepository implements DeliveryWorkerRepository {
         : null,
       hotel,
       settings: this.channels.settings.get(claimed.hotelId) ?? null,
-      connection: this.channels.connections.get(`${claimed.hotelId}:${connectionKind}`) ?? null,
+      connection,
     };
   }
 

@@ -3,7 +3,7 @@ import { LanguageSelector } from "../i18n/LanguageSelector";
 import { useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
+  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -12,6 +12,7 @@ import {
   Text,
   View,
 } from "react-native";
+import * as ImagePicker from "expo-image-picker";
 import { BedDouble, BellRing, Building2, Check, LogIn, Sparkles, Upload } from "lucide-react-native";
 import Svg, { Path } from "react-native-svg";
 import { theme } from "@hotel/design";
@@ -19,9 +20,28 @@ import { ApiError, apiClient, authErrorMessage } from "@/api/client";
 import { mockProfile } from "@/api/mock";
 import type { HotelProfile, SessionUser } from "@/api/types";
 import { Button, Field, InlineState, uiStyles } from "@/components/ui";
+import { SelectField } from "@/components/SelectField";
 
 type AuthStep = "welcome" | "account" | "hotel";
 type AuthMode = "register" | "login";
+type LogoDraft = { uri: string; base64: string; mimeType: "image/jpeg" | "image/png" };
+
+const countryOptions = [
+  { value: "IT", label: "Italy · IT" },
+  { value: "FR", label: "France · FR" },
+  { value: "ES", label: "Spain · ES" },
+  { value: "DE", label: "Germany · DE" },
+  { value: "AT", label: "Austria · AT" },
+  { value: "CH", label: "Switzerland · CH" },
+  { value: "PT", label: "Portugal · PT" },
+  { value: "GR", label: "Greece · GR" },
+  { value: "HR", label: "Croatia · HR" },
+  { value: "GB", label: "United Kingdom · GB" },
+  { value: "IE", label: "Ireland · IE" },
+  { value: "NL", label: "Netherlands · NL" },
+  { value: "BE", label: "Belgium · BE" },
+  { value: "US", label: "United States · US" },
+];
 
 export type SocialAuthProvider = "google" | "apple";
 export type SocialAuthResult = { user: SessionUser; profile?: HotelProfile | null };
@@ -43,6 +63,7 @@ export function AuthFlow({ initialUser, onAuthenticated, onDemo, onSocialAuth }:
   const [hotelName, setHotelName] = useState("");
   const [city, setCity] = useState("");
   const [countryCode, setCountryCode] = useState("IT");
+  const [logo, setLogo] = useState<LogoDraft | null>(null);
   const [submitted, setSubmitted] = useState(false);
   const [loading, setLoading] = useState(false);
   const [socialLoading, setSocialLoading] = useState<SocialAuthProvider | null>(null);
@@ -129,12 +150,14 @@ export function AuthFlow({ initialUser, onAuthenticated, onDemo, onSocialAuth }:
     if (!hotelValid || !user) return;
     setLoading(true);
     try {
+      const logoUrl = logo ? await apiClient.uploadImage({ base64: logo.base64, mimeType: logo.mimeType }) : undefined;
       const profile = await apiClient.createHotel({
         name: hotelName.trim(),
         city: city.trim(),
         countryCode: countryCode.trim().toUpperCase(),
         locale: "en-GB",
         email: email.trim() || user.email,
+        ...(logoUrl ? { logoUrl } : {}),
       });
       onAuthenticated(user, {
         ...profile,
@@ -146,6 +169,30 @@ export function AuthFlow({ initialUser, onAuthenticated, onDemo, onSocialAuth }:
       setRequestError(authErrorMessage(error));
     } finally {
       setLoading(false);
+    }
+  };
+
+  const pickLogo = async () => {
+    setRequestError(null);
+    try {
+      if (Platform.OS !== "web") {
+        const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!permission.granted) {
+          setRequestError(t("Allow photo library access in your device settings to add a hotel logo."));
+          return;
+        }
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], allowsMultipleSelection: false, quality: 0.9, base64: true });
+      if (result.canceled) return;
+      const asset = result.assets[0];
+      const mimeType = asset ? onboardingImageMimeType(asset) : null;
+      if (!asset?.base64 || !mimeType || (asset.fileSize ?? 0) > 5 * 1_024 * 1_024) {
+        setRequestError(t("Choose a JPEG or PNG logo up to 5 MB."));
+        return;
+      }
+      setLogo({ uri: asset.uri, base64: asset.base64, mimeType });
+    } catch {
+      setRequestError(t("Could not choose a photo. Try again."));
     }
   };
 
@@ -166,13 +213,13 @@ export function AuthFlow({ initialUser, onAuthenticated, onDemo, onSocialAuth }:
           <Text style={styles.eyebrow}>{t("HOTEL · STAFF")}</Text>
           <Text style={styles.welcomeTitle}>{t("Every request —")}{`\n`}{t("under control")}</Text>
           <Text style={styles.welcomeText}>
-            {t("Receive enquiries, send offers and confirm availability from your phone.")}{" "}</Text>
+            {t("Receive requests and send offers.")}{" "}</Text>
         </View>
 
         <View style={styles.featureList}>
           <Feature icon={Sparkles} title={t("Automatic offers")} />
-          <Feature icon={BellRing} title={t("Only important notifications")} />
-          <Feature icon={Building2} title={t("Your hotel settings")} />
+          <Feature icon={BellRing} title={t("Important alerts")} />
+          <Feature icon={Building2} title={t("Hotel settings")} />
         </View>
 
         <View style={styles.welcomeActions}>
@@ -313,13 +360,13 @@ export function AuthFlow({ initialUser, onAuthenticated, onDemo, onSocialAuth }:
               accessibilityRole="button"
               accessibilityLabel={t("Add hotel logo")}
               disabled={loading}
-              onPress={() => Alert.alert(t("Logo"), t("Image upload will be connected to storage."))}
+              onPress={() => void pickLogo()}
               style={({ pressed }) => [styles.logoUpload, pressed && { opacity: 0.72 }]}
             >
-              <View style={styles.logoUploadIcon}><Upload size={22} color={theme.colors.action} /></View>
+              <View style={styles.logoUploadIcon}>{logo ? <Image source={{ uri: logo.uri }} resizeMode="cover" style={styles.logoPreview} /> : <Upload size={22} color={theme.colors.action} />}</View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.logoUploadTitle}>{t("Add logo")}</Text>
-                <Text style={styles.logoUploadText}>{t("PNG or JPG · up to 5 MB")}</Text>
+                <Text style={styles.logoUploadTitle}>{logo ? t("Change logo") : t("Add logo")}</Text>
+                <Text style={styles.logoUploadText}>{logo ? t("Logo selected · tap to replace") : t("PNG or JPG · up to 5 MB")}</Text>
               </View>
             </Pressable>
 
@@ -340,16 +387,13 @@ export function AuthFlow({ initialUser, onAuthenticated, onDemo, onSocialAuth }:
                 editable={!loading}
                 error={submitted && city.trim().length < 2 ? t("Enter the city") : undefined}
               />
-              <Field
-                label={t("Country code")}
-                placeholder="IT"
-                autoCapitalize="characters"
-                maxLength={2}
+              <SelectField
+                label={t("Country")}
                 value={countryCode}
-                onChangeText={setCountryCode}
-                editable={!loading}
+                options={countryOptions}
+                onChange={setCountryCode}
+                disabled={loading}
                 error={submitted && !/^[A-Za-z]{2}$/.test(countryCode.trim()) ? t("Enter a two-letter code, for example IT") : undefined}
-                helper={t("ISO country code")}
               />
             </View>
 
@@ -371,6 +415,16 @@ function Feature({ icon: Icon, title }: { icon: typeof Sparkles; title: string }
       <Check size={18} color={theme.colors.success} />
     </View>
   );
+}
+
+function onboardingImageMimeType(asset: ImagePicker.ImagePickerAsset): "image/jpeg" | "image/png" | null {
+  const declared = asset.mimeType?.toLowerCase();
+  if (declared === "image/jpeg" || declared === "image/jpg") return "image/jpeg";
+  if (declared === "image/png") return "image/png";
+  const name = (asset.fileName ?? asset.uri).toLowerCase().split("?")[0] ?? "";
+  if (name.endsWith(".jpg") || name.endsWith(".jpeg")) return "image/jpeg";
+  if (name.endsWith(".png")) return "image/png";
+  return null;
 }
 
 function SocialButton({
@@ -470,6 +524,7 @@ const styles = StyleSheet.create({
   fields: { gap: theme.spacing[5], marginVertical: theme.spacing[2] },
   logoUpload: { flexDirection: "row", alignItems: "center", gap: theme.spacing[3], minHeight: 78, borderWidth: 1.5, borderStyle: "dashed", borderColor: theme.colors.borderStrong, borderRadius: theme.radii.lg, padding: theme.spacing[3] },
   logoUploadIcon: { width: 48, height: 48, borderRadius: theme.radii.md, alignItems: "center", justifyContent: "center", backgroundColor: theme.colors.actionTint },
+  logoPreview: { width: 48, height: 48, borderRadius: theme.radii.md },
   logoUploadTitle: { ...theme.typography.bodySmallMedium, color: theme.colors.text },
   logoUploadText: { ...theme.typography.caption, color: theme.colors.textMuted, marginTop: 2 },
 });

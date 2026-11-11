@@ -1,8 +1,10 @@
+import { randomUUID } from "node:crypto";
+import { MailConnectionLostError, MailConnectionBusyError, mailKinds, selectMailConnection } from "./mail-selection.js";
 import { and, asc, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, lte, ne, sql } from "drizzle-orm";
 import type { DashboardQuery, MealPlan, OfferSettings } from "@hotel/contracts";
 import { AUTOMATIC_SENDING_TIMEOUT_MS } from "@hotel/contracts";
 
-import type { Database } from "../db/client.js";
+import { createMailDatabase, type Database } from "../db/client.js";
 import {
   authSessions,
   connections,
@@ -40,6 +42,7 @@ import type {
   InquiryRecord,
   MessageSettings,
   MessageSettingsUpdate,
+  ManualOfferSentCreate,
   NotificationPreferences,
   NotificationRepository,
   OfferRecord,
@@ -396,6 +399,11 @@ class PostgresAutomationRepository implements AutomationRepository {
     return row?.settings ?? null;
   }
 
+  async findMessageSettingsForHotel(hotelId: string): Promise<MessageSettings | null> {
+    const [row] = await this.db.select().from(hotelMessageSettings).where(eq(hotelMessageSettings.hotelId, hotelId)).limit(1);
+    return row ? mapMessageSettings(row) : null;
+  }
+
   async saveOfferSettingsForUser(userId: string, settings: OfferSettings): Promise<OfferSettings | null> {
     const [membership] = await this.db.select({ hotelId: hotels.id }).from(hotelMembers)
       .innerJoin(hotels, and(eq(hotels.id, hotelMembers.hotelId), isNull(hotels.deletedAt)))
@@ -606,6 +614,69 @@ class PostgresAutomationRepository implements AutomationRepository {
       .where(and(eq(inquiries.id, inquiryId), eq(inquiries.hotelId, existing.hotelId), isNull(inquiries.closedAt)))
       .returning();
     return updated[0] ? mapInquiry(updated[0]) : mapInquiry({ ...existing, closedAt: now, updatedAt: now });
+  }
+
+  async recordManualOfferSentForUser(input: ManualOfferSentCreate): Promise<DeliveryRecord | null> {
+    return this.db.transaction(async (transaction) => {
+      const [row] = await transaction
+        .select({ inquiry: inquiries, offer: offerVersions })
+        .from(inquiries)
+        .innerJoin(hotelMembers, and(eq(hotelMembers.hotelId, inquiries.hotelId), eq(hotelMembers.userId, input.userId)))
+        .innerJoin(hotels, and(eq(hotels.id, inquiries.hotelId), isNull(hotels.deletedAt)))
+        .innerJoin(offerVersions, eq(offerVersions.id, inquiries.currentOfferId))
+        .where(eq(inquiries.id, input.inquiryId))
+        .for("update", { of: inquiries });
+      if (!row) return null;
+
+      const storageKey = `manual:${input.idempotencyKey}`;
+      // Serialize hotel-scoped key reuse even across different inquiry row locks.
+      await transaction.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`manual-sent:${row.inquiry.hotelId}:${storageKey}`}, 0))`);
+      const [existing] = await transaction.select().from(deliveries)
+        .where(and(eq(deliveries.hotelId, row.inquiry.hotelId), eq(deliveries.idempotencyKey, storageKey)))
+        .limit(1);
+      if (existing) {
+        if (existing.inquiryId !== input.inquiryId || existing.offerVersionId !== input.offerId || existing.channel !== input.channel
+          || existing.payload.language !== input.language || existing.payload.actorUserId !== input.userId || existing.payload.source !== "manual") throw errors.idempotencyConflict();
+        return mapDelivery(existing);
+      }
+      if (row.offer.id !== input.offerId) throw errors.offersChanged();
+
+      if (row.offer.state !== "active" || row.offer.expiresAt <= input.now || row.inquiry.closedAt) return null;
+      const recipient = input.channel === "email" ? row.inquiry.guestEmail : row.inquiry.guestPhone;
+      if (!recipient) return null;
+
+      await transaction.update(deliveries).set({ state: "cancelled", updatedAt: input.now })
+        .where(and(
+          eq(deliveries.offerVersionId, row.offer.id),
+          eq(deliveries.channel, input.channel),
+          eq(deliveries.kind, "offer"),
+          eq(deliveries.state, "scheduled"),
+        ));
+      const [created] = await transaction.insert(deliveries).values({
+        hotelId: row.inquiry.hotelId,
+        inquiryId: row.inquiry.id,
+        offerVersionId: row.offer.id,
+        kind: "offer",
+        channel: input.channel,
+        state: "provider_accepted",
+        idempotencyKey: storageKey,
+        recipient,
+        payload: {
+          schemaVersion: 1,
+          source: "manual",
+          actorUserId: input.userId,
+          confirmedAt: input.now.toISOString(),
+          language: input.language,
+        },
+        attemptCount: 0,
+        nextAttemptAt: input.now,
+        providerMessageId: null,
+        lastErrorCode: null,
+        lastErrorMessage: null,
+        processedAt: input.now,
+      }).returning();
+      return created ? mapDelivery(created) : null;
+    });
   }
 
   async dashboardPageForUser(userId: string, query: DashboardQuery): Promise<DashboardPageFacts | null> {
@@ -954,8 +1025,74 @@ class PostgresInventoryRepository implements InventoryRepository {
   }
 }
 
+// Bound dedicated mail sessions without consuming the main application pool.
+const mailLockSlots = new WeakMap<object, { active: number; waiting: Array<() => void> }>();
+
+async function acquireMailLockSlot(db: Database): Promise<() => void> {
+  const max = db.$client.options.max;
+  const limit = Math.max(1, Math.floor(max / 2));
+  let slots = mailLockSlots.get(db);
+  if (!slots) { slots = { active: 0, waiting: [] }; mailLockSlots.set(db, slots); }
+  if (slots.active >= limit) await new Promise<void>((resolve) => slots!.waiting.push(resolve));
+  else slots.active += 1;
+  return () => {
+    const next = slots!.waiting.shift();
+    if (next) next();
+    else slots!.active -= 1;
+  };
+}
+
 class PostgresChannelRepository implements ChannelRepository {
-  constructor(private readonly db: Database) {}
+  constructor(private readonly db: Database, private readonly mailLockHotelId?: string, private readonly mailSignal?: AbortSignal) {}
+
+  mailConnectionSignal() { return this.mailSignal; }
+
+  private assertMailScope(hotelId: string) {
+    this.mailSignal?.throwIfAborted();
+    if (this.mailLockHotelId && this.mailLockHotelId !== hotelId) throw new Error("MAIL_LOCK_SCOPE_MISMATCH");
+  }
+
+  async withMailConnectionLock<T>(hotelId: string, work: (repository: ChannelRepository) => Promise<T>): Promise<T> {
+    this.assertMailScope(hotelId);
+    if (this.mailLockHotelId) return work(this);
+    const deadline = Date.now() + 30_000;
+    while (true) {
+      const releaseSlot = await acquireMailLockSlot(this.db);
+      const controller = new AbortController();
+      // A full dedicated client supports Drizzle transactions; a reserved Sql
+      // does not. All writes commit here before send and cannot reconnect after
+      // lock loss. Closing this client releases its session lock unconditionally.
+      let dedicated: ReturnType<typeof createMailDatabase>;
+      try {
+        dedicated = createMailDatabase(this.db, () => {
+          controller.abort(new MailConnectionLostError());
+          void dedicated.client.end({ timeout: 0 }).catch(() => undefined);
+        });
+      } catch (error) { releaseSlot(); throw error; }
+      const client = dedicated.client;
+      try {
+        const [row] = await client`select pg_try_advisory_lock(hashtextextended(${`hotel-mail:${hotelId}`}, 0)) as acquired`;
+        if (row?.acquired) {
+          const repository = new PostgresChannelRepository(dedicated.db, hotelId, controller.signal);
+          return await work(repository);
+        }
+      } finally {
+        // Business outcome is authoritative even if final socket cleanup fails.
+        // Never return this session (possibly still locked) to a shared pool.
+        controller.abort(new MailConnectionLostError());
+        try { await client.end({ timeout: 1 }); } catch { /* dedicated client is ending */ }
+        releaseSlot();
+      }
+      if (Date.now() >= deadline) throw new MailConnectionBusyError();
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
+
+  async listConnectionsForHotel(hotelId: string): Promise<ConnectionRecord[]> {
+    this.assertMailScope(hotelId);
+    const rows = await this.db.select().from(connections).where(eq(connections.hotelId, hotelId)).orderBy(asc(connections.kind));
+    return rows.map(mapConnection);
+  }
 
   async findMessageSettingsForUser(userId: string): Promise<MessageSettings | null> {
     const hotelId = await this.findActiveHotelId(userId);
@@ -987,13 +1124,7 @@ class PostgresChannelRepository implements ChannelRepository {
 
   async listConnectionsForUser(userId: string): Promise<ConnectionRecord[] | null> {
     const hotelId = await this.findActiveHotelId(userId);
-    if (!hotelId) return null;
-    const rows = await this.db
-      .select()
-      .from(connections)
-      .where(eq(connections.hotelId, hotelId))
-      .orderBy(asc(connections.kind));
-    return rows.map(mapConnection);
+    return hotelId ? this.listConnectionsForHotel(hotelId) : null;
   }
 
   async findConnectionForUser(
@@ -1013,21 +1144,53 @@ class PostgresChannelRepository implements ChannelRepository {
   async configureMailForUser(input: { userId: string; kind: "smtp"; encryptedCredentials: string; metadata: Record<string, unknown> }) {
     const hotelId = await this.findActiveHotelId(input.userId);
     if (!hotelId) return null;
-    const rows = await this.db.insert(connections).values({ hotelId, kind: input.kind, state: "connected", encryptedCredentials: input.encryptedCredentials, metadata: input.metadata, lastCheckedAt: new Date(), lastErrorCode: null }).onConflictDoUpdate({ target: [connections.hotelId, connections.kind], set: { state: "connected", encryptedCredentials: input.encryptedCredentials, metadata: input.metadata, lastCheckedAt: new Date(), lastErrorCode: null, updatedAt: new Date() } }).returning();
-    return rows[0] ? mapConnection(rows[0]) : null;
+    return this.activateMailConnectionForHotel({ ...input, hotelId, lastCheckedAt: new Date(), lastErrorCode: null });
+  }
+
+  async activateMailConnectionForHotel(input: Parameters<ChannelRepository["activateMailConnectionForHotel"]>[0]) {
+    this.assertMailScope(input.hotelId);
+    if (!this.mailLockHotelId) return this.withMailConnectionLock(input.hotelId, (repository) => repository.activateMailConnectionForHotel(input));
+    return this.db.transaction(async (transaction) => {
+      // Serialize provider switches per hotel, including the first connection.
+      const [hotel] = await transaction.select({ id: hotels.id }).from(hotels)
+        .where(and(eq(hotels.id, input.hotelId), isNull(hotels.deletedAt))).for("update");
+      if (!hotel) return null;
+      this.assertMailScope(input.hotelId);
+      if (input.expectedOAuthAttemptId !== undefined) {
+        const [current] = await transaction.select().from(connections).where(and(eq(connections.hotelId, input.hotelId), eq(connections.kind, input.kind)));
+        if (current?.state !== "connecting" || current.metadata.oauthAttemptId !== input.expectedOAuthAttemptId) return null;
+      }
+      this.assertMailScope(input.hotelId);
+      await transaction.update(connections).set({
+        state: "disconnected", encryptedCredentials: null, lastCheckedAt: input.lastCheckedAt,
+        lastErrorCode: null, updatedAt: input.lastCheckedAt,
+      }).where(and(eq(connections.hotelId, input.hotelId), inArray(connections.kind, [...mailKinds]), ne(connections.kind, input.kind)));
+      const values = {
+        state: "connected" as const, encryptedCredentials: input.encryptedCredentials, metadata: { ...input.metadata, mailGeneration: randomUUID(), oauthAttemptId: null },
+        lastCheckedAt: input.lastCheckedAt, lastErrorCode: null, updatedAt: input.lastCheckedAt,
+      };
+      this.assertMailScope(input.hotelId);
+      const [row] = await transaction.insert(connections).values({ hotelId: input.hotelId, kind: input.kind, ...values })
+        .onConflictDoUpdate({ target: [connections.hotelId, connections.kind], set: values }).returning();
+      return row ? mapConnection(row) : null;
+    });
   }
 
   async beginMailOAuthForUser(input: { userId: string; kind: "google" | "microsoft"; nonceHash: string; expiresAt: Date; metadata: Record<string, unknown> }) {
     const hotelId = await this.findActiveHotelId(input.userId); if (!hotelId) return null;
-    const metadata = { ...input.metadata, oauthNonceHash: input.nonceHash, oauthExpiresAt: input.expiresAt.toISOString() };
+    this.assertMailScope(hotelId);
+    if (!this.mailLockHotelId) return this.withMailConnectionLock(hotelId, (repository) => repository.beginMailOAuthForUser(input));
+    const metadata = { ...input.metadata, oauthAttemptId: input.nonceHash, oauthNonceHash: input.nonceHash, oauthExpiresAt: input.expiresAt.toISOString() };
     const rows = await this.db.insert(connections).values({ hotelId, kind: input.kind, state: "connecting", metadata }).onConflictDoUpdate({ target: [connections.hotelId, connections.kind], set: { state: "connecting", metadata, lastCheckedAt: null, lastErrorCode: null, updatedAt: new Date() } }).returning();
     return rows[0] ? { hotelId, connection: mapConnection(rows[0]) } : null;
   }
 
   async consumeMailOAuthState(input: { hotelId: string; kind: "google" | "microsoft"; nonceHash: string; now: Date }) {
+    this.assertMailScope(input.hotelId);
+    if (!this.mailLockHotelId) return this.withMailConnectionLock(input.hotelId, (repository) => repository.consumeMailOAuthState(input));
     const [current] = await this.db.select().from(connections).where(and(eq(connections.hotelId, input.hotelId), eq(connections.kind, input.kind))).limit(1);
-    if (!current || current.metadata.oauthNonceHash !== input.nonceHash || typeof current.metadata.oauthExpiresAt !== "string" || new Date(current.metadata.oauthExpiresAt) <= input.now) return null;
-    const rows = await this.db.update(connections).set({ state: "connecting", metadata: { ...current.metadata, oauthNonceHash: null, oauthExpiresAt: null, authorizationReceivedAt: input.now.toISOString() }, lastCheckedAt: input.now, lastErrorCode: "TOKEN_EXCHANGE_PENDING", updatedAt: input.now }).where(and(eq(connections.id, current.id), sql`${connections.metadata}->>'oauthNonceHash' = ${input.nonceHash}`)).returning();
+    if (!current || current.state !== "connecting" || current.metadata.oauthNonceHash !== input.nonceHash || typeof current.metadata.oauthExpiresAt !== "string" || new Date(current.metadata.oauthExpiresAt) <= input.now) return null;
+    const rows = await this.db.update(connections).set({ state: "connecting", metadata: { ...current.metadata, oauthNonceHash: null, oauthExpiresAt: null, authorizationReceivedAt: input.now.toISOString() }, lastCheckedAt: input.now, lastErrorCode: "TOKEN_EXCHANGE_PENDING", updatedAt: input.now }).where(and(eq(connections.id, current.id), eq(connections.state, "connecting"), sql`${connections.metadata}->>'oauthNonceHash' = ${input.nonceHash}`)).returning();
     return rows[0] ? mapConnection(rows[0]) : null;
   }
 
@@ -1071,7 +1234,10 @@ class PostgresChannelRepository implements ChannelRepository {
   }): Promise<{ hotelId: string; connection: ConnectionRecord } | null> {
     const hotelId = await this.findActiveHotelId(input.userId);
     if (!hotelId) return null;
+    this.assertMailScope(hotelId);
+    if (!this.mailLockHotelId) return this.withMailConnectionLock(hotelId, (repository) => repository.beginGoogleOAuthForUser(input));
     const metadata = {
+      oauthAttemptId: input.nonceHash,
       oauthNonceHash: input.nonceHash,
       oauthExpiresAt: input.expiresAt.toISOString(),
     };
@@ -1098,12 +1264,14 @@ class PostgresChannelRepository implements ChannelRepository {
     nonceHash: string;
     now: Date;
   }): Promise<ConnectionRecord | null> {
+    this.assertMailScope(input.hotelId);
+    if (!this.mailLockHotelId) return this.withMailConnectionLock(input.hotelId, (repository) => repository.consumeGoogleOAuthState(input));
     const [current] = await this.db
       .select()
       .from(connections)
       .where(and(eq(connections.hotelId, input.hotelId), eq(connections.kind, "google")))
       .limit(1);
-    if (!current) return null;
+    if (!current || current.state !== "connecting") return null;
     const expiresAt = current.metadata.oauthExpiresAt;
     if (
       current.metadata.oauthNonceHash !== input.nonceHash ||
@@ -1129,6 +1297,7 @@ class PostgresChannelRepository implements ChannelRepository {
       .where(
         and(
           eq(connections.id, current.id),
+          eq(connections.state, "connecting"),
           sql`${connections.metadata}->>'oauthNonceHash' = ${input.nonceHash}`,
         ),
       )
@@ -1141,10 +1310,14 @@ class PostgresChannelRepository implements ChannelRepository {
     kind: ConnectionKind;
     state: ConnectionRecord["state"];
     encryptedCredentials?: string | null;
+    expectedEncryptedCredentials?: string;
+    expectedOAuthAttemptId?: string;
     metadata?: Record<string, unknown>;
     lastCheckedAt: Date;
     lastErrorCode: string | null;
   }): Promise<ConnectionRecord | null> {
+    this.assertMailScope(input.hotelId);
+    if (input.kind !== "waha" && !this.mailLockHotelId) return this.withMailConnectionLock(input.hotelId, (repository) => repository.updateConnectionForHotel(input));
     const rows = await this.db
       .update(connections)
       .set({
@@ -1155,7 +1328,16 @@ class PostgresChannelRepository implements ChannelRepository {
         lastErrorCode: input.lastErrorCode,
         updatedAt: input.lastCheckedAt,
       })
-      .where(and(eq(connections.hotelId, input.hotelId), eq(connections.kind, input.kind)))
+      .where(and(
+        eq(connections.hotelId, input.hotelId), eq(connections.kind, input.kind),
+        ...(input.expectedOAuthAttemptId === undefined ? [] : [
+          eq(connections.state, "connecting"), sql`${connections.metadata}->>'oauthAttemptId' = ${input.expectedOAuthAttemptId}`,
+        ]),
+        ...(input.expectedEncryptedCredentials === undefined ? [] : [
+          eq(connections.encryptedCredentials, input.expectedEncryptedCredentials),
+          eq(connections.state, "connected"),
+        ]),
+      ))
       .returning();
     return rows[0] ? mapConnection(rows[0]) : null;
   }
@@ -1177,6 +1359,7 @@ class PostgresChannelRepository implements ChannelRepository {
       .innerJoin(hotels, eq(hotels.id, hotelMembers.hotelId))
       .where(and(eq(hotelMembers.userId, userId), isNull(hotels.deletedAt)))
       .limit(1);
+    if (row) this.assertMailScope(row.id);
     return row?.id ?? null;
   }
 }
@@ -1267,6 +1450,15 @@ class PostgresDeliveryWorkerRepository implements DeliveryWorkerRepository {
           and(
             eq(deliveries.kind, "offer"),
             eq(deliveries.state, "scheduled"),
+            // A processing attempt may have scheduled a retry after manual
+            // confirmation. Do not claim that retry; an in-flight send itself
+            // cannot be recalled by this check.
+            sql`not exists (select 1 from deliveries manual_confirmation
+              where manual_confirmation.hotel_id = ${deliveries.hotelId}
+                and manual_confirmation.offer_version_id = ${deliveries.offerVersionId}
+                and manual_confirmation.channel = ${deliveries.channel}
+                and manual_confirmation.payload->>'source' = 'manual'
+                and manual_confirmation.state in ('provider_accepted', 'delivered'))`,
             lte(deliveries.nextAttemptAt, now),
             inArray(deliveries.channel, ["email", "whatsapp"]),
           ),
@@ -1283,7 +1475,7 @@ class PostgresDeliveryWorkerRepository implements DeliveryWorkerRepository {
         .returning();
       if (!claimed) return null;
 
-      const [offer, hotel, settings, connection] = await Promise.all([
+      const [offer, hotel, settings, connectionRows] = await Promise.all([
         claimed.offerVersionId
           ? transaction
               .select()
@@ -1312,9 +1504,7 @@ class PostgresDeliveryWorkerRepository implements DeliveryWorkerRepository {
               eq(connections.hotelId, claimed.hotelId),
               claimed.channel === "email" ? inArray(connections.kind, ["google", "microsoft", "smtp"]) : eq(connections.kind, "waha"),
             ),
-          )
-          .limit(1)
-          .then((rows) => rows[0] ?? null),
+          ),
       ]);
 
       return {
@@ -1322,7 +1512,9 @@ class PostgresDeliveryWorkerRepository implements DeliveryWorkerRepository {
         offer: offer ? mapOffer(offer) : null,
         hotel: hotel ? mapHotel(hotel) : null,
         settings: settings ? mapMessageSettings(settings) : null,
-        connection: connection ? mapConnection(connection) : null,
+        connection: claimed.channel === "email"
+          ? selectMailConnection(connectionRows.map(mapConnection)).connection
+          : connectionRows[0] ? mapConnection(connectionRows[0]) : null,
       };
     });
   }

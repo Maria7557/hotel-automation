@@ -36,10 +36,10 @@ export function clientFilterSummary(filters: ClientFilters, options: ClientFilte
   if (filters.roomId) summary.push({ label: t("Room: {{v0}}", { v0: options.rooms.find((room) => room.id === filters.roomId)?.name ?? "Selected room" }), keys: ["roomId"] });
   if (filters.mealPlan) summary.push({ label: t("Board: {{v0}}", { v0: filters.mealPlan }), keys: ["mealPlan"] });
   if (filters.status) summary.push({ label: t(statusOptions.find((option) => option.value === filters.status)!.label), keys: ["status"] });
-  if (filters.source) summary.push({ label: filters.source === "manual" ? t("Added manually") : t("From enquiry"), keys: ["source"] });
+  if (filters.source) summary.push({ label: filters.source === "manual" ? t("Added manually") : t("From request"), keys: ["source"] });
   if (filters.locale) summary.push({ label: t("Language: {{v0}}", { v0: filters.locale }), keys: ["locale"] });
   if (filters.contact) summary.push({ label: filters.contact === "both" ? t("Has email & phone") : t("Has {{v0}}", { v0: t(filters.contact === "phone" ? "Phone" : "Email").toLowerCase() }), keys: ["contact"] });
-  if (filters.reservations) summary.push({ label: filters.reservations === "with" ? t("With reservations") : t("No reservations"), keys: ["reservations"] });
+  if (filters.reservations) summary.push({ label: filters.reservations === "with" ? t("With requests") : t("No requests"), keys: ["reservations"] });
   if (filters.notes) summary.push({ label: filters.notes === "with" ? t("Has notes") : t("No notes"), keys: ["notes"] });
   return summary;
 }

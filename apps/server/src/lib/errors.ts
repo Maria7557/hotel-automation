@@ -42,6 +42,7 @@ export const errors = {
   originNotAllowed: () => new AppError(403, "ORIGIN_NOT_ALLOWED", "This website is not allowed to submit inquiries."),
   idempotencyKeyRequired: () =>
     new AppError(400, "IDEMPOTENCY_KEY_REQUIRED", "A valid Idempotency-Key header is required."),
+  idempotencyConflict: () => new AppError(409, "IDEMPOTENCY_CONFLICT", "This confirmation key was already used for different details."),
   offerNotFound: () => new AppError(404, "OFFER_NOT_FOUND", "Offer was not found."),
   offerExpired: () => new AppError(410, "OFFER_EXPIRED", "This offer has expired."),
   offersChanged: () => new AppError(409, "OFFERS_CHANGED", "These offers have changed. Refresh the reservation before editing."),

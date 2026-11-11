@@ -240,8 +240,19 @@ export type ReservationOffersCreate = {
   now: Date;
 };
 
+export type ManualOfferSentCreate = {
+  offerId: string;
+  userId: string;
+  inquiryId: string;
+  channel: "email" | "whatsapp";
+  language: "en" | "it";
+  idempotencyKey: string;
+  now: Date;
+};
+
 export interface AutomationRepository {
   findOfferSettingsForHotel(hotelId: string): Promise<OfferSettings | null>;
+  findMessageSettingsForHotel(hotelId: string): Promise<MessageSettings | null>;
   saveOfferSettingsForUser(userId: string, settings: OfferSettings): Promise<OfferSettings | null>;
   findPublicHotelByKey(publicKey: string): Promise<HotelProfile | null>;
   findPublicHotelWebsite(hotelId: string): Promise<string | null>;
@@ -251,6 +262,7 @@ export interface AutomationRepository {
   replaceReservationOffers(input: ReservationOffersCreate): Promise<{ replayed: boolean } | null>;
   findOfferByTokenHash(tokenHash: string): Promise<OfferRecord | null>;
   acceptOfferByTokenHash(tokenHash: string, now: Date, selectedOptionIndex: number): Promise<OfferRecord | null>;
+  recordManualOfferSentForUser(input: ManualOfferSentCreate): Promise<DeliveryRecord | null>;
   markPaymentLinkSentForUser(userId: string, inquiryId: string, now: Date): Promise<InquiryRecord | null>;
   dashboardFactsForUser(userId: string, inquiryIds?: string[]): Promise<DashboardFacts | null>;
   dashboardPageForUser(userId: string, query: DashboardQuery): Promise<DashboardPageFacts | null>;
@@ -359,6 +371,11 @@ export type ConnectionRecord = {
 };
 
 export interface ChannelRepository {
+  // The callback gets a scoped repository using the same lock/session. Do not use
+  // an outer repository from inside it or nest a lock for another hotel.
+  mailConnectionSignal(): AbortSignal | undefined;
+  withMailConnectionLock<T>(hotelId: string, work: (repository: ChannelRepository) => Promise<T>): Promise<T>;
+  listConnectionsForHotel(hotelId: string): Promise<ConnectionRecord[]>;
   findMessageSettingsForUser(userId: string): Promise<MessageSettings | null>;
   upsertMessageSettingsForUser(
     userId: string,
@@ -384,11 +401,22 @@ export interface ChannelRepository {
     nonceHash: string;
     now: Date;
   }): Promise<ConnectionRecord | null>;
+  activateMailConnectionForHotel(input: {
+    hotelId: string;
+    kind: "google" | "microsoft" | "smtp";
+    encryptedCredentials: string;
+    metadata: Record<string, unknown>;
+    lastCheckedAt: Date;
+    lastErrorCode: null;
+    expectedOAuthAttemptId?: string;
+  }): Promise<ConnectionRecord | null>;
   updateConnectionForHotel(input: {
     hotelId: string;
     kind: ConnectionKind;
     state: ConnectionRecord["state"];
     encryptedCredentials?: string | null;
+    expectedEncryptedCredentials?: string;
+    expectedOAuthAttemptId?: string;
     metadata?: Record<string, unknown>;
     lastCheckedAt: Date;
     lastErrorCode: string | null;

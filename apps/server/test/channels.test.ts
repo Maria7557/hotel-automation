@@ -1,3 +1,5 @@
+import { sealPrivateValue } from "../src/lib/public-token.js";
+import { SmtpProvider } from "../src/providers/smtp.js";
 import type { FastifyInstance } from "fastify";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -715,3 +717,106 @@ async function onboard(app: FastifyInstance, email: string, name: string) {
 function auth(token: string): Record<string, string> {
   return { authorization: `Bearer ${token}` };
 }
+
+describe("mail test-send provider dispatch", () => {
+  let app: FastifyInstance;
+  let repositories: MemoryRepositories;
+  let fetcher: ReturnType<typeof vi.fn>;
+  beforeEach(async () => {
+    repositories = createMemoryRepositories();
+    fetcher = vi.fn(async (_url: string | URL, _init?: RequestInit) => new Response(null, { status: 202, headers: { "request-id": "ms-test-1" } }));
+    app = await createApp({ env: {
+      ...googleEnv, MICROSOFT_CLIENT_ID: "id", MICROSOFT_CLIENT_SECRET: "secret", MICROSOFT_REDIRECT_URI: "https://api.example/microsoft",
+    }, repositories, providerFetch: fetcher as ProviderFetch, logger: false });
+  });
+  afterEach(async () => { await app.close(); vi.restoreAllMocks(); });
+
+  async function connect(hotelId: string, kind: "google" | "microsoft" | "smtp") {
+    return repositories.channels.activateMailConnectionForHotel({
+      hotelId, kind, encryptedCredentials: sealPrivateValue(JSON.stringify(kind === "smtp" ? {
+        email: "sender@example.com", hostname: "smtp.example.com", username: "sender", appPassword: "synthetic-password", port: 465, encryption: "tls",
+      } : { accessToken: "synthetic-access", refreshToken: "synthetic-refresh", accessTokenExpiresAt: "2099-01-01T00:00:00.000Z", scope: null }), baseEnv.AUTH_SECRET),
+      metadata: {}, lastCheckedAt: new Date(), lastErrorCode: null,
+    });
+  }
+
+  it("sends an email test via Microsoft and records acceptance", async () => {
+    const owner = await onboard(app, "ms@example.com", "Mail Hotel");
+    await connect(owner.hotelId, "google");
+    await connect(owner.hotelId, "microsoft");
+    const response = await app.inject({ method: "POST", url: "/v1/hotel/message-settings/test-send", headers: auth(owner.token), payload: { channel: "email", recipient: "owner@example.com" } });
+    expect(response.json().data).toMatchObject({ provider: "microsoft", accepted: true, delivery: { state: "provider_accepted" } });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher.mock.calls[0]?.[0]).toBe("https://graph.microsoft.com/v1.0/me/sendMail");
+    expect(repositories.channels.connections.get(`${owner.hotelId}:google`)).toMatchObject({ state: "disconnected", encryptedCredentials: null });
+  });
+
+  it("sends an email test via SMTP without calling an OAuth provider", async () => {
+    const smtp = vi.spyOn(SmtpProvider.prototype, "send").mockResolvedValue({ providerMessageId: "smtp-test-1" });
+    const owner = await onboard(app, "smtp@example.com", "Mail Hotel");
+    await connect(owner.hotelId, "smtp");
+    const response = await app.inject({ method: "POST", url: "/v1/hotel/message-settings/test-send", headers: auth(owner.token), payload: { channel: "email", recipient: "owner@example.com" } });
+    expect(response.json().data).toMatchObject({ provider: "smtp", accepted: true, delivery: { state: "provider_accepted" } });
+    expect(smtp).toHaveBeenCalledWith(expect.objectContaining({ username: "sender" }), expect.objectContaining({ to: "owner@example.com" }), undefined);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("does not choose between legacy connected accounts, including in the status response", async () => {
+    const owner = await onboard(app, "ambiguous@example.com", "Mail Hotel");
+    const google = await connect(owner.hotelId, "google");
+    await connect(owner.hotelId, "microsoft");
+    repositories.channels.connections.set(`${owner.hotelId}:google`, google!);
+    const response = await app.inject({ method: "POST", url: "/v1/hotel/message-settings/test-send", headers: auth(owner.token), payload: { channel: "email", recipient: "owner@example.com" } });
+    expect(response.json().data).toMatchObject({ accepted: false, delivery: { lastErrorCode: "MAIL_CONNECTION_AMBIGUOUS" } });
+    expect(fetcher).not.toHaveBeenCalled();
+    const status = await app.inject({ method: "GET", url: "/v1/connections", headers: auth(owner.token) });
+    expect(status.json().data.connections).toContainEqual(expect.objectContaining({ kind: "mail", state: "attention", provider: null, lastErrorCode: "MAIL_CONNECTION_AMBIGUOUS" }));
+  });
+
+  it("reports Microsoft failures against Microsoft, not a fake or Google delivery", async () => {
+    const owner = await onboard(app, "ms-failure@example.com", "Mail Hotel");
+    await connect(owner.hotelId, "microsoft");
+    fetcher.mockResolvedValueOnce(new Response(null, { status: 403 }));
+    const response = await app.inject({ method: "POST", url: "/v1/hotel/message-settings/test-send", headers: auth(owner.token), payload: { channel: "email", recipient: "owner@example.com" } });
+    expect(response.json().data).toMatchObject({ provider: "microsoft", accepted: false, delivery: { state: "failed", lastErrorCode: "MICROSOFT_SEND_HTTP_403" } });
+  });
+});
+
+describe("mail OAuth provider switches", () => {
+  it("keeps the old provider until Microsoft completes, then disables it without affecting another hotel", async () => {
+    const repositories = createMemoryRepositories();
+    const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ access_token: "access", refresh_token: "refresh", expires_in: 3600 }), { status: 200 })).mockResolvedValueOnce(new Response(null, { status: 202 }));
+    const app = await createApp({ env: { ...googleEnv, MICROSOFT_CLIENT_ID: "id", MICROSOFT_CLIENT_SECRET: "secret", MICROSOFT_REDIRECT_URI: "https://api.example/microsoft" }, repositories, providerFetch: fetcher, logger: false });
+    try {
+      const owner = await onboard(app, "switch@example.com", "Mail Hotel");
+      const other = await onboard(app, "other-switch@example.com", "Other Hotel");
+      for (const hotelId of [owner.hotelId, other.hotelId]) await repositories.channels.activateMailConnectionForHotel({ hotelId, kind: "google", encryptedCredentials: "old", metadata: {}, lastCheckedAt: new Date(), lastErrorCode: null });
+      const start = await app.inject({ method: "POST", url: "/v1/connections/mail/microsoft/oauth/start", headers: auth(owner.token), payload: { email: "sender@example.com" } });
+      expect(repositories.channels.connections.get(`${owner.hotelId}:google`)?.state).toBe("connected");
+      const state = new URL(start.json().data.authorizationUrl).searchParams.get("state")!;
+      const callback = await app.inject({ method: "GET", url: `/v1/connections/mail/microsoft/oauth/callback?state=${encodeURIComponent(state)}&code=synthetic` });
+      expect(callback.statusCode).toBe(200);
+      expect(repositories.channels.connections.get(`${owner.hotelId}:microsoft`)?.state).toBe("connected");
+      expect(repositories.channels.connections.get(`${owner.hotelId}:google`)).toMatchObject({ state: "disconnected", encryptedCredentials: null });
+      expect(repositories.channels.connections.get(`${other.hotelId}:google`)).toMatchObject({ state: "connected", encryptedCredentials: "old" });
+      const replay = await app.inject({ method: "GET", url: `/v1/connections/mail/microsoft/oauth/callback?state=${encodeURIComponent(state)}&code=synthetic` });
+      expect(replay.statusCode).toBe(409);
+      expect(fetcher).toHaveBeenCalledTimes(2);
+    } finally { await app.close(); }
+  });
+
+  it("does not complete an OAuth flow that was disconnected before its callback", async () => {
+    const repositories = createMemoryRepositories();
+    const fetcher = vi.fn();
+    const app = await createApp({ env: googleEnv, repositories, providerFetch: fetcher, logger: false });
+    try {
+      const owner = await onboard(app, "cancel-mail@example.com", "Mail Hotel");
+      const start = await app.inject({ method: "POST", url: "/v1/connections/mail/google/oauth/start", headers: auth(owner.token), payload: { email: "sender@example.com" } });
+      const state = new URL(start.json().data.authorizationUrl).searchParams.get("state")!;
+      await app.inject({ method: "DELETE", url: "/v1/connections/mail", headers: auth(owner.token) });
+      const callback = await app.inject({ method: "GET", url: `/v1/connections/mail/google/oauth/callback?state=${encodeURIComponent(state)}&code=synthetic` });
+      expect(callback.statusCode).toBe(409);
+      expect(fetcher).not.toHaveBeenCalled();
+    } finally { await app.close(); }
+  });
+});

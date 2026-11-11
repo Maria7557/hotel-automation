@@ -47,7 +47,7 @@ export class GoogleProvider {
     return parseTokenResponse(result.body, null);
   }
 
-  async refreshAccessToken(credentials: GoogleCredentials, config: GoogleOAuthConfig): Promise<GoogleCredentials> {
+  async refreshAccessToken(credentials: GoogleCredentials, config: GoogleOAuthConfig, signal?: AbortSignal): Promise<GoogleCredentials> {
     const body = new URLSearchParams({
       client_id: config.clientId,
       client_secret: config.clientSecret,
@@ -59,6 +59,7 @@ export class GoogleProvider {
       "https://oauth2.googleapis.com/token",
       {
         method: "POST",
+        ...(signal ? { signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]) } : {}),
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body,
       },
@@ -74,15 +75,19 @@ export class GoogleProvider {
     credentials: GoogleCredentials,
     config: GoogleOAuthConfig,
     message: GmailMessage,
+    onRefresh?: (credentials: GoogleCredentials) => Promise<void>,
+    signal?: AbortSignal,
   ): Promise<{ credentials: GoogleCredentials; providerMessageId: string | null }> {
     let current = credentials;
     if (new Date(current.accessTokenExpiresAt).getTime() <= Date.now() + 60_000) {
-      current = await this.refreshAccessToken(current, config);
+      current = await this.refreshAccessToken(current, config, signal);
+      await onRefresh?.(current);
     }
-    let result = await this.sendWithAccessToken(current.accessToken, message);
+    let result = await this.sendWithAccessToken(current.accessToken, message, signal);
     if (result.response.status === 401) {
-      current = await this.refreshAccessToken(current, config);
-      result = await this.sendWithAccessToken(current.accessToken, message);
+      current = await this.refreshAccessToken(current, config, signal);
+      await onRefresh?.(current);
+      result = await this.sendWithAccessToken(current.accessToken, message, signal);
     }
     if (!result.response.ok) {
       throw new ProviderError(`GMAIL_SEND_HTTP_${result.response.status}`, result.response.status === 429 || result.response.status >= 500);
@@ -94,12 +99,13 @@ export class GoogleProvider {
     };
   }
 
-  private sendWithAccessToken(accessToken: string, message: GmailMessage) {
+  private sendWithAccessToken(accessToken: string, message: GmailMessage, signal?: AbortSignal) {
     return providerJson(
       this.fetchClient,
       "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
       {
         method: "POST",
+        ...(signal ? { signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]) } : {}),
         headers: {
           Authorization: `Bearer ${accessToken}`,
           "Content-Type": "application/json",

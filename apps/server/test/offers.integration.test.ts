@@ -53,6 +53,99 @@ describe.skipIf(!databaseUrl)("reservation offers PostgreSQL concurrency", () =>
     return { hotelId, roomId: room.json().data.room.id as string, inquiryId, reservationNumber, headers, send, tokenFor };
   }
 
+  function confirm(context: Awaited<ReturnType<typeof setup>>, offerId: string, key: string, overrides: Record<string, string> = {}) {
+    return app.inject({ method: "POST", url: `/v1/inquiries/${context.inquiryId}/manual-sent`,
+      headers: { ...context.headers, "idempotency-key": key }, payload: { offerId, channel: "email", language: "en", ...overrides } });
+  }
+
+  it("binds manual confirmations to the opened offer and replays only identical confirmation details", async () => {
+    const context = await setup();
+    const initial = await context.send(null);
+    const offerId = initial.json().data.inquiry.currentOfferId as string;
+    const key = randomUUID();
+    const results = await Promise.all(Array.from({ length: 5 }, () => confirm(context, offerId, key)));
+    for (const result of results) expect(result.statusCode, result.body).toBe(200);
+    const [counts] = await core.client`select count(*)::int as total from deliveries where inquiry_id = ${context.inquiryId} and payload->>'source' = 'manual'`;
+    expect(counts!.total).toBe(1);
+    const automatic = await core.client`select channel, state from deliveries where inquiry_id = ${context.inquiryId} and coalesce(payload->>'source', '') <> 'manual'`;
+    expect(automatic).toEqual(expect.arrayContaining([{ channel: "email", state: "cancelled" }, { channel: "whatsapp", state: "scheduled" }]));
+    for (const overrides of [{ language: "it" }, { channel: "whatsapp" }, { offerId: randomUUID() }]) {
+      const conflict = await confirm(context, offerId, key, overrides);
+      expect(conflict.statusCode, conflict.body).toBe(409);
+      expect(conflict.json().error.code).toBe("IDEMPOTENCY_CONFLICT");
+    }
+    const replacement = await context.send(offerId);
+    expect(replacement.statusCode, replacement.body).toBe(201);
+    const stale = await confirm(context, offerId, randomUUID());
+    expect(stale.statusCode, stale.body).toBe(409);
+    expect(stale.json().error.code).toBe("OFFERS_CHANGED");
+    // A lost-response retry is still successful after a later replacement.
+    expect((await confirm(context, offerId, key)).statusCode).toBe(200);
+    const newId = replacement.json().data.inquiry.currentOfferId;
+    const [current] = await core.client`select count(*)::int as total from deliveries where offer_version_id = ${newId} and payload->>'source' = 'manual'`;
+    expect(current!.total).toBe(0);
+  });
+
+  it("rejects concurrent cross-inquiry reuse of a hotel-scoped confirmation key", async () => {
+    const context = await setup();
+    const first = await context.send(null);
+    const created = await app.inject({ method: "POST", url: "/v1/inquiries", headers: { ...context.headers, "idempotency-key": randomUUID() }, payload: {
+      guest: { name: "Other Guest", email: "other@example.com", phone: "+393331234568" }, checkIn: "2027-01-10", checkOut: "2027-01-12",
+      occupancy: { adults: 2, childAges: [] }, mealPlan: "BB", sendOffer: false,
+    } });
+    expect(created.statusCode, created.body).toBe(201);
+    const otherId = created.json().data.inquiryId;
+    const second = await app.inject({ method: "POST", url: `/v1/inquiries/${otherId}/offers`, headers: { ...context.headers, "idempotency-key": randomUUID() },
+      payload: { baseOfferId: null, offers: [{ roomId: context.roomId, planName: "Other", totalCents: 10000 }] } });
+    expect(second.statusCode, second.body).toBe(201);
+    const key = randomUUID();
+    const results = await Promise.all([confirm(context, first.json().data.inquiry.currentOfferId, key),
+      confirm({ ...context, inquiryId: otherId }, second.json().data.inquiry.currentOfferId, key)]);
+    expect(results.map(({ statusCode }) => statusCode).sort()).toEqual([200, 409]);
+    expect(results.find(({ statusCode }) => statusCode === 409)!.json().error.code).toBe("IDEMPOTENCY_CONFLICT");
+  });
+
+  it("cancels queued sends but preserves processing sends and suppresses their subsequent retries", async () => {
+    const context = await setup();
+    const sent = await context.send(null);
+    const offerId = sent.json().data.inquiry.currentOfferId;
+    const repository = createPostgresRepositories(core.db);
+    // Isolate this channel, then claim as the real worker does.
+    await core.client`update deliveries set state = 'cancelled' where inquiry_id = ${context.inquiryId} and channel = 'whatsapp'`;
+    const claim = await repository.deliveryWorker.claimNextOfferDelivery(new Date());
+    expect(claim?.delivery.offerVersionId).toBe(offerId);
+    expect((await confirm(context, offerId, randomUUID())).statusCode).toBe(200);
+    const [processing] = await core.client`select state from deliveries where id = ${claim!.delivery.id}`;
+    expect(processing!.state).toBe("processing");
+    // External delivery may already have started. A retry after its failure
+    // must not be claimed once staff have confirmed sending this version.
+    await repository.deliveryWorker.settleClaimedDelivery({ deliveryId: claim!.delivery.id, state: "scheduled", attemptCount: 1,
+      nextAttemptAt: new Date(), providerMessageId: null, lastErrorCode: "RETRY", lastErrorMessage: null, processedAt: null, now: new Date() });
+    expect(await repository.deliveryWorker.claimNextOfferDelivery(new Date())).toBeNull();
+    // Force a creation-time tie to ensure manual confirmation remains visible
+    // rather than letting UUID ordering select the old automatic attempt.
+    await core.client`update deliveries set created_at = now() where offer_version_id = ${offerId}`;
+    const detail = await app.inject({ method: "GET", url: `/v1/inquiries/${context.inquiryId}`, headers: context.headers });
+    expect(detail.json().data.inquiry).toMatchObject({ workflowState: "offer_sent", channelStates: { email: "provider_accepted" } });
+    const dashboard = await app.inject({ method: "GET", url: "/v1/dashboard?scope=today&status=waiting", headers: context.headers });
+    expect(dashboard.json().data.inquiries).toEqual(expect.arrayContaining([expect.objectContaining({ id: context.inquiryId, workflowState: "offer_sent", channelStates: { email: "provider_accepted", whatsapp: "cancelled" } })]));
+  });
+
+  it("rejects missing offer IDs, foreign owners and confirmations against expired offers", async () => {
+    const context = await setup();
+    const sent = await context.send(null);
+    const offerId = sent.json().data.inquiry.currentOfferId;
+    const missing = await app.inject({ method: "POST", url: `/v1/inquiries/${context.inquiryId}/manual-sent`,
+      headers: { ...context.headers, "idempotency-key": randomUUID() }, payload: { channel: "email", language: "en" } });
+    expect(missing.statusCode).toBe(400);
+    const other = await setup();
+    expect((await confirm({ ...context, headers: other.headers }, offerId, randomUUID())).statusCode).toBe(404);
+    await core.client`update offer_versions set state = 'expired' where id = ${offerId}`;
+    expect((await confirm(context, offerId, randomUUID())).statusCode).toBe(404);
+    const [count] = await core.client`select count(*)::int as total from deliveries where inquiry_id = ${context.inquiryId} and payload->>'source' = 'manual'`;
+    expect(count!.total).toBe(0);
+  });
+
   it("persists extras and defaults and freezes a calculated alternative stay on the same reservation", async () => {
     const context = await setup();
     const extraId = randomUUID();

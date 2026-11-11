@@ -359,7 +359,7 @@ export function ConnectionsScreen({ onBack, demo }: { onBack: () => void; demo: 
               loading={busyKind === "waha"}
               onPress={() => void checkWhatsApp()}
             >
-              {t("I scanned the code")}{" "}</Button>
+              {t("Check")}</Button>
           </View>
         ) : null}
         {mailOpen ? <View style={styles.mailCard}>
@@ -378,7 +378,7 @@ export function ConnectionsScreen({ onBack, demo }: { onBack: () => void; demo: 
               <TextInput autoCapitalize="none" placeholder={t("Username")} value={smtpUser} onChangeText={setSmtpUser} style={styles.input} />
               <TextInput placeholder={t("App password")} secureTextEntry value={smtpPassword} onChangeText={setSmtpPassword} style={styles.input} />
             </> : null}
-            <Button loading={busyKind === "mail"} onPress={() => void finishMail()}>{t("Connect and send test")}</Button>
+            <Button loading={busyKind === "mail"} onPress={() => void finishMail()}>{t("Connect")}</Button>
           </>}
         </View> : null}
       </ScrollView>

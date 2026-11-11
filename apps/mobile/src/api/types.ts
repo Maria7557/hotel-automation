@@ -13,6 +13,11 @@ export type DeliverySummary = {
   processedAt?: string | null;
 };
 
+export type OfferShareMessage = { offerId: string; offers: ReservationOffer[]; proposalUrl: string } & (
+  | { channel: "email"; subject: string; text: string }
+  | { channel: "whatsapp"; text: string }
+);
+
 export type HotelRequest = {
   id: string;
   reservationNumber: string;
@@ -181,7 +186,7 @@ export type MessagePreview =
   | { channel: "whatsapp"; text: string; offer: MessageOfferContext };
 
 export type TestSendResult = {
-  provider: "fake" | "gmail" | "waha";
+  provider: "fake" | "gmail" | "microsoft" | "smtp" | "waha";
   accepted: boolean;
   delivery: {
     id: string;

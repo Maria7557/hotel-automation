@@ -132,7 +132,7 @@ export function SiteIntegrationScreen({
     <KeyboardAvoidingView style={uiStyles.screen} behavior={Platform.OS === "ios" ? "padding" : undefined}>
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
         <ScreenHeader title={t("Website form")} onBack={onBack} />
-        <Text style={styles.lead}>{t("Every enquiry must include BB, HB or FB. Connect your website’s board field, or use our ready-made form.")}</Text>
+        <Text style={styles.lead}>{t("Choose which websites may send requests to your hotel account, then copy the ready-made form code.")}</Text>
         {demo ? <InlineState tone="warning">{t("Demo mode: settings and embed code are local; no API requests are made")}</InlineState> : null}
         {error ? <InlineState tone="danger">{translateLabel(error)}</InlineState> : null}
         {notice ? <InlineState tone="success">{translateLabel(notice)}</InlineState> : null}
@@ -152,10 +152,10 @@ export function SiteIntegrationScreen({
         ) : (
           <>
             <View style={styles.section}>
-              <SectionTitle>{t("Allowed websites")}</SectionTitle>
-              <Text style={styles.helper}>{t("One exact origin per line, up to 20. Enter only the scheme, domain and optional port.")}</Text>
+              <SectionTitle>{t("Websites allowed to send requests")}</SectionTitle>
+              <Text style={styles.helper}>{t("Add the address guests see in their browser. Use one website per line and include https://.")}</Text>
               <Field
-                label={t("Allowed origins")}
+                label={t("Website addresses")}
                 placeholder={"https://hotel.it\nhttps://www.hotel.it"}
                 value={originsText}
                 onChangeText={(value) => { setOriginsText(value); setError(null); setNotice(null); }}
@@ -165,13 +165,13 @@ export function SiteIntegrationScreen({
                 numberOfLines={6}
                 editable={!saving}
                 error={validationError ?? undefined}
-                helper={t("Do not include /path, ?query, #fragment or a trailing slash.")}
+                helper={t("Enter only the main website address, without pages such as /booking.")}
                 style={styles.originsField}
               />
               <View style={styles.exampleRow}>
                 <Check size={16} color={theme.colors.success} />
                 <Text style={styles.exampleGood}>https://hotel.it</Text>
-                <Text style={styles.exampleBad}>not https://hotel.it/booking</Text>
+                <Text style={styles.exampleBad}>{t("not")} https://hotel.it/booking</Text>
               </View>
               <Button icon={Check} loading={saving} disabled={!dirty} onPress={() => void save()}>
                 {dirty ? t("Save websites") : t("Websites saved")}
@@ -204,7 +204,7 @@ export function SiteIntegrationScreen({
               </View>
               {integrationMode === "adapter" ? (
                 <>
-                  <InlineState tone="success">{t("Your current form stays exactly as it is. Its original action still runs, while the adapter sends a copy of each valid enquiry to this CRM.")}</InlineState>
+                  <InlineState tone="success">{t("Form connected.")}</InlineState>
                   <View style={styles.flowCard}>
                     <FlowStep number="1" title={t("Find the form")} detail={t("Set data-form to its CSS selector, for example #booking-form.")} />
                     <FlowStep number="2" title={t("Map existing fields")} detail={t("Match each data-* selector to the field names or IDs already in the CMS.")} />
@@ -264,7 +264,7 @@ export function SiteIntegrationScreen({
                 <Text style={styles.installText}>
                   {integrationMode === "adapter"
                     ? <>{t("Add")}{" "}<Text style={styles.inlineCode}>data-hotel-inquiry-status</Text> {" "}{t("to an empty element inside the form to show sending, success and error messages. The page must also match an allowed website above.")}</>
-                    : t("The page address must match one of the origins above, or the server will reject the enquiry.")}
+                    : t("Address not allowed.")}
                 </Text>
               </View>
             </View>
