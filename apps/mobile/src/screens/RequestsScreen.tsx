@@ -48,7 +48,7 @@ export function RequestsScreen({ profile, demo, reloadVersion, onOpenProfile, on
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>("actions");
-  const [actionFilter, setActionFilter] = useState<ActionFilter>("payment");
+  const [actionFilter, setActionFilter] = useState<ActionFilter>("new");
   const [allFilter, setAllFilter] = useState<AllFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -189,7 +189,7 @@ export function RequestsScreen({ profile, demo, reloadVersion, onOpenProfile, on
     contentContainerStyle={styles.content}
     data={visibleRequests}
     keyExtractor={(item) => item.id}
-    renderItem={({ item }) => <RequestCard request={item} onOpen={() => onOpenRequest(item.id)} onOpenClient={onOpenClient}>
+    renderItem={({ item }) => <RequestCard request={item} demo={demo} onOpen={() => onOpenRequest(item.id)} onOpenClient={onOpenClient} onManualSent={() => { void latestLoad.current(true); }}>
       {viewMode === "actions" && item.status === "payment" ? <PaymentLinkSentAction busy={busyRequestId === item.id} onPress={() => void markPaymentLinkSent(item)} /> : null}
     </RequestCard>}
     ItemSeparatorComponent={() => <View style={{ height: theme.spacing[3] }} />}
@@ -248,7 +248,7 @@ function SetupPath(props: {
     { title: t("Rooms & rates"), detail: roomCount ? t("Add prices for your rooms") : t("Add your first room and its prices"), complete: roomCount > 0 && hasRates, icon: BedDouble, onPress: onOpenInventory },
     { title: t("Mail"), detail: t("Send offers from your hotel address"), complete: mailConnected, icon: Mail, onPress: onOpenConnections },
     { title: "WhatsApp", detail: t("Send offers from your hotel number"), complete: whatsappConnected, icon: MessageCircle, onPress: onOpenConnections },
-    { title: t("Website form"), detail: t("Receive enquiries from your website"), complete: profile.allowedOrigins.length > 0, icon: Code2, onPress: onOpenSiteIntegration },
+    { title: t("Website form"), detail: t("Receive website requests"), complete: profile.allowedOrigins.length > 0, icon: Code2, onPress: onOpenSiteIntegration },
   ];
   const completed = steps.filter((step) => step.complete).length;
   const progress = `${Math.round((completed / steps.length) * 100)}%` as `${number}%`;
@@ -264,7 +264,7 @@ function SetupPath(props: {
         <View style={styles.hotelAvatar}><Text style={styles.hotelAvatarText}>{profile.name.slice(0, 1).toUpperCase()}</Text></View>
         <View style={{ flex: 1 }}><Text style={styles.greeting}>{t("Welcome to")}</Text><Text style={styles.hotelName} numberOfLines={1}>{profile.name}</Text></View>
       </View>
-      <View style={styles.createAction}><NewRequestButton onPress={onCreateRequest} /><Text style={styles.createHint}>{t("Add an enquiry from any channel at any time.")}</Text></View>
+      <View style={styles.createAction}><NewRequestButton onPress={onCreateRequest} /></View>
       <View style={styles.setupIntro}>
         <Text style={styles.setupTitle}>{completed === steps.length ? t("Ready for your first request") : t("Set up your hotel")}</Text>
         <Text style={styles.setupSubtitle}>{completed === steps.length ? t("Your form and sending channels are ready.") : t("Complete these steps to receive and send offers automatically.")}</Text>
@@ -274,7 +274,7 @@ function SetupPath(props: {
     </>}
     renderItem={({ item, index }) => <SetupStep index={index + 1} {...item} />}
     ItemSeparatorComponent={() => <View style={styles.setupSeparator} />}
-    ListFooterComponent={<Text style={styles.setupFooter}>{completed === steps.length ? t("New website enquiries will appear here automatically.") : t("Tap the next unfinished step to continue.")}</Text>}
+    ListFooterComponent={<Text style={styles.setupFooter}>{completed === steps.length ? t("Website requests appear here.") : t("Choose the next step.")}</Text>}
     showsVerticalScrollIndicator={false}
   />;
 }
@@ -298,7 +298,12 @@ function DashboardHeader(props: {
   onCreateRequest: () => void;
 }) {
   const { hotelName, dashboard, connectionIssues, actionableCount, viewMode, setViewMode, actionFilter, setActionFilter, allFilter, setAllFilter, searchQuery, setSearchQuery, sort, setSort, onCreateRequest } = props;
-  const connectionNames = connectionIssues.map((connection) => connection.kind === "mail" ? t("Mail") : "WhatsApp");
+  const connectionNames = [...new Set([
+    ...connectionIssues.map((connection) => connection.kind === "mail" ? t("Mail") : "WhatsApp"),
+    ...dashboard.requests.flatMap((request) => request.status === "attention"
+      ? [request.email, request.whatsapp].flatMap((delivery, index) => delivery.status === "failed" || delivery.status === "pending" ? [index === 0 ? t("Mail") : "WhatsApp"] : [])
+      : []),
+  ])];
 
   return <View>
     <View style={styles.header}>
@@ -318,12 +323,13 @@ function DashboardHeader(props: {
         <ActionMetric selected={actionFilter === "payment"} appearance={requestStatusAppearance.confirmation} icon={CheckCircle2} count={dashboard.paymentPendingCount} label={requestStatusLabels.payment} onPress={() => setActionFilter("payment")} />
         <ActionMetric selected={actionFilter === "attention"} appearance={requestStatusAppearance.deliveryFailed} icon={AlertTriangle} count={dashboard.attentionCount} label={t("Not delivered")} onPress={() => setActionFilter("attention")} />
       </View>
-      {connectionNames.length > 0 && actionFilter === "attention" ? <View style={styles.requestAlert}><InlineState tone="danger">{t("Reconnect")}{" "}{connectionNames.join(" and ")}.</InlineState></View> : null}
+      <Text style={styles.metricHelp}>{t("New requests are waiting to be sent. Not delivered means automatic sending did not complete in time.")}</Text>
+      {connectionNames.length > 0 && actionFilter === "attention" ? <View style={styles.requestAlert}><InlineState tone="danger">{t("Check sending channels:")}{" "}{connectionNames.join(" and ")}.</InlineState></View> : null}
     </> : <>
       <View style={styles.titleBlock}><Text style={styles.pageTitle}>{t("All incoming")}</Text><Text style={styles.pageSubtitle}>{dashboard.totalCount} {" "}{t("requests received today.")}</Text></View>
       <View style={styles.searchField}>
         <Search size={20} color={theme.colors.textMuted} />
-        <TextInput accessibilityLabel={t("Search requests by reservation number, guest, room or board")} value={searchQuery} onChangeText={setSearchQuery} maxLength={160} placeholder={t("Search #number, guest, room or board")} placeholderTextColor={theme.colors.textMuted} style={styles.searchInput} returnKeyType="search" />
+        <TextInput accessibilityLabel={t("Search requests by request number, guest, room or board")} value={searchQuery} onChangeText={setSearchQuery} maxLength={160} placeholder={t("Search #number, guest, room or board")} placeholderTextColor={theme.colors.textMuted} style={styles.searchInput} returnKeyType="search" />
         {searchQuery ? <Pressable accessibilityRole="button" accessibilityLabel={t("Clear search")} onPress={() => setSearchQuery("")} style={styles.clearSearch}><X size={theme.controls.actionIconSize} color={theme.colors.textMuted} /></Pressable> : null}
       </View>
       <View style={styles.filters}>
@@ -440,7 +446,8 @@ const styles = StyleSheet.create({
   modeLabel: { ...theme.typography.bodySmallMedium, color: theme.colors.textMuted }, modeLabelSelected: { color: theme.colors.text },
   modeCount: { minWidth: 25, height: 25, borderRadius: theme.radii.pill, paddingHorizontal: 7, alignItems: "center", justifyContent: "center", backgroundColor: theme.colors.border }, modeCountSelected: { backgroundColor: theme.colors.action }, modeCountText: { ...theme.typography.captionMedium, color: theme.colors.textSecondary }, modeCountTextSelected: { color: theme.colors.onAction },
   titleBlock: { marginTop: theme.spacing[6], marginBottom: theme.spacing[4], gap: 3 }, pageTitle: { ...theme.typography.h2, color: theme.colors.text }, pageSubtitle: { ...theme.typography.bodySmall, color: theme.colors.textMuted },
-  actionMetrics: { flexDirection: "row", flexWrap: "wrap", gap: theme.spacing[3], marginTop: theme.spacing[5], marginBottom: theme.spacing[3] },
+  actionMetrics: { flexDirection: "row", flexWrap: "wrap", gap: theme.spacing[3], marginTop: theme.spacing[5], marginBottom: theme.spacing[2] },
+  metricHelp: { ...theme.typography.caption, color: theme.colors.textMuted, marginBottom: theme.spacing[3] },
   actionMetric: { flex: 1, minWidth: 140, minHeight: 92, padding: theme.spacing[3], borderRadius: theme.radii.lg, backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border }, metricTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: theme.spacing[2] }, metricCount: { ...theme.typography.h2 }, metricLabel: { ...theme.typography.bodySmallMedium, color: theme.colors.text },
   listHeading: { marginTop: theme.spacing[5], marginBottom: theme.spacing[3], flexDirection: "row", flexWrap: "wrap", gap: theme.spacing[2], alignItems: "center", justifyContent: "space-between" }, listTitle: { ...theme.typography.h3, color: theme.colors.text }, shownCount: { ...theme.typography.captionMedium, color: theme.colors.textMuted },
   sortControls: { flexDirection: "row", flexWrap: "wrap", gap: theme.controls.actionGap },

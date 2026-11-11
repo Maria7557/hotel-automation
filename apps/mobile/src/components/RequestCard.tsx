@@ -1,12 +1,12 @@
 import { t, translateLabel, locale } from "../i18n";
-import { useEffect, useState, type ReactNode } from "react";
-import { AppState, Linking, Pressable, StyleSheet, Text, View } from "react-native";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { ActivityIndicator, AppState, Linking, Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
-import { ArrowRight, ArrowUpRight, Baby, BedDouble, Check, ChevronDown, ChevronUp, CircleAlert, Clock, Copy, CreditCard, Inbox, Info, Languages, Mail, MessageCircle, Minus, UserRound, Users, type LucideIcon } from "lucide-react-native";
+import { ArrowRight, ArrowUpRight, Baby, BedDouble, Check, ChevronDown, ChevronUp, CircleAlert, Clock, Copy, CreditCard, Inbox, Info, Languages, Mail, MessageCircle, Minus, UserRound, Users, X, type LucideIcon } from "lucide-react-native";
 import { theme, type StatusColors } from "@hotel/design";
-import type { DeliverySummary, HotelRequest } from "@/api/types";
+import { apiClient } from "@/api/client";
+import type { DeliverySummary, HotelRequest, OfferShareMessage } from "@/api/types";
 import { DetailLink } from "./DetailLink";
-import { NavigationLink } from "./NavigationLink";
 import { BoardBadge } from "./BoardBadge";
 import { StatusPill } from "./StatusPill";
 import { Tooltip } from "./Tooltip";
@@ -18,13 +18,15 @@ import { requestSourceLabels } from "../requests/sources";
 
 type Props = {
   request: HotelRequest;
+  demo?: boolean;
   onOpen?: () => void;
   onOpenClient: (clientId: string) => void;
   variant?: "card" | "page";
+  onManualSent?: (request: HotelRequest) => void;
   children?: ReactNode;
 };
 
-export function RequestCard({ request, onOpen, onOpenClient, variant = "card", children }: Props) {
+export function RequestCard({ request, demo = false, onOpen, onOpenClient, variant = "card", onManualSent, children }: Props) {
   const [expanded, setExpanded] = useState(false);
   const isPage = variant === "page";
   const { status, clientId } = useRequestClient(request.id);
@@ -52,9 +54,9 @@ export function RequestCard({ request, onOpen, onOpenClient, variant = "card", c
   </View> : null;
   return <View style={isPage ? styles.page : [styles.card, { borderLeftColor: appearance.color }]}>
     {/* A sibling link covers the card. Controls above it stay independent, without nested links. */}
-    {onOpen ? <DetailLink kind="reservation" id={request.id} label={t("Reservation #{{v0}} details", { v0: request.reservationNumber })} onOpen={onOpen} style={({ pressed }) => [StyleSheet.absoluteFill, styles.cardLink, pressed && styles.cardLinkActive]}>{null}</DetailLink> : null}
+    {onOpen ? <DetailLink kind="reservation" id={request.id} label={t("Request #{{v0}} details", { v0: request.reservationNumber })} onOpen={onOpen} style={({ pressed }) => [StyleSheet.absoluteFill, styles.cardLink, pressed && styles.cardLinkActive]}>{null}</DetailLink> : null}
     <View pointerEvents="box-none" style={isPage ? styles.pageContent : styles.content}>
-      {isPage ? <View style={styles.sectionHeading}><BedDouble size={theme.controls.actionIconSize} style={actionStyles.icon} color={theme.colors.textMuted} /><Text selectable accessibilityRole="header" style={styles.sectionTitle}>{t("Reservation")}</Text></View> : null}
+      {isPage ? <View style={styles.sectionHeading}><BedDouble size={theme.controls.actionIconSize} style={actionStyles.icon} color={theme.colors.textMuted} /><Text selectable accessibilityRole="header" style={styles.sectionTitle}>{t("Request")}</Text></View> : null}
       <View pointerEvents="box-none" style={styles.summary}>
         <View pointerEvents={textPointerEvents} style={request.mealPlan ? styles.boardSlot : undefined}><BoardBadge mealPlan={request.mealPlan} selectable={selectable} /></View>
         <View pointerEvents="box-none" style={styles.stayDetails}>
@@ -66,8 +68,8 @@ export function RequestCard({ request, onOpen, onOpenClient, variant = "card", c
             </View>
             {isPage || request.occupancy.childAges.length > 0 ? <Text selectable={selectable} style={styles.text}>{occupancy.breakdown}</Text> : null}
           </View>
-          <CopyValue value={request.reservationNumber} label={t("Reservation number")} display={`#${request.reservationNumber}`} selectable={selectable} />
-          {isPage ? <StatusPill label={translateLabel(request.statusLabel)} appearance={appearance} selectable={selectable} /> : null}
+          <CopyValue value={request.reservationNumber} label={t("Request number")} display={`#${request.reservationNumber}`} selectable={selectable} />
+          {isPage ? <View style={styles.statusSummary}><Text selectable style={styles.statusLabel}>{t("Status")}</Text><StatusPill label={translateLabel(request.statusLabel)} appearance={appearance} selectable={selectable} /></View> : null}
           {wait ? <WaitPill since={wait.since} description={wait.description} selectable={selectable} /> : null}
           {!isPage ? <RequestStatusDot label={translateLabel(request.statusLabel)} description={requestStatusHelp(request)} appearance={appearance} /> : null}
         </View>
@@ -102,8 +104,8 @@ export function RequestCard({ request, onOpen, onOpenClient, variant = "card", c
         </View>
       </View>
       {isPage || expanded ? <View pointerEvents="box-none" style={[styles.contacts, isPage && styles.pageContacts, isPage && styles.detailsInset]}>
-        <ContactDetail channel="email" detail={request.email} selectable={selectable} />
-        <ContactDetail channel="whatsapp" detail={request.whatsapp} selectable={selectable} />
+        <ContactDetail channel="email" detail={request.email} selectable={selectable} offerContext={request.currentOfferId ? { inquiryId: request.id, demo, language: request.locale?.toLowerCase().startsWith("en") ? "en" : "it", offers: request.offers ?? [], onManualSent } : undefined} />
+        <ContactDetail channel="whatsapp" detail={request.whatsapp} selectable={selectable} offerContext={request.currentOfferId ? { inquiryId: request.id, demo, language: request.locale?.toLowerCase().startsWith("en") ? "en" : "it", offers: request.offers ?? [], onManualSent } : undefined} />
       </View> : null}
       {additional}
       {children}
@@ -187,16 +189,24 @@ export function CopyValue({ value, label, display = value, iconOnly = false, sel
   </View>;
 }
 
-export function ContactDetail({ channel, detail, showDeliveryStatus = true, selectable = false }: { channel: "email" | "whatsapp"; detail: DeliverySummary; showDeliveryStatus?: boolean; selectable?: boolean }) {
+type OfferContext = { inquiryId: string; demo: boolean; language: "en" | "it"; offers: NonNullable<HotelRequest["offers"]>; onManualSent?: ((request: HotelRequest) => void) | undefined };
+
+export function ContactDetail({ channel, detail, showDeliveryStatus = true, selectable = false, offerContext }: { channel: "email" | "whatsapp"; detail: DeliverySummary; showDeliveryStatus?: boolean; selectable?: boolean; offerContext?: OfferContext }) {
   const [error, setError] = useState<string | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const label = channel === "email" ? t("Email") : "WhatsApp";
   const Icon = channel === "email" ? Mail : MessageCircle;
   const url = contactUrl(channel, detail.recipient);
   const send = async () => {
     if (!url) return;
     setError(null);
-    try { await Linking.openURL(url); }
-    catch { setError(t("Could not open {{v0}}. Copy the contact and try again.", { v0: label })); }
+    if (offerContext) {
+      setPreviewOpen(true);
+      return;
+    }
+    try {
+      await Linking.openURL(url);
+    } catch { setError(t("Could not open {{v0}}. Copy the contact and try again.", { v0: label })); }
   };
   const delivery = {
     sent: { label: t("Sent"), Icon: Check, color: theme.colors.success },
@@ -222,7 +232,7 @@ export function ContactDetail({ channel, detail, showDeliveryStatus = true, sele
         <View pointerEvents="none" style={actionStyles.icon}><Icon size={theme.controls.actionIconSize} color={theme.colors.textMuted} /></View>
         {detail.recipient ? <CopyValue value={detail.recipient} label={translateLabel(label)} selectable={selectable} /> : <View pointerEvents={selectable ? "auto" : "none"}><Text selectable={selectable} style={styles.caption}>{t("No")}{" "}{label.toLowerCase()} {" "}{t("provided")}</Text></View>}
       </View>
-      {url ? <NavigationLink href={url} accessibilityLabel={t("Send {{v0}} to {{v1}}", { v0: label, v1: detail.recipient ?? "" })} onPress={() => void send()} style={styles.send}><Text style={styles.link}>{t("Send")}</Text><ArrowUpRight size={theme.controls.actionIconSize} style={actionStyles.icon} color={theme.colors.action} /></NavigationLink> : null}
+      {url ? <Pressable accessibilityRole="button" accessibilityLabel={offerContext ? t("Preview offer for {{v0}}", { v0: label }) : t("Open {{v0}} for {{v1}}", { v0: label, v1: detail.recipient ?? "" })} onPress={(event) => { event.stopPropagation(); void send(); }} style={({ pressed }) => [styles.send, pressed && styles.pressed]}><Text style={styles.link}>{offerContext ? t("Preview") : label}</Text><ArrowUpRight size={theme.controls.actionIconSize} style={actionStyles.icon} color={theme.colors.action} /></Pressable> : null}
     </View>
     {showDeliveryStatus ? <View pointerEvents="box-none" style={styles.deliveryStatus}>
       <Tooltip content={deliveryHelp}>{({ triggerProps, visible, toggle }) => <Pressable
@@ -239,7 +249,80 @@ export function ContactDetail({ channel, detail, showDeliveryStatus = true, sele
       </Pressable>}</Tooltip>
     </View> : null}
     {error ? <Text selectable={selectable} pointerEvents={selectable ? "auto" : "none"} accessibilityRole="alert" style={styles.error}>{translateLabel(error)}</Text> : null}
+    {previewOpen && offerContext && detail.recipient ? <OfferSharePreview channel={channel} recipient={detail.recipient} context={offerContext} onClose={() => setPreviewOpen(false)} /> : null}
   </View>;
+}
+
+function OfferSharePreview({ channel, recipient, context, onClose }: { channel: "email" | "whatsapp"; recipient: string; context: OfferContext; onClose: () => void }) {
+  const [language, setLanguage] = useState<"en" | "it">(context.language);
+  const [message, setMessage] = useState<OfferShareMessage | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [opening, setOpening] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const sendKey = useRef<string | null>(null);
+  useEffect(() => {
+    let active = true;
+    setLoading(true); setError(null);
+    void apiClient.getOfferShareMessage(context.inquiryId, channel, { demo: context.demo, language })
+      .then((value) => { if (active) setMessage(value); })
+      .catch(() => { if (active) { setMessage(null); setError(t("Preview unavailable")); } })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [channel, context.demo, context.inquiryId, language]);
+  const open = async () => {
+    if (!message) return;
+    setOpening(true); setError(null);
+    try {
+      const destination = contactUrl(channel, recipient, { text: message.text, ...(message.channel === "email" ? { subject: message.subject } : {}) });
+      if (!destination) throw new Error("Invalid contact");
+      await Linking.openURL(destination);
+      sendKey.current = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
+      setConfirmOpen(true);
+    } catch { setError(t("Could not open {{v0}}. Copy the contact and try again.", { v0: channel === "email" ? t("Email") : "WhatsApp" })); }
+    finally { setOpening(false); }
+  };
+  const confirmSent = async () => {
+    if (!sendKey.current) return;
+    setConfirming(true); setError(null);
+    try {
+      const updated = await apiClient.markManualOfferSent(context.inquiryId, channel, language, sendKey.current, { demo: context.demo });
+      context.onManualSent?.(updated);
+      onClose();
+    } catch { setError(t("Could not mark sent. Try again.")); }
+    finally { setConfirming(false); }
+  };
+  if (confirmOpen) return <Modal visible transparent animationType="fade" onRequestClose={() => setConfirmOpen(false)}>
+    <View style={styles.previewBackdrop}><View style={styles.confirmSheet}>
+      <Text accessibilityRole="header" style={styles.previewTitle}>{t("Sent?")}</Text>
+      {error ? <InlinePreviewError>{error}</InlinePreviewError> : null}
+      <View style={styles.confirmActions}>
+        <Pressable accessibilityRole="button" disabled={confirming} onPress={() => { setConfirmOpen(false); setError(null); }} style={({ pressed }) => [styles.confirmSecondary, pressed && styles.pressed, confirming && styles.disabled]}><Text style={styles.confirmSecondaryText}>{t("Not yet")}</Text></Pressable>
+        <Pressable accessibilityRole="button" disabled={confirming} onPress={() => void confirmSent()} style={({ pressed }) => [styles.confirmPrimary, pressed && styles.pressed, confirming && styles.disabled]}>{confirming ? <ActivityIndicator color={theme.colors.onAction} /> : <Text style={styles.previewSendText}>{t("Yes")}</Text>}</Pressable>
+      </View>
+    </View></View>
+  </Modal>;
+  return <Modal visible transparent animationType="fade" onRequestClose={onClose}>
+    <View style={styles.previewBackdrop}><View style={styles.previewSheet}>
+      <View style={styles.previewHeader}><Text accessibilityRole="header" style={styles.previewTitle}>{t("Send offer")}</Text><Pressable accessibilityRole="button" accessibilityLabel={t("Close")} onPress={onClose} style={actionStyles.iconButton}><X size={20} color={theme.colors.textMuted} /></Pressable></View>
+      <ScrollView contentContainerStyle={styles.previewContent}>
+        <Text style={styles.previewLabel}>{t("Offer")}</Text>
+        {context.offers[0] ? <Text style={styles.caption}>{formatStay(context.offers[0].checkIn, context.offers[0].checkOut)}</Text> : null}
+        {context.offers.map((offer) => <View key={offer.id} style={styles.previewOffer}><Text style={styles.previewOfferTitle}>{offer.roomName}</Text><Text style={styles.caption}>{offer.mealPlan} · {new Intl.NumberFormat(locale(), { style: "currency", currency: offer.currency }).format(offer.totalCents / 100)}</Text></View>)}
+        <Text style={styles.previewLabel}>{t("Language")}</Text>
+        <View style={styles.languageRow}>{([['it', 'Italiano'], ['en', 'English']] as const).map(([value, label]) => <Pressable key={value} accessibilityRole="radio" accessibilityState={{ checked: language === value }} onPress={() => setLanguage(value)} style={[styles.languageChoice, language === value && styles.languageChoiceActive]}><Text style={[styles.languageText, language === value && styles.languageTextActive]}>{label}</Text></Pressable>)}</View>
+        <Text style={styles.previewLabel}>{t("Message")}</Text>
+        {loading ? <ActivityIndicator color={theme.colors.action} /> : message ? <View style={styles.messagePreview}>{message.channel === "email" ? <Text style={styles.previewOfferTitle}>{message.subject}</Text> : null}<Text selectable style={styles.previewMessage}>{message.text}</Text></View> : null}
+        {error ? <InlinePreviewError>{error}</InlinePreviewError> : null}
+      </ScrollView>
+      <View style={styles.previewFooter}><Pressable accessibilityRole="button" disabled={!message || opening || loading} onPress={() => void open()} style={({ pressed }) => [styles.previewSend, pressed && styles.pressed, (!message || opening || loading) && styles.disabled]}>{opening ? <ActivityIndicator color={theme.colors.onAction} /> : <><Text style={styles.previewSendText}>{channel === "email" ? t("Email") : "WhatsApp"}</Text><ArrowUpRight size={18} color={theme.colors.onAction} /></>}</Pressable></View>
+    </View></View>
+  </Modal>;
+}
+
+function InlinePreviewError({ children }: { children: string }) {
+  return <Text accessibilityRole="alert" style={styles.error}>{translateLabel(children)}</Text>;
 }
 
 const styles = StyleSheet.create({
@@ -253,6 +336,7 @@ const styles = StyleSheet.create({
   summary: { minHeight: theme.controls.actionSize, flexDirection: "row", alignItems: "flex-start", gap: theme.controls.actionGap },
   boardSlot: { width: theme.controls.actionSize, height: theme.controls.actionSize, flexShrink: 0, alignItems: "center", justifyContent: "center" },
   stayDetails: { ...actionStyles.row, flex: 1 }, stayCopy: { minHeight: theme.controls.actionSize, flexDirection: "row", flexWrap: "wrap", alignItems: "center", alignContent: "center", columnGap: theme.controls.helperGap, flexShrink: 1 },
+  statusSummary: { flexDirection: "row", alignItems: "center", gap: theme.spacing[2] }, statusLabel: { ...theme.typography.caption, color: theme.colors.textMuted },
   peopleCount: { ...actionStyles.associated, flexShrink: 0 },
   statusDotTrigger: { minHeight: theme.controls.helperSize, alignItems: "center", justifyContent: "center" },
   statusDot: { width: theme.spacing[2], height: theme.spacing[2], borderWidth: 1, borderRadius: theme.radii.pill },
@@ -275,5 +359,19 @@ const styles = StyleSheet.create({
   additional: { borderTopWidth: 1, borderTopColor: theme.colors.border, marginTop: theme.spacing[4], paddingTop: theme.spacing[4], gap: theme.spacing[1] },
   additionalDetails: { gap: theme.spacing[1] }, additionalRow: { ...actionStyles.associated, minHeight: theme.controls.helperSize }, additionalHint: { alignSelf: "flex-start", maxWidth: "100%" },
   caption: { ...theme.typography.caption, color: theme.colors.textMuted, flexShrink: 1 }, error: { ...theme.typography.caption, color: theme.colors.danger, flexShrink: 1 }, nextAction: { ...theme.typography.bodySmallMedium, color: theme.colors.textSecondary, flexShrink: 1 },
-  link: { ...actionStyles.label, color: theme.colors.action }, pressed: { opacity: 0.65 },
+  link: { ...actionStyles.label, color: theme.colors.action }, pressed: { opacity: 0.65 }, disabled: { opacity: 0.45 },
+  previewBackdrop: { flex: 1, backgroundColor: "rgba(20, 30, 50, 0.35)", alignItems: "center", justifyContent: "center", padding: theme.spacing[4] },
+  previewSheet: { width: "100%", maxWidth: 560, maxHeight: "92%", backgroundColor: theme.colors.surface, borderRadius: theme.radii.lg, overflow: "hidden" },
+  previewHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: theme.controls.contentInset, borderBottomWidth: 1, borderBottomColor: theme.colors.border },
+  previewTitle: { ...theme.typography.h3, color: theme.colors.text }, previewContent: { padding: theme.controls.contentInset, gap: theme.spacing[3] },
+  previewLabel: { ...theme.typography.captionMedium, color: theme.colors.textMuted, textTransform: "uppercase" },
+  previewOffer: { padding: theme.spacing[3], borderRadius: theme.radii.md, backgroundColor: theme.colors.surfaceMuted, gap: theme.spacing[1] }, previewOfferTitle: { ...theme.typography.bodySmallMedium, color: theme.colors.text },
+  languageRow: { flexDirection: "row", gap: theme.spacing[2] }, languageChoice: { minHeight: theme.controls.minTarget, paddingHorizontal: theme.spacing[4], alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: theme.colors.border, borderRadius: theme.radii.pill }, languageChoiceActive: { borderColor: theme.colors.action, backgroundColor: theme.colors.actionTint }, languageText: { ...theme.typography.bodySmallMedium, color: theme.colors.textSecondary }, languageTextActive: { color: theme.colors.action },
+  messagePreview: { padding: theme.spacing[4], borderWidth: 1, borderColor: theme.colors.border, borderRadius: theme.radii.md, gap: theme.spacing[2], backgroundColor: theme.colors.surface }, previewMessage: { ...theme.typography.bodySmall, color: theme.colors.text, lineHeight: 21 },
+  previewFooter: { padding: theme.spacing[4], borderTopWidth: 1, borderTopColor: theme.colors.border }, previewSend: { minHeight: theme.controls.minTarget, borderRadius: theme.radii.md, backgroundColor: theme.colors.action, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: theme.spacing[2] }, previewSendText: { ...theme.typography.button, color: theme.colors.onAction },
+  confirmSheet: { width: "100%", maxWidth: 360, backgroundColor: theme.colors.surface, borderRadius: theme.radii.lg, padding: theme.controls.contentInset, gap: theme.spacing[5] },
+  confirmActions: { flexDirection: "row", gap: theme.spacing[2] },
+  confirmSecondary: { flex: 1, minHeight: theme.controls.minTarget, borderRadius: theme.radii.md, borderWidth: 1, borderColor: theme.colors.border, alignItems: "center", justifyContent: "center" },
+  confirmSecondaryText: { ...theme.typography.button, color: theme.colors.text },
+  confirmPrimary: { flex: 1, minHeight: theme.controls.minTarget, borderRadius: theme.radii.md, backgroundColor: theme.colors.action, alignItems: "center", justifyContent: "center" },
 });

@@ -25,7 +25,7 @@ export function ReservationScreen({ id, demo, onBack, onOpenClient, onOpenReques
     let active = true;
     setLoading(true); setError(null);
     void apiClient.getRequest(id, { demo }).then((value) => { if (active) setRequest(value); })
-      .catch((e) => { if (active) setError(e instanceof Error ? e.message : t("Could not load reservation.")); })
+      .catch((e) => { if (active) setError(e instanceof Error ? e.message : t("Could not load request.")); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [id, demo, reload]);
@@ -47,11 +47,11 @@ export function ReservationScreen({ id, demo, onBack, onOpenClient, onOpenReques
     finally { setSaving(false); }
   };
   return <><ScrollView style={uiStyles.screen} contentContainerStyle={styles.content} refreshControl={<RefreshControl refreshing={loading && !!request} onRefresh={() => setReload((value) => value + 1)} tintColor={theme.colors.action} />}>
-    <View style={styles.heading}><Pressable accessibilityRole="button" accessibilityLabel={t("Back")} onPress={onBack} style={styles.back}><ArrowLeft size={theme.controls.actionIconSize} color={theme.colors.text} /></Pressable><Text selectable accessibilityRole="header" style={styles.title}>{t("Reservation")}{request ? ` #${request.reservationNumber}` : ""}</Text>{request ? <View style={styles.actions}><Button variant="create" icon={Plus} disabled={loading || saving || !!request.acceptedAt || request.status === "payment" || request.status === "completed"} onPress={() => setCreateOfferSignal((value) => value + 1)}>{(request.offers?.length ?? 0) >= 6 ? t("Edit offers") : t("Create offer")}</Button><Button variant="tertiary" icon={CopyPlus} disabled={loading || saving} onPress={() => setDuplicating(true)}>{t("Duplicate")}</Button></View> : null}</View>
+    <View style={styles.heading}><Pressable accessibilityRole="button" accessibilityLabel={t("Back")} onPress={onBack} style={styles.back}><ArrowLeft size={theme.controls.actionIconSize} color={theme.colors.text} /></Pressable><Text selectable accessibilityRole="header" style={styles.title}>{t("Request")}{request ? ` #${request.reservationNumber}` : ""}</Text>{request ? <View style={styles.actions}><Button variant="create" icon={Plus} disabled={loading || saving || !!request.acceptedAt || request.status === "payment" || request.status === "completed"} onPress={() => setCreateOfferSignal((value) => value + 1)}>{request.offers?.length ? t("Edit offers") : t("Create offer")}</Button><Button variant="tertiary" icon={CopyPlus} disabled={loading || saving} onPress={() => setDuplicating(true)}>{t("Duplicate")}</Button></View> : null}</View>
     {loading && !request ? <ActivityIndicator color={theme.colors.action} /> : null}
     {error ? <InlineState tone="danger">{translateLabel(error)}</InlineState> : null}
-    {!loading && !request ? <><EmptyState title={t("Reservation unavailable")} description={t("Try again or go back to the request list.")} /><Button onPress={() => setReload((value) => value + 1)}>{t("Try again")}</Button></> : null}
-    {request ? <RequestCard request={request} onOpenClient={onOpenClient} variant="page">{request.status === "payment" ? <PaymentLinkSentAction busy={saving} onPress={() => void markSent()} /> : null}</RequestCard> : null}
+    {!loading && !request ? <><EmptyState title={t("Request unavailable")} description={t("Try again or go back to the request list.")} /><Button onPress={() => setReload((value) => value + 1)}>{t("Try again")}</Button></> : null}
+    {request ? <RequestCard request={request} demo={demo} onOpenClient={onOpenClient} variant="page" onManualSent={(updated) => { setRequest(updated); onChanged(); }}>{request.status === "payment" ? <PaymentLinkSentAction busy={saving} onPress={() => void markSent()} /> : null}</RequestCard> : null}
     {request ? <ReservationOffers request={request} demo={demo} createSignal={createOfferSignal} onSent={(updated) => { setRequest(updated); onChanged(); }} /> : null}
   </ScrollView>{duplicating && request ? <ManualRequestModal demo={demo} initialRequest={request} onClose={() => setDuplicating(false)} onCreated={(result) => { setDuplicating(false); onChanged(); onOpenRequest(result.inquiryId); }} /> : null}</>;
 }

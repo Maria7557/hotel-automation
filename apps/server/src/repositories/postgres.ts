@@ -40,6 +40,7 @@ import type {
   InquiryRecord,
   MessageSettings,
   MessageSettingsUpdate,
+  ManualOfferSentCreate,
   NotificationPreferences,
   NotificationRepository,
   OfferRecord,
@@ -396,6 +397,11 @@ class PostgresAutomationRepository implements AutomationRepository {
     return row?.settings ?? null;
   }
 
+  async findMessageSettingsForHotel(hotelId: string): Promise<MessageSettings | null> {
+    const [row] = await this.db.select().from(hotelMessageSettings).where(eq(hotelMessageSettings.hotelId, hotelId)).limit(1);
+    return row ? mapMessageSettings(row) : null;
+  }
+
   async saveOfferSettingsForUser(userId: string, settings: OfferSettings): Promise<OfferSettings | null> {
     const [membership] = await this.db.select({ hotelId: hotels.id }).from(hotelMembers)
       .innerJoin(hotels, and(eq(hotels.id, hotelMembers.hotelId), isNull(hotels.deletedAt)))
@@ -606,6 +612,61 @@ class PostgresAutomationRepository implements AutomationRepository {
       .where(and(eq(inquiries.id, inquiryId), eq(inquiries.hotelId, existing.hotelId), isNull(inquiries.closedAt)))
       .returning();
     return updated[0] ? mapInquiry(updated[0]) : mapInquiry({ ...existing, closedAt: now, updatedAt: now });
+  }
+
+  async recordManualOfferSentForUser(input: ManualOfferSentCreate): Promise<DeliveryRecord | null> {
+    return this.db.transaction(async (transaction) => {
+      const [row] = await transaction
+        .select({ inquiry: inquiries, offer: offerVersions })
+        .from(inquiries)
+        .innerJoin(hotelMembers, and(eq(hotelMembers.hotelId, inquiries.hotelId), eq(hotelMembers.userId, input.userId)))
+        .innerJoin(offerVersions, eq(offerVersions.id, inquiries.currentOfferId))
+        .where(eq(inquiries.id, input.inquiryId))
+        .for("update", { of: inquiries });
+      if (!row) return null;
+
+      const storageKey = `manual:${input.idempotencyKey}`;
+      const [existing] = await transaction.select().from(deliveries)
+        .where(and(eq(deliveries.hotelId, row.inquiry.hotelId), eq(deliveries.idempotencyKey, storageKey)))
+        .limit(1);
+      if (existing) return mapDelivery(existing);
+
+      if (row.offer.state !== "active" || row.offer.expiresAt <= input.now || row.inquiry.closedAt) return null;
+      const recipient = input.channel === "email" ? row.inquiry.guestEmail : row.inquiry.guestPhone;
+      if (!recipient) return null;
+
+      await transaction.update(deliveries).set({ state: "cancelled", updatedAt: input.now })
+        .where(and(
+          eq(deliveries.offerVersionId, row.offer.id),
+          eq(deliveries.channel, input.channel),
+          eq(deliveries.kind, "offer"),
+          eq(deliveries.state, "scheduled"),
+        ));
+      const [created] = await transaction.insert(deliveries).values({
+        hotelId: row.inquiry.hotelId,
+        inquiryId: row.inquiry.id,
+        offerVersionId: row.offer.id,
+        kind: "offer",
+        channel: input.channel,
+        state: "provider_accepted",
+        idempotencyKey: storageKey,
+        recipient,
+        payload: {
+          schemaVersion: 1,
+          source: "manual",
+          actorUserId: input.userId,
+          confirmedAt: input.now.toISOString(),
+          language: input.language,
+        },
+        attemptCount: 0,
+        nextAttemptAt: input.now,
+        providerMessageId: null,
+        lastErrorCode: null,
+        lastErrorMessage: null,
+        processedAt: input.now,
+      }).returning();
+      return created ? mapDelivery(created) : null;
+    });
   }
 
   async dashboardPageForUser(userId: string, query: DashboardQuery): Promise<DashboardPageFacts | null> {

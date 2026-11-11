@@ -31,11 +31,19 @@ export function formatOccupancy(request: Pick<HotelRequest, "checkIn" | "checkOu
   return `${summary} ${breakdown}`;
 }
 
-export function contactUrl(channel: "email" | "whatsapp", recipient?: string): string | null {
+export function contactUrl(channel: "email" | "whatsapp", recipient?: string, message?: { text: string; subject?: string }): string | null {
   if (!recipient) return null;
-  if (channel === "email") return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient) ? `mailto:${encodeURIComponent(recipient)}` : null;
+  if (channel === "email") {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) return null;
+    const query = message ? `?${[
+      ...(message.subject ? [`subject=${encodeURIComponent(message.subject)}`] : []),
+      `body=${encodeURIComponent(message.text)}`,
+    ].join("&")}` : "";
+    return `mailto:${encodeURIComponent(recipient)}${query}`;
+  }
   const digits = recipient.replace(/[\s().-]/g, "").replace(/^00/, "+");
-  return /^\+[1-9]\d{6,14}$/.test(digits) ? `https://wa.me/${digits.slice(1)}` : null;
+  if (!/^\+[1-9]\d{6,14}$/.test(digits)) return null;
+  return `https://wa.me/${digits.slice(1)}${message ? `?text=${encodeURIComponent(message.text)}` : ""}`;
 }
 
 export function formatTimestamp(value: string): string {

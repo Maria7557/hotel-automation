@@ -80,9 +80,13 @@ export function InquiryFormScreen({ profile, demo, onBack, onSubmitted, onOpenRe
       scroll.current?.scrollTo({ y: 0, animated: true });
     } catch (cause) {
       if (cause instanceof ApiError && cause.code === "VALIDATION_ERROR" && Array.isArray(cause.details)) {
-        setErrors(Object.fromEntries(cause.details.map((issue: { path: string; message: string }) => [issue.path.split(".").slice(0, 2).join("."), issue.message])));
+        const nextErrors = Object.fromEntries(cause.details.map((issue: { path: string; message: string }) => [issue.path.split(".").slice(0, 2).join("."), issue.message]));
+        setErrors(nextErrors);
+        setError(null);
+        scroll.current?.scrollTo({ y: 0, animated: true });
+      } else {
+        setError(cause instanceof ApiError ? cause.message : t("Could not send the request. Please try again."));
       }
-      setError(cause instanceof ApiError ? cause.message : t("Could not send the request. Please try again."));
     } finally {
       submitting.current = false;
       setSaving(false);
@@ -105,11 +109,11 @@ export function InquiryFormScreen({ profile, demo, onBack, onSubmitted, onOpenRe
         <View style={styles.intro}><Text accessibilityRole="header" style={uiStyles.h1}>{t("Request availability")}</Text><Text style={styles.subtitle}>{profile.name}</Text></View>
         {demo ? <InlineState tone="warning">{t("Demo mode: requests stay in this preview and no messages are sent.")}</InlineState> : null}
         {created ? <View style={styles.section}>
-          <InlineState tone="success">{t("Request sent. Reservation #")}{created.reservationNumber}.{created.attentionReason === "manual_review" ? t(" Your message will be reviewed before an offer is sent.") : ""}</InlineState>
+          <InlineState tone="success">{t("Request #")}{created.reservationNumber} · {t("Sent")}</InlineState>
           <Button onPress={() => onOpenRequest(created.inquiryId)}>{t("View request")}</Button>
           <Button variant="secondary" onPress={reset}>{t("Send another request")}</Button>
         </View> : <>
-          {Object.keys(errors).length ? <InlineState tone="danger">{t("Check the highlighted fields.")}</InlineState> : null}
+          {Object.keys(errors).length ? <InlineState tone="danger">{inquiryErrorSummary(errors)}</InlineState> : null}
           <View pointerEvents={saving ? "none" : "auto"} style={styles.fields}>
             <View style={styles.section}>
               <SectionTitle>{t("Guest details")}</SectionTitle>
@@ -137,6 +141,16 @@ export function InquiryFormScreen({ profile, demo, onBack, onSubmitted, onOpenRe
       </View>
     </ScrollView>
   </KeyboardAvoidingView>;
+}
+
+function inquiryErrorSummary(errors: Record<string, string>): string {
+  const [key, message] = Object.entries(errors)[0] ?? [];
+  if (!key || !message) return t("Check the highlighted fields.");
+  const labels: Record<string, string> = {
+    "guest.name": t("Full name"), "guest.email": t("Email"), "guest.phone": t("Phone / WhatsApp"), "guest.language": t("Guest language"),
+    checkIn: t("Check-in"), checkOut: t("Check-out"), "occupancy.adults": t("Adults"), "occupancy.childAges": t("Child ages"), mealPlan: t("Board basis"), note: t("Message"),
+  };
+  return t("{{v0}}: {{v1}}", { v0: labels[key] ?? key, v1: translateLabel(message) as string });
 }
 
 const styles = StyleSheet.create({

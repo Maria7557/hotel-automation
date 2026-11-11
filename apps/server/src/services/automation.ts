@@ -7,7 +7,7 @@ import { quoteReservationOffer } from "./reservation-offer-pricing.js";
 
 import { toDomainHotel, toDomainInquiry, toDomainRatePeriod, toDomainRoom } from "../adapters/domain.js";
 import { errors } from "../lib/errors.js";
-import { createPublicToken, hashPublicToken, sealPrivateValue } from "../lib/public-token.js";
+import { createPublicToken, hashPublicToken, sealPrivateValue, unsealPrivateValue } from "../lib/public-token.js";
 import { createTestOfferToken, verifyTestOfferToken } from "../lib/test-offer-token.js";
 import type {
   AutomationRepository,
@@ -20,6 +20,7 @@ import type {
   OfferRecord,
 } from "../repositories/types.js";
 import type { NotificationEvent, NotificationService } from "./notifications.js";
+import { renderOfferDelivery } from "./offer-delivery-renderer.js";
 
 export type PublicInquiryInput = {
   guest: { name: string; email: string | null; phone: string | null; language: string };
@@ -381,6 +382,14 @@ export class AutomationService {
     return { inquiryId: inquiry.id, reservationNumber: inquiry.reservationNumber, paymentLinkSentAt: inquiry.closedAt?.toISOString() ?? null };
   }
 
+  async markManualOfferSent(userId: string, inquiryId: string, idempotencyKey: string, channel: "email" | "whatsapp", language: "en" | "it") {
+    const delivery = await this.repository.recordManualOfferSentForUser({
+      userId, inquiryId, idempotencyKey, channel, language, now: new Date(),
+    });
+    if (!delivery) throw errors.offerNotFound();
+    return { inquiry: await this.request(userId, inquiryId) };
+  }
+
   async dashboard(userId: string, query: DashboardQuery) {
     const facts = await this.repository.dashboardPageForUser(userId, query);
     if (!facts) throw errors.hotelNotFound();
@@ -404,6 +413,33 @@ export class AutomationService {
     const [inquiry] = await this.requests(userId, [inquiryId]);
     if (!inquiry) throw errors.inquiryNotFound();
     return inquiry;
+  }
+
+  async offerShareMessage(userId: string, inquiryId: string, channel: "email" | "whatsapp", language?: "en" | "it") {
+    const facts = await this.repository.dashboardFactsForUser(userId, [inquiryId]);
+    if (!facts) throw errors.hotelNotFound();
+    const inquiry = facts.inquiries.find(({ id }) => id === inquiryId);
+    if (!inquiry) throw errors.inquiryNotFound();
+    const offer = facts.offers.filter((item) => item.inquiryId === inquiryId).sort((a, b) => b.version - a.version)[0];
+    if (!offer) throw errors.offerNotFound();
+    this.ensurePublicOfferAvailable(offer, new Date());
+    const sealedUrl = facts.deliveries
+      .filter((delivery) => delivery.offerVersionId === offer.id)
+      .map((delivery) => delivery.payload.proposalUrlCiphertext)
+      .find((value): value is string => typeof value === "string");
+    if (!sealedUrl) throw errors.offerNotFound();
+    const proposalUrl = unsealPrivateValue(sealedUrl, this.authSecret);
+    const guestSnapshot = isRecord(offer.snapshot.guestSnapshot) ? offer.snapshot.guestSnapshot : null;
+    const snapshot = language && guestSnapshot
+      ? { ...offer.snapshot, guestSnapshot: { ...guestSnapshot, language } }
+      : offer.snapshot;
+    const rendered = renderOfferDelivery({
+      snapshot,
+      proposalUrl,
+      channel,
+      settings: await this.repository.findMessageSettingsForHotel(facts.hotel.id),
+    });
+    return { ...rendered, proposalUrl };
   }
 
   private requestSummaries(facts: DashboardFacts, now = new Date()) {

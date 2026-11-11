@@ -3,7 +3,8 @@ import { requestLabel } from "../requests/status";
 import { AUTOMATIC_SENDING_TIMEOUT_MS, AUTOMATIC_SENDING_TIMEOUT_REASON } from "@hotel/contracts";
 import { DASHBOARD_PAGE_SIZE, OFFER_VALIDITY_MS, dashboardQuerySchema, type DashboardQuery, type InquiryFormInput, type OfferEditorData, type OfferQuote, type OfferSettings, type ReservationOffer, type SendReservationOffersInput } from "@hotel/contracts";
 import { demoOfferEditor, getDemoOfferSettings, prefillDemoOffers, quoteDemoOffer, saveDemoOfferSettings } from "./demo-offers";
-import type { ClientFilters, ClientFilterOptions, ClientPage, ClientHistory, ClientInput, ClientProfile, RequestClientStatus } from "./types";
+import { demoMessageSettings, renderDemoMessagePreview } from "./demo-message-preview";
+import type { ClientFilters, ClientFilterOptions, ClientPage, ClientHistory, ClientInput, ClientProfile, OfferShareMessage, RequestClientStatus } from "./types";
 import { Platform } from "react-native";
 import * as SecureStore from "expo-secure-store";
 import { mockDashboard, refreshDemoSendingStatuses } from "./mock";
@@ -321,6 +322,7 @@ export const apiClient = {
     countryCode: string;
     locale: string;
     email: string;
+    logoUrl?: string;
   }): Promise<HotelProfile> {
     const token = await requireToken();
     const response = await apiRequest<{ data: { hotel: ApiHotel } }>(
@@ -715,6 +717,40 @@ export const apiClient = {
     const response = await apiRequest<{ data: { inquiry: ApiDashboard["inquiries"][number] } }>(`/v1/inquiries/${encodeURIComponent(id)}`, {}, token);
     return mapRequest(response.data.inquiry);
   },
+  async getOfferShareMessage(id: string, channel: "email" | "whatsapp", options: { demo?: boolean; language?: "en" | "it" } = {}): Promise<OfferShareMessage> {
+    if (options.demo) {
+      const preview = renderDemoMessagePreview(channel, { ...demoMessageSettings, templateLanguage: options.language ?? "it" }, apiUrl ?? "https://ospio.online");
+      return preview.channel === "email"
+        ? { channel, subject: preview.subject, text: preview.text, proposalUrl: preview.offer.url }
+        : { channel, text: preview.text, proposalUrl: preview.offer.url };
+    }
+    const token = await requireToken();
+    const response = await apiRequest<{ data: { message: OfferShareMessage } }>(
+      `/v1/inquiries/${encodeURIComponent(id)}/share-message?channel=${channel}${options.language ? `&language=${options.language}` : ""}`,
+      {},
+      token,
+    );
+    return response.data.message;
+  },
+  async markManualOfferSent(id: string, channel: "email" | "whatsapp", language: "en" | "it", idempotencyKey: string, options: { demo?: boolean } = {}): Promise<HotelRequest> {
+    if (options.demo) {
+      const request = mockDashboard.requests.find((item) => item.id === id);
+      if (!request) throw new ApiError("INQUIRY_NOT_FOUND", "Request was not found.");
+      const recipient = request[channel].recipient;
+      if (!recipient || !request.currentOfferId) throw new ApiError("OFFER_NOT_FOUND", "Offer was not found.");
+      const sentAt = new Date().toISOString();
+      request[channel] = { status: "sent", state: "provider_accepted", attemptCount: 0, recipient, lastErrorCode: null, processedAt: sentAt };
+      Object.assign(request, { status: "waiting", statusLabel: requestLabel("waiting"), offerSentAt: sentAt, processingDeadlineAt: null, attentionReason: null, nextAction: undefined });
+      return { ...request };
+    }
+    const token = await requireToken();
+    const response = await apiRequest<{ data: { inquiry: ApiDashboard["inquiries"][number] } }>(`/v1/inquiries/${encodeURIComponent(id)}/manual-sent`, {
+      method: "POST",
+      headers: { "Idempotency-Key": idempotencyKey },
+      body: JSON.stringify({ channel, language }),
+    }, token);
+    return mapRequest(response.data.inquiry);
+  },
   async sendReservationOffers(id: string, input: SendReservationOffersInput, idempotencyKey: string, options: { demo?: boolean } = {}): Promise<HotelRequest> {
     if (options.demo) {
       const request = mockDashboard.requests.find((item) => item.id === id);
@@ -904,6 +940,7 @@ export function authErrorMessage(error: unknown): string {
     SOCIAL_TOKEN_INVALID: "The identity provider could not verify this sign-in. Please try again.",
     SOCIAL_EMAIL_UNVERIFIED: "Use an account with a verified email address.",
     SOCIAL_ACCOUNT_CONFLICT: "This email is already linked to a different sign-in method.",
+    INVALID_IMAGE: "Upload a valid JPEG or PNG image up to 5 MB.",
   };
   return t(messages[error.code] ?? "Could not complete the action. Please try again.");
 }

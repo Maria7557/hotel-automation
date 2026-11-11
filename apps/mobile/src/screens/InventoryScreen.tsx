@@ -33,7 +33,7 @@ import {
 } from "lucide-react-native";
 import * as ImagePicker from "expo-image-picker";
 import { theme } from "@hotel/design";
-import { apiClient, authErrorMessage } from "@/api/client";
+import { ApiError, apiClient, authErrorMessage } from "@/api/client";
 import type {
   BedType,
   MealPlan,
@@ -45,6 +45,7 @@ import type {
 } from "@/api/types";
 import { Button, EmptyState, Field, InlineState, SectionTitle, uiStyles } from "@/components/ui";
 import { RateCalendar } from "@/components/RateCalendar";
+import { FilterDateField } from "@/clients/FilterDateField";
 
 type InventoryView = "list" | "roomForm" | "detail" | "rates" | "rateForm";
 
@@ -309,8 +310,14 @@ function RoomForm({ room, onBack, onSaved }: { room: Room | null; onBack: () => 
         }
         if (!photo.base64 || !photo.mimeType) throw new Error(t("One selected photo could not be prepared. Remove it and choose it again."));
         setUploadingPhoto(index + 1);
-        const uploadedUrl = await apiClient.uploadImage({ base64: photo.base64, mimeType: photo.mimeType });
+        let uploadedUrl: string;
+        try {
+          uploadedUrl = await apiClient.uploadImage({ base64: photo.base64, mimeType: photo.mimeType });
+        } catch {
+          throw new Error(t("Photo {{v0}} could not be uploaded. Remove that photo and choose it again as JPEG or PNG (up to 5 MB).", { v0: index + 1 }));
+        }
         uploadedPhotos.push({ id: photo.id, uri: uploadedUrl, uploadedUrl });
+        setPhotos((current) => current.map((item) => item.id === photo.id ? { ...item, uri: uploadedUrl, uploadedUrl } : item));
       }
       setPhotos(uploadedPhotos);
       const input: RoomInput = {
@@ -326,7 +333,7 @@ function RoomForm({ room, onBack, onSaved }: { room: Room | null; onBack: () => 
       };
       onSaved(room ? await apiClient.updateRoom(room.id, input) : await apiClient.createRoom(input));
     } catch (nextError) {
-      setError(authErrorMessage(nextError));
+      setError(nextError instanceof ApiError ? authErrorMessage(nextError) : nextError instanceof Error ? nextError.message : authErrorMessage(nextError));
     } finally {
       setUploadingPhoto(null);
       setSaving(false);
@@ -844,17 +851,19 @@ function PreviewCalculator({ room, rates }: { room: Room; rates: RatePeriod[] })
 
   return (
     <View style={styles.section}>
-      <SectionTitle>{t("Price check")}</SectionTitle>
+      <SectionTitle>{t("Test a stay price")}</SectionTitle>
+      <Text style={styles.previewIntro}>{t("Choose a board plan and sample stay. This does not create a request or change your rates.")}</Text>
       <BoardSelector value={mealPlan} onChange={(value) => { setMealPlan(value); setPreview(null); }} />
       <View style={[uiStyles.card, styles.previewCard]}>
-        <Text style={styles.previewIntro}>{t("See how the system prices a sample request.")}</Text>
+        <Text style={styles.previewStep}>{t("1. Stay dates")}</Text>
         <View style={styles.fieldRow}>
-          <View style={styles.fieldHalf}><Field label={t("Check-in")} value={checkIn} onChangeText={setCheckIn} autoCapitalize="none" /></View>
-          <View style={styles.fieldHalf}><Field label={t("Check-out")} value={checkOut} onChangeText={setCheckOut} autoCapitalize="none" /></View>
+          <View style={styles.fieldHalf}><FilterDateField label={t("Check-in")} value={checkIn} onChange={(value) => { setCheckIn(value); setPreview(null); setError(null); }} /></View>
+          <View style={styles.fieldHalf}><FilterDateField label={t("Check-out")} value={checkOut} onChange={(value) => { setCheckOut(value); setPreview(null); setError(null); }} /></View>
         </View>
+        <Text style={styles.previewStep}>{t("2. Guests")}</Text>
         <View style={styles.fieldRow}>
-          <View style={styles.fieldHalf}><Field label={t("Adults")} keyboardType="number-pad" value={adults} onChangeText={setAdults} /></View>
-          <View style={styles.fieldHalf}><Field label={t("Child ages")} keyboardType="numbers-and-punctuation" placeholder="5, 10" value={childAges} onChangeText={setChildAges} /></View>
+          <View style={styles.fieldHalf}><Field label={t("Adults")} keyboardType="number-pad" value={adults} onChangeText={(value) => { setAdults(value); setPreview(null); setError(null); }} /></View>
+          <View style={styles.fieldHalf}><Field label={t("Child ages (comma-separated)")} keyboardType="numbers-and-punctuation" placeholder={t("None, or e.g. 5, 10")} value={childAges} onChangeText={(value) => { setChildAges(value); setPreview(null); setError(null); }} /></View>
         </View>
         {error ? <InlineState tone="danger">{translateLabel(error)}</InlineState> : null}
         {preview?.ok && breakdown ? (
@@ -870,7 +879,7 @@ function PreviewCalculator({ room, rates }: { room: Room; rates: RatePeriod[] })
         ) : preview && !preview.ok ? (
           <InlineState tone="warning">{t("No complete rate coverage:")}{" "}{preview.issues.map((issue) => issue.date ?? issue.type).join(", ")}</InlineState>
         ) : null}
-        <Button variant="secondary" onPress={() => void calculate()} loading={loading}>{t("Calculate")}</Button>
+        <Button variant="secondary" onPress={() => void calculate()} loading={loading}>{t("Calculate sample price")}</Button>
       </View>
     </View>
   );
@@ -1088,6 +1097,7 @@ const styles = StyleSheet.create({
   rateSummaryPrice: { ...theme.typography.bodySmallMedium, color: theme.colors.success },
   previewCard: { gap: theme.spacing[4] },
   previewIntro: { ...theme.typography.bodySmall, color: theme.colors.textSecondary },
+  previewStep: { ...theme.typography.bodySmallMedium, color: theme.colors.text, marginTop: theme.spacing[1] },
   previewBreakdown: { gap: theme.spacing[2], backgroundColor: theme.colors.successTint, borderRadius: theme.radii.md, padding: theme.spacing[3] },
   previewBreakdownHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: theme.spacing[3] },
   previewResultLabel: { ...theme.typography.bodySmallMedium, color: theme.colors.success },

@@ -23,6 +23,7 @@ import type {
   InquiryRecord,
   MessageSettings,
   MessageSettingsUpdate,
+  ManualOfferSentCreate,
   NotificationPreferences,
   NotificationRepository,
   OfferRecord,
@@ -214,6 +215,10 @@ class MemoryAutomationRepository implements AutomationRepository {
     return this.offerSettings.get(hotelId) ?? null;
   }
 
+  async findMessageSettingsForHotel(_hotelId: string) {
+    return null;
+  }
+
   async saveOfferSettingsForUser(userId: string, settings: OfferSettings): Promise<OfferSettings | null> {
     const hotel = await this.hotels.findForUser(userId);
     if (!hotel) return null;
@@ -335,6 +340,32 @@ class MemoryAutomationRepository implements AutomationRepository {
     const updated = { ...inquiry, closedAt: now, updatedAt: now };
     this.inquiries.set(inquiry.id, updated);
     return updated;
+  }
+
+  async recordManualOfferSentForUser(input: ManualOfferSentCreate): Promise<DeliveryRecord | null> {
+    const hotel = await this.hotels.findForUser(input.userId);
+    const inquiry = this.inquiries.get(input.inquiryId);
+    if (!hotel || !inquiry || inquiry.hotelId !== hotel.id || !inquiry.currentOfferId || inquiry.closedAt) return null;
+    const storageKey = `manual:${input.idempotencyKey}`;
+    const existing = [...this.deliveries.values()].find((delivery) => delivery.hotelId === hotel.id && delivery.idempotencyKey === storageKey);
+    if (existing) return existing;
+    const offer = this.offers.get(inquiry.currentOfferId);
+    const recipient = input.channel === "email" ? inquiry.guestEmail : inquiry.guestPhone;
+    if (!offer || offer.state !== "active" || offer.expiresAt <= input.now || !recipient) return null;
+    for (const delivery of this.deliveries.values()) {
+      if (delivery.offerVersionId === offer.id && delivery.channel === input.channel && delivery.kind === "offer" && delivery.state === "scheduled") {
+        this.deliveries.set(delivery.id, { ...delivery, state: "cancelled", updatedAt: input.now });
+      }
+    }
+    const created: DeliveryRecord = {
+      id: randomUUID(), hotelId: hotel.id, inquiryId: inquiry.id, offerVersionId: offer.id,
+      kind: "offer", channel: input.channel, state: "provider_accepted", idempotencyKey: storageKey, recipient,
+      payload: { schemaVersion: 1, source: "manual", actorUserId: input.userId, confirmedAt: input.now.toISOString(), language: input.language },
+      attemptCount: 0, nextAttemptAt: input.now, providerMessageId: null, lastErrorCode: null, lastErrorMessage: null,
+      processedAt: input.now, createdAt: input.now, updatedAt: input.now,
+    };
+    this.deliveries.set(created.id, created);
+    return created;
   }
 
   async dashboardPageForUser(userId: string, query: DashboardQuery): Promise<DashboardPageFacts | null> {

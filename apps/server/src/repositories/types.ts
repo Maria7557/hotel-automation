@@ -239,8 +239,18 @@ export type ReservationOffersCreate = {
   now: Date;
 };
 
+export type ManualOfferSentCreate = {
+  userId: string;
+  inquiryId: string;
+  channel: "email" | "whatsapp";
+  language: "en" | "it";
+  idempotencyKey: string;
+  now: Date;
+};
+
 export interface AutomationRepository {
   findOfferSettingsForHotel(hotelId: string): Promise<OfferSettings | null>;
+  findMessageSettingsForHotel(hotelId: string): Promise<MessageSettings | null>;
   saveOfferSettingsForUser(userId: string, settings: OfferSettings): Promise<OfferSettings | null>;
   findPublicHotelByKey(publicKey: string): Promise<HotelProfile | null>;
   findPublicHotelWebsite(hotelId: string): Promise<string | null>;
@@ -250,6 +260,7 @@ export interface AutomationRepository {
   replaceReservationOffers(input: ReservationOffersCreate): Promise<{ replayed: boolean } | null>;
   findOfferByTokenHash(tokenHash: string): Promise<OfferRecord | null>;
   acceptOfferByTokenHash(tokenHash: string, now: Date, selectedOptionIndex: number): Promise<OfferRecord | null>;
+  recordManualOfferSentForUser(input: ManualOfferSentCreate): Promise<DeliveryRecord | null>;
   markPaymentLinkSentForUser(userId: string, inquiryId: string, now: Date): Promise<InquiryRecord | null>;
   dashboardFactsForUser(userId: string, inquiryIds?: string[]): Promise<DashboardFacts | null>;
   dashboardPageForUser(userId: string, query: DashboardQuery): Promise<DashboardPageFacts | null>;

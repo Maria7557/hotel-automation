@@ -88,7 +88,7 @@ export function SettingsScreen({
       { title: t("Rooms & rates"), detail: roomCount > 0 ? t("Add prices for every room") : t("Add your first room and its prices"), complete: roomCount > 0 && hasRates, icon: BedDouble, onPress: onOpenInventory },
       { title: t("Mail"), detail: t("Send offers from your hotel address"), complete: mailConnected, icon: Mail, onPress: onOpenConnections },
       { title: "WhatsApp", detail: t("Send offers from your hotel number"), complete: whatsappConnected, icon: MessageCircle, onPress: onOpenConnections },
-      { title: t("Website form"), detail: t("Receive enquiries from your website"), complete: demo || profile.allowedOrigins.length > 0, icon: Code2, onPress: onOpenSiteIntegration },
+      { title: t("Website form"), detail: t("Receive website requests"), complete: demo || profile.allowedOrigins.length > 0, icon: Code2, onPress: onOpenSiteIntegration },
     ];
   }, [connections, demo, hasRates, onOpenConnections, onOpenInventory, onOpenProfile, onOpenSiteIntegration, profile, roomCount, getLanguage()]);
   const completedSteps = setupSteps.filter((step) => step.complete).length;
@@ -139,7 +139,7 @@ export function SettingsScreen({
       <View style={styles.section}>
         <SectionTitle>{t("Testing")}</SectionTitle>
         <View style={styles.menuCard}>
-          <SettingRow icon={FileInput} title={t("Form")} subtitle={t("Send a hotel enquiry")} onPress={onOpenForm} last />
+          <SettingRow icon={FileInput} title={t("Form")} subtitle={t("Send request")} onPress={onOpenForm} last />
         </View>
       </View>
 

@@ -4,7 +4,7 @@ import { validationMessage } from "@hotel/i18n";
 import { useRef, useState } from "react";
 import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { ClipboardPlus, X } from "lucide-react-native";
+import { ClipboardPlus, Trash2, X } from "lucide-react-native";
 import { DEFAULT_GUEST_LANGUAGE, manualInquiryInputSchema, type ManualRequestSource, type MealPlan } from "@hotel/contracts";
 import { theme } from "@hotel/design";
 import { ApiError, apiClient } from "../api/client";
@@ -103,8 +103,10 @@ export function ManualRequestModal({ demo, initialRequest, onClose, onCreated }:
     } catch (cause) {
       if (cause instanceof ApiError && cause.code === "VALIDATION_ERROR" && Array.isArray(cause.details)) {
         setErrors(Object.fromEntries(cause.details.map((issue: { path: string; message: string }) => [issue.path.startsWith("offers") ? issue.path : issue.path.split(".").slice(0, 2).join("."), issue.message])));
+        setError(null);
+      } else {
+        setError(cause instanceof ApiError ? cause.message : t("Could not create the request. Please try again."));
       }
-      setError(cause instanceof ApiError ? cause.message : t("Could not create the request. Please try again."));
     } finally {
       submitting.current = false;
       setSaving(false);
@@ -119,7 +121,7 @@ export function ManualRequestModal({ demo, initialRequest, onClose, onCreated }:
           <Pressable accessibilityRole="button" accessibilityLabel={t("Close new request")} accessibilityState={{ disabled: saving }} disabled={saving} onPress={close} style={actionStyles.iconButton}><X size={20} color={theme.colors.textMuted} /></Pressable>
         </View>
         <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-          <Text style={styles.hint}>{initialRequest ? t("Duplicating reservation #{{v0}}. Review the copied details before creating a new request.", { v0: initialRequest.reservationNumber }) : t("Record an enquiry from any channel.")}</Text>
+          <Text style={styles.hint}>{initialRequest ? t("Duplicating request #{{v0}}.", { v0: initialRequest.reservationNumber }) : t("New request")}</Text>
           <View pointerEvents={saving ? "none" : "auto"} style={styles.fields}>
             <Choices label={t("Received via")} value={receivedVia} onChange={setReceivedVia} options={requestSourceOptions.map((option) => ({ ...option, label: t(option.label) }))} />
             <Text accessibilityRole="header" style={styles.sectionTitle}>{t("Guest details")}</Text>
@@ -139,33 +141,41 @@ export function ManualRequestModal({ demo, initialRequest, onClose, onCreated }:
             <Field label={t("Adults")} value={adults} onChangeText={setAdults} error={errors["occupancy.adults"]} keyboardType="number-pad" maxLength={2} editable={!saving} />
             <ChildrenFields value={childAges} onChange={setChildAges} error={errors["occupancy.childAges"]} disabled={saving} />
             <MealPlanField value={mealPlan} onChange={setMealPlan} error={errors.mealPlan} disabled={saving} />
-            <Field label={t("Notes (optional)")} value={note} onChangeText={setNote} error={errors.note} helper={t("Record offers, prices or arrangements discussed by phone. Use Prepare offers on the reservation to review and send up to six choices.")} multiline numberOfLines={3} style={styles.notes} maxLength={2_000} editable={!saving} />
+            <Field label={t("Notes (optional)")} value={note} onChangeText={setNote} error={errors.note} multiline numberOfLines={3} style={styles.notes} maxLength={2_000} editable={!saving} />
             {offers.length ? <View style={styles.fields}>
               <Text accessibilityRole="header" style={styles.sectionTitle}>{t("Copied offers")}</Text>
-              <Text style={styles.hint}>{t("Room choices and terms are copied. Rates are calculated again for the new stay; old prices are never reused. Remove an offer to leave it out.")}</Text>
               {offers.map((offer, index) => <View key={index} style={styles.delivery}>
-                <View style={styles.deliveryHeading}><Text style={[styles.label, styles.column]}>{initialRequest?.offers?.find(({ roomId }) => roomId === offer.roomId)?.roomName ?? t("Room")}</Text><Button variant="tertiary" disabled={saving} onPress={() => setOffers((current) => current.filter((_, i) => i !== index))}>{t("Remove offer")}{" "}{index + 1}</Button></View>
-                <Field label={t("Offer {{v0}} name / terms", { v0: index + 1 })} value={offer.planName ?? t("Stay offer")} onChangeText={(planName) => setOffers((current) => current.map((item, i) => i === index ? { ...item, planName } : item))} error={errors[`offers.${index}.planName`]} maxLength={160} editable={!saving} />
-                <Text style={styles.hint}>{t("Rate calculated automatically from the room, dates, guests and board above.")}</Text>
-                <Field label={t("Offer {{v0}} guest note (optional)", { v0: index + 1 })} value={offer.note} onChangeText={(note) => setOffers((current) => current.map((item, i) => i === index ? { ...item, note } : item))} error={errors[`offers.${index}.note`]} multiline maxLength={2_000} editable={!saving} />
+                <View style={styles.deliveryHeading}><Text style={[styles.label, styles.column]}>{initialRequest?.offers?.find(({ roomId }) => roomId === offer.roomId)?.roomName ?? t("Room")}</Text><Pressable accessibilityRole="button" accessibilityLabel={t("Remove offer")} disabled={saving} onPress={() => setOffers((current) => current.filter((_, i) => i !== index))} style={actionStyles.iconButton}><Trash2 size={18} color={theme.colors.danger} /></Pressable></View>
+                <Field label={t("Name")} value={offer.planName ?? t("Stay offer")} onChangeText={(planName) => setOffers((current) => current.map((item, i) => i === index ? { ...item, planName } : item))} error={errors[`offers.${index}.planName`]} maxLength={160} editable={!saving} />
+                <Field label={t("Guest note")} value={offer.note} onChangeText={(note) => setOffers((current) => current.map((item, i) => i === index ? { ...item, note } : item))} error={errors[`offers.${index}.note`]} multiline maxLength={2_000} editable={!saving} />
                 {errors[`offers.${index}.roomId`] ? <Text accessibilityRole="alert" style={styles.error}>{errors[`offers.${index}.roomId`]}</Text> : null}
               </View>)}
             </View> : null}
             <View style={styles.delivery}>
-              <View style={styles.deliveryHeading}><Text style={styles.label}>{t("Send offer now")}</Text><Switch accessibilityLabel={t("Send offer now")} value={sendOffer} onValueChange={setSendOffer} disabled={saving} trackColor={{ true: theme.colors.action }} /></View>
-              <Text style={styles.hint}>{sendOffer ? t("Send by email and WhatsApp.") : t("Save only. Send later.")}</Text>
+              <View style={styles.deliveryHeading}><Text style={styles.label}>{t("Send offer")}</Text><Switch accessibilityLabel={t("Send offer")} value={sendOffer} onValueChange={setSendOffer} disabled={saving} trackColor={{ true: theme.colors.action }} /></View>
+              <Text style={styles.hint}>{sendOffer ? t("Send by connected channels after creating the request.") : t("Save without sending.")}</Text>
             </View>
           </View>
         </ScrollView>
         <View style={styles.footer}>
           {demo ? <Text style={styles.hint}>{t("Demo mode: requests stay in this preview and no messages are sent.")}</Text> : null}
-          {Object.keys(errors).length ? <Text accessibilityRole="alert" style={styles.error}>{t("Check the highlighted fields.")}</Text> : null}
+          {Object.keys(errors).length ? <Text accessibilityRole="alert" style={styles.error}>{manualRequestErrorSummary(errors)}</Text> : null}
           {error ? <InlineState tone="danger">{translateLabel(error)}</InlineState> : null}
-          <View style={styles.row}><View style={styles.column}><Button variant="tertiary" onPress={close} disabled={saving}>{t("Cancel")}</Button></View><View style={styles.column}><Button onPress={() => void submit()} loading={saving}>{sendOffer ? t("Create & send offer") : t("Create request")}</Button></View></View>
+          <View style={styles.row}><View style={styles.column}><Button variant="tertiary" onPress={close} disabled={saving}>{t("Cancel")}</Button></View><View style={styles.column}><Button onPress={() => void submit()} loading={saving}>{sendOffer ? t("Send") : t("Create")}</Button></View></View>
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView></View>
   </Modal>;
+}
+
+function manualRequestErrorSummary(errors: Record<string, string>): string {
+  const [key, message] = Object.entries(errors)[0] ?? [];
+  if (!key || !message) return t("Check the highlighted fields.");
+  const labels: Record<string, string> = {
+    client: t("Guest"), "guest.name": t("Guest name"), "guest.email": t("Email"), "guest.phone": t("Phone / WhatsApp"), "guest.language": t("Guest language"),
+    checkIn: t("Check-in"), checkOut: t("Check-out"), "occupancy.adults": t("Adults"), "occupancy.childAges": t("Child ages"), mealPlan: t("Board basis"), note: t("Notes"),
+  };
+  return t("{{v0}}: {{v1}}", { v0: labels[key] ?? key, v1: translateLabel(message) as string });
 }
 
 function Choices<T extends string>({ label, value, options, onChange }: { label: string; value: T | null; options: Array<{ value: T; label: string }>; onChange: (value: T) => void }) {

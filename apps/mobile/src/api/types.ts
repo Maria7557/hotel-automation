@@ -13,6 +13,10 @@ export type DeliverySummary = {
   processedAt?: string | null;
 };
 
+export type OfferShareMessage =
+  | { channel: "email"; subject: string; text: string; proposalUrl: string }
+  | { channel: "whatsapp"; text: string; proposalUrl: string };
+
 export type HotelRequest = {
   id: string;
   reservationNumber: string;

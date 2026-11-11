@@ -63,10 +63,10 @@ export function requestStatusHelp(request: Pick<HotelRequest, "status" | "email"
   if (request.status === "new") {
     const details = requestSendingDetails(request);
     if (details.some(({ channel }) => channel === null)) {
-      return t("This reservation is marked NEW, but no queued delivery can be confirmed from its data. Refresh or open the reservation to check. Automatic processing cannot be confirmed yet.");
+      return t("This request is marked NEW, but no queued delivery can be confirmed from its data. Refresh or open the request to check. Automatic processing cannot be confirmed yet.");
     }
     if (details.some(({ label }) => label === "Sending failed" || label === "Delivery unconfirmed" || label === "Sending cancelled")) {
-      return t("This reservation is marked NEW, but a delivery has failed, was cancelled, or has an unconfirmed outcome. Automatic processing cannot be assumed; open the reservation and check the delivery before resending.");
+      return t("This request is marked NEW, but a delivery has failed, was cancelled, or has an unconfirmed outcome. Automatic processing cannot be assumed; open the request and check the delivery before resending.");
     }
     const stages = details.map(({ channel, label }) => `${channel === "email" ? "Email" : "WhatsApp"}: ${t(label)}.`).join(" ");
     const connection = details.some(({ label }) => label === "Waiting for connection")
