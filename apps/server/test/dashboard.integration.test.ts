@@ -5,6 +5,8 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { createApp } from "../src/app.js";
 import { createDatabase } from "../src/db/client.js";
 import { createPostgresRepositories } from "../src/repositories/postgres.js";
+import { hashPublicToken } from "../src/lib/public-token.js";
+import { PostgresClientRepository } from "../src/repositories/clients.js";
 import { AUTOMATIC_SENDING_TIMEOUT_REASON } from "@hotel/contracts";
 
 const databaseUrl = process.env.DASHBOARD_TEST_DATABASE_URL;
@@ -12,6 +14,7 @@ const env = { AUTH_SECRET: "dashboard-test-secret-that-is-at-least-32-characters
 const auth = (token: string) => ({ authorization: `Bearer ${token}` });
 type Owner = { token: string; id: string; userId: string; dayStart: Date };
 type Page = {
+  hasRequests: boolean;
   counts: { total: number; new: number; offerSent: number; requiresConfirmation: number; requiresConfirmationTotalCents: number; needsAttention: number };
   pagination: { page: number; limit: number; total: number };
   inquiries: Array<{ id: string; reservationNumber: string; guestName: string; workflowState: string; offerSentAt: string | null; acceptedAt: string | null }>;
@@ -24,7 +27,7 @@ describe.skipIf(!databaseUrl)("dashboard PostgreSQL pagination", () => {
   beforeAll(async () => {
     core = createDatabase(databaseUrl!);
     await migrate(core.db, { migrationsFolder: "./drizzle" });
-    app = await createApp({ env, repositories: createPostgresRepositories(core.db), logger: false });
+    app = await createApp({ env, repositories: createPostgresRepositories(core.db), clients: new PostgresClientRepository(core.client), logger: false });
   }, 20_000);
   afterEach(async () => {
     for (const owner of owners.splice(0)) {
@@ -91,6 +94,7 @@ describe.skipIf(!databaseUrl)("dashboard PostgreSQL pagination", () => {
     const empty = await page(hotel);
     expect(empty.pagination).toEqual({ page: 1, limit: 30, total: 0 });
     expect(empty.inquiries).toEqual([]);
+    expect(empty.hasRequests).toBe(false);
     const rows = await seed(hotel, 1063);
     await seed(other, 7);
     await core.client`insert into inquiries (hotel_id, idempotency_key, guest_name, guest_email, locale, check_in, check_out, occupancies, meal_plan, created_at)
@@ -173,6 +177,119 @@ describe.skipIf(!databaseUrl)("dashboard PostgreSQL pagination", () => {
     expect((await page(hotel, { status: "new" })).inquiries.map(({ id }) => id)).toContain(queued!.id);
   });
 
+  it("finds prior-day reservations by exact number and text without changing today's incoming total", async () => {
+    const hotel = await owner(), other = await owner();
+    await seed(hotel, 2);
+    const [old] = await seed(hotel, 1, "completed");
+    await core.client`update inquiries set created_at = ${new Date(hotel.dayStart.getTime() - 1).toISOString()}, guest_name = 'Previous day guest' where id = ${old!.id}`;
+    const detail = await app.inject({ method: "GET", url: `/v1/inquiries/${old!.id}`, headers: auth(hotel.token) });
+    expect(detail.statusCode).toBe(200);
+    const number = detail.json().data.inquiry.reservationNumber as string;
+    expect((await page(hotel)).pagination.total).toBe(2);
+    for (const search of [number, `#${number}`, "Previous day guest"]) {
+      const result = await page(hotel, { search });
+      expect(result.inquiries.map(({ id }) => id)).toEqual([old!.id]);
+      expect(result.counts.total).toBe(2);
+      expect(result.pagination.total).toBe(1);
+    }
+    expect((await page(other, { search: number })).inquiries).toEqual([]);
+    expect((await page(hotel, { search: number, status: "payment" })).inquiries).toEqual([]);
+    expect((await page(hotel)).pagination.total).toBe(2);
+  });
+
+  it("retains prior-day actionable work and counts across midnight, separately from today's list", async () => {
+    const hotel = await owner(), other = await owner();
+    const [today] = await seed(hotel, 1);
+    const prior = [
+      ...(await seed(hotel, 2, "payment")),
+      ...(await seed(hotel, 2, "attention")),
+      ...(await seed(hotel, 1, "waiting")),
+      ...(await seed(hotel, 1, "completed")),
+    ];
+    for (const row of prior) await core.client`update inquiries set created_at = ${new Date(hotel.dayStart.getTime() - 1).toISOString()} where id = ${row.id}`;
+    await seed(other, 3, "payment");
+    const incoming = await page(hotel);
+    expect(incoming.inquiries.map(({ id }) => id)).toEqual([today!.id]);
+    expect(incoming.counts).toMatchObject({ total: 1, new: 1, offerSent: 0, requiresConfirmation: 2, requiresConfirmationTotalCents: 84000, needsAttention: 2 });
+    const actions = await page(hotel, { scope: "actions" });
+    expect(actions.pagination.total).toBe(5);
+    expect(actions.counts).toEqual(incoming.counts);
+    expect((await page(hotel, { scope: "actions", status: "payment" })).pagination.total).toBe(2);
+    expect((await page(hotel, { scope: "actions", status: "attention" })).pagination.total).toBe(2);
+    expect((await page(hotel, { status: "payment" })).pagination.total).toBe(0);
+    expect((await page(hotel, { scope: "actions", status: "waiting" })).pagination.total).toBe(0);
+    expect((await page(other, { scope: "actions" })).pagination.total).toBe(3);
+  });
+
+  it("surfaces an offer accepted after midnight in To do while keeping client history and the daily total", async () => {
+    const hotel = await owner();
+    const [inquiry] = await seed(hotel, 1, "waiting");
+    const beforeMidnight = new Date(hotel.dayStart.getTime() - 60_000).toISOString();
+    await core.client`update inquiries set created_at = ${beforeMidnight} where id = ${inquiry!.id}`;
+    const token = randomUUID();
+    await core.client`update offer_versions set created_at = ${beforeMidnight}, public_token_hash = ${hashPublicToken(token)} where inquiry_id = ${inquiry!.id}`;
+    const added = await app.inject({ method: "POST", url: `/v1/inquiries/${inquiry!.id}/client`, headers: auth(hotel.token) });
+    expect(added.statusCode, added.body).toBe(201);
+    const clientId = added.json().data.client.id as string;
+    const history = () => app.inject({ method: "GET", url: `/v1/clients/${clientId}/requests`, headers: auth(hotel.token) });
+    expect((await history()).json().data.requests.map(({ id }: { id: string }) => id)).toEqual([inquiry!.id]);
+    const accepted = await app.inject({ method: "POST", url: `/v1/public/offers/${token}/accept`, payload: { option: 1 } });
+    expect(accepted.statusCode, accepted.body).toBe(200);
+    expect(Date.parse(accepted.json().data.offer.acceptedAt)).toBeGreaterThanOrEqual(hotel.dayStart.getTime());
+    const detail = await app.inject({ method: "GET", url: `/v1/inquiries/${inquiry!.id}`, headers: auth(hotel.token) });
+    expect(detail.json().data.inquiry.workflowState).toBe("requires_confirmation");
+    expect((await history()).json().data.requests.map(({ id }: { id: string }) => id)).toEqual([inquiry!.id]);
+    const incoming = await page(hotel);
+    expect(incoming.pagination.total).toBe(0);
+    expect(incoming.hasRequests).toBe(true);
+    expect(incoming.counts).toMatchObject({ total: 0, requiresConfirmation: 1, requiresConfirmationTotalCents: 42000 });
+    const payment = await page(hotel, { scope: "actions", status: "payment" });
+    expect(payment.inquiries.map(({ id }) => id)).toEqual([inquiry!.id]);
+    const closed = await app.inject({ method: "POST", url: `/v1/inquiries/${inquiry!.id}/payment-link-sent`, headers: auth(hotel.token) });
+    expect(closed.statusCode).toBe(200);
+    const emptyActions = await page(hotel, { scope: "actions" });
+    expect(emptyActions.pagination.total).toBe(0);
+    expect(emptyActions.hasRequests).toBe(true);
+    const number = detail.json().data.inquiry.reservationNumber as string;
+    expect((await page(hotel, { search: `#${number}` })).inquiries.map(({ id }) => id)).toEqual([inquiry!.id]);
+    expect((await history()).json().data.requests).toHaveLength(1);
+    // Synthetic fixture has no connected delivery providers or push devices, and no worker is started.
+  });
+
+  it("pages prior-day actions before limiting, then refills the last page after completion", async () => {
+    const hotel = await owner();
+    const old = await seed(hotel, 35, "payment");
+    for (const [index, inquiry] of old.entries()) {
+      await core.client`update inquiries set created_at = ${new Date(hotel.dayStart.getTime() - (old.length - index) * 1000).toISOString()} where id = ${inquiry.id}`;
+    }
+    const first = await page(hotel, { scope: "actions", status: "payment", sort: "asc" });
+    const last = await page(hotel, { scope: "actions", status: "payment", sort: "asc", page: "2" });
+    expect(first.counts).toMatchObject({ total: 0, requiresConfirmation: 35 });
+    expect(first.inquiries.map(({ id }) => id)).toEqual(old.slice(0, 30).map(({ id }) => id));
+    expect(last.inquiries.map(({ id }) => id)).toEqual(old.slice(30).map(({ id }) => id));
+    for (const inquiry of old.slice(30)) {
+      const closed = await app.inject({ method: "POST", url: `/v1/inquiries/${inquiry.id}/payment-link-sent`, headers: auth(hotel.token) });
+      expect(closed.statusCode).toBe(200);
+    }
+    const refilled = await page(hotel, { scope: "actions", status: "payment", page: "2" });
+    expect(refilled.pagination).toEqual({ page: 1, limit: 30, total: 30 });
+    expect(refilled.counts).toMatchObject({ total: 0, requiresConfirmation: 30 });
+  });
+
+  it("keeps a freshly resent offer on a prior-day inquiry in New with its processing timer", async () => {
+    const hotel = await owner();
+    const [inquiry] = await seed(hotel, 1);
+    await core.client`update inquiries set created_at = ${new Date(hotel.dayStart.getTime() - 1).toISOString()} where id = ${inquiry!.id}`;
+    await core.client`insert into offer_versions (hotel_id, inquiry_id, version, state, public_token_hash, snapshot, expires_at)
+      values (${hotel.id}, ${inquiry!.id}, 1, 'active', ${randomUUID()}, '{"options":[]}'::jsonb, now() + interval '7 days')`;
+    const response = await app.inject({ method: "GET", url: "/v1/dashboard?scope=actions&status=new", headers: auth(hotel.token) });
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json().data.inquiries.map(({ id }: { id: string }) => id)).toEqual([inquiry!.id]);
+    expect(response.json().data.counts).toMatchObject({ total: 0, new: 1, needsAttention: 0 });
+    expect(Date.parse(response.json().data.nextProcessingDeadlineAt)).toBeGreaterThan(Date.now());
+    expect((await page(hotel)).pagination.total).toBe(0);
+  });
+
   it("validates paging, sorting, and filters and treats search wildcards literally", async () => {
     const hotel = await owner();
     const [inquiry] = await seed(hotel, 1);
@@ -180,7 +297,7 @@ describe.skipIf(!databaseUrl)("dashboard PostgreSQL pagination", () => {
     expect((await page(hotel, { search: "100%" })).inquiries).toHaveLength(1);
     expect((await page(hotel, { search: "Guest_" })).inquiries).toHaveLength(1);
     expect((await page(hotel, { search: "%missing" })).inquiries).toHaveLength(0);
-    for (const query of ["page=0", "page=-1", "page=1.5", "limit=31", "limit=0", "sort=invalid", "status=invalid", "unexpected=1"]) {
+    for (const query of ["page=0", "page=-1", "page=1.5", "limit=31", "limit=0", "sort=invalid", "status=invalid", "scope=invalid", "unexpected=1"]) {
       const response = await app.inject({ method: "GET", url: `/v1/dashboard?${query}`, headers: auth(hotel.token) });
       expect(response.statusCode, query).toBe(400);
     }

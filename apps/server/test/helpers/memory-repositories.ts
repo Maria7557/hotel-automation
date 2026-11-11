@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { dashboardIncludesRequest } from "@hotel/contracts";
 import type { DashboardQuery, OfferSettings } from "@hotel/contracts";
 import { AUTOMATIC_SENDING_TIMEOUT_MS } from "@hotel/contracts";
 
@@ -342,7 +343,8 @@ class MemoryAutomationRepository implements AutomationRepository {
     if (!facts) return null;
     const now = new Date();
     const day = new Intl.DateTimeFormat("en-CA", { timeZone: facts.hotel.timezone });
-    const items = facts.inquiries.filter((inquiry) => day.format(inquiry.createdAt) === day.format(now)).map((inquiry) => {
+    const receivedToday = (inquiry: InquiryRecord) => day.format(inquiry.createdAt) === day.format(now);
+    const items = facts.inquiries.map((inquiry) => {
       const latest = facts.offers.filter((offer) => offer.inquiryId === inquiry.id).sort((a, b) => b.version - a.version)[0];
       const currentDeliveries = facts.deliveries.filter((delivery) => delivery.inquiryId === inquiry.id && (!latest || delivery.offerVersionId === latest.id));
       const status = inquiry.closedAt ? "completed" : latest?.acceptedAt ? "payment" : inquiry.attentionReason ? "attention"
@@ -356,16 +358,16 @@ class MemoryAutomationRepository implements AutomationRepository {
     });
     const reservationNumber = /^#?\s*(\d+)$/.exec(query.search)?.[1];
     const labels: Record<string, string> = { new: "New", waiting: "Waiting for reply", payment: "Payment link needed", completed: "Waiting for client", attention: "Not delivered" };
-    const filtered = items.filter(({ inquiry, status, option }) => (query.status === "all" || query.status === status) && (!query.search ||
+    const filtered = items.filter(({ inquiry, status, option }) => dashboardIncludesRequest(query, status, receivedToday(inquiry)) && (query.status === "all" || query.status === status) && (!query.search ||
       (reservationNumber !== undefined ? inquiry.reservationNumber === reservationNumber :
         [inquiry.guestName, inquiry.guestEmail, inquiry.guestPhone, inquiry.mealPlan, option?.roomName, inquiry.checkIn, inquiry.checkOut, labels[status]]
           .some((value) => typeof value === "string" && value.toLocaleLowerCase().includes(query.search.toLocaleLowerCase())))));
     const direction = query.sort === "asc" ? 1 : -1;
     filtered.sort((a, b) => direction * (a.inquiry.createdAt.getTime() - b.inquiry.createdAt.getTime() || a.inquiry.id.localeCompare(b.inquiry.id)));
     const page = Math.min(query.page, Math.max(1, Math.ceil(filtered.length / query.limit)));
-    return { ...facts, inquiries: filtered.slice((page - 1) * query.limit, page * query.limit).map(({ inquiry }) => inquiry),
-      counts: { total: items.length, new: items.filter(({ status }) => status === "new").length,
-        offerSent: items.filter(({ status }) => status === "waiting").length,
+    return { ...facts, hasRequests: items.length > 0, inquiries: filtered.slice((page - 1) * query.limit, page * query.limit).map(({ inquiry }) => inquiry),
+      counts: { total: items.filter(({ inquiry }) => receivedToday(inquiry)).length, new: items.filter(({ status }) => status === "new").length,
+        offerSent: items.filter(({ inquiry, status }) => receivedToday(inquiry) && status === "waiting").length,
         requiresConfirmation: items.filter(({ status }) => status === "payment").length,
         requiresConfirmationTotalCents: items.filter(({ status }) => status === "payment").reduce((total, { option }) => total + (typeof option?.totalCents === "number" ? option.totalCents : 0), 0),
         needsAttention: items.filter(({ status }) => status === "attention").length },

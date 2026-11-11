@@ -634,8 +634,10 @@ class PostgresAutomationRepository implements AutomationRepository {
           and ${deliveries.offerVersionId} = ${latest.id} and ${deliveries.state} in ('provider_accepted', 'delivered')) then 'waiting'
         when ${processingDeadline} <= now() then 'attention'
         else 'new' end`;
+      const todayStart = sql<Date>`date_trunc('day', now() at time zone ${hotel.timezone}) at time zone ${hotel.timezone}`;
       const rows = db.$with("dashboard_requests").as(db.select({
         id: inquiries.id,
+        receivedToday: sql<boolean>`${inquiries.createdAt} >= ${todayStart}`.as("received_today"),
         createdAt: inquiries.createdAt,
         reservationNumber: inquiries.reservationNumber,
         status: status.as("status"),
@@ -652,19 +654,22 @@ class PostgresAutomationRepository implements AutomationRepository {
           case ${status} when 'payment' then 'Payment link needed' when 'completed' then 'Waiting for client'
             when 'waiting' then 'Waiting for reply' when 'attention' then 'Review needed Not delivered' else 'New request' end)`.as("search_text"),
       }).from(inquiries).leftJoin(latest, eq(latest.inquiryId, inquiries.id))
-        .where(and(eq(inquiries.hotelId, hotel.id), gte(inquiries.createdAt,
-          sql<Date>`date_trunc('day', now() at time zone ${hotel.timezone}) at time zone ${hotel.timezone}`))));
+        .where(eq(inquiries.hotelId, hotel.id)));
 
       const reservationNumber = /^#?\s*(\d+)$/.exec(query.search)?.[1];
       const escapedSearch = query.search.replace(/[\\%_]/g, "\\$&");
-      const matches = and(query.status === "all" ? undefined : eq(rows.status, query.status),
+      const scope = query.scope === "actions" ? inArray(rows.status, ["new", "payment", "attention"])
+        : query.search ? undefined : eq(rows.receivedToday, true);
+      const matches = and(scope, query.status === "all" ? undefined : eq(rows.status, query.status),
         !query.search ? undefined : reservationNumber !== undefined
           ? sql`${rows.reservationNumber}::text = ${reservationNumber}`
           : sql`${rows.searchText} ilike ${`%${escapedSearch}%`}`);
       const [totals] = await db.with(rows).select({
-        total: sql<number>`count(*)::int`,
+        hasRequests: sql<boolean>`count(*) > 0`,
+        // Daily incoming metrics stay daily; outstanding actions survive midnight.
+        total: sql<number>`count(*) filter (where ${rows.receivedToday})::int`,
         new: sql<number>`count(*) filter (where ${rows.status} = 'new')::int`,
-        offerSent: sql<number>`count(*) filter (where ${rows.status} = 'waiting')::int`,
+        offerSent: sql<number>`count(*) filter (where ${rows.receivedToday} and ${rows.status} = 'waiting')::int`,
         requiresConfirmation: sql<number>`count(*) filter (where ${rows.status} = 'payment')::int`,
         requiresConfirmationTotalCents: sql<number>`coalesce(sum(${rows.totalCents}) filter (where ${rows.status} = 'payment'), 0)::float8`,
         needsAttention: sql<number>`count(*) filter (where ${rows.status} = 'attention')::int`,
@@ -672,7 +677,7 @@ class PostgresAutomationRepository implements AutomationRepository {
         nextProcessingDeadlineAt: sql<Date | null>`min(${rows.processingDeadlineAt}) filter (where ${rows.status} = 'new')`,
         evaluatedAt: sql<Date>`now()`,
       }).from(rows);
-      const { filteredTotal, nextProcessingDeadlineAt, evaluatedAt, ...counts } = totals!;
+      const { hasRequests, filteredTotal, nextProcessingDeadlineAt, evaluatedAt, ...counts } = totals!;
       const page = Math.min(query.page, Math.max(1, Math.ceil(filteredTotal / query.limit)));
       const order = query.sort === "asc" ? asc : desc;
       const pageRows = await db.with(rows).select({ inquiry: inquiries }).from(rows)
@@ -684,7 +689,7 @@ class PostgresAutomationRepository implements AutomationRepository {
         db.select().from(deliveries).where(and(eq(deliveries.hotelId, hotel.id), inArray(deliveries.inquiryId, ids))),
       ]);
       return { hotel: mapHotel(hotel), inquiries: pageRows.map(({ inquiry }) => mapInquiry(inquiry)),
-        offers: offerRows.map(mapOffer), deliveries: deliveryRows.map(mapDelivery), counts,
+        offers: offerRows.map(mapOffer), deliveries: deliveryRows.map(mapDelivery), counts, hasRequests,
         pagination: { page, limit: query.limit, total: filteredTotal },
         nextProcessingDeadlineAt: nextProcessingDeadlineAt ? new Date(nextProcessingDeadlineAt) : null,
         evaluatedAt: new Date(evaluatedAt) };

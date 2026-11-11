@@ -224,6 +224,7 @@ export type DashboardCounts = {
 };
 
 export type DashboardPageFacts = DashboardFacts & {
+  hasRequests: boolean;
   counts: DashboardCounts;
   pagination: DashboardPagination;
   nextProcessingDeadlineAt: Date | null;

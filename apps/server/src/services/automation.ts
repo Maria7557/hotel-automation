@@ -387,6 +387,7 @@ export class AutomationService {
     const items = this.requestSummaries(facts, facts.evaluatedAt);
     return {
       hotel: { id: facts.hotel.id, name: facts.hotel.name, publicKey: facts.hotel.publicKey },
+      hasRequests: facts.hasRequests,
       counts: facts.counts,
       pagination: facts.pagination,
       nextProcessingDeadlineAt: facts.nextProcessingDeadlineAt?.toISOString() ?? null,

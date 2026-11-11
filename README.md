@@ -80,6 +80,14 @@ Website requests send offers automatically unless the guest leaves a non-blank n
 
 The authenticated editor endpoints are `GET /v1/inquiries/:inquiryId/offer-editor` and `POST /v1/inquiries/:inquiryId/offers/preview`. Send using `POST /v1/inquiries/:inquiryId/offers` with an `Idempotency-Key`, `baseOfferId` (or `null` for the first set), and 1–6 `offers`. The current editor uses `pricingMode: "automatic"`, `roomId`, `planCode`, stay settings, selected `extraIds`, optional discount/deposit/policy and `quotedTotalCents`; catalog prices are never accepted from the client. Legacy staff clients can still send an explicit manual total, recorded with `pricingSource: "staff"`. Settings use `GET/PUT /v1/offer-settings`. Run PostgreSQL concurrency and persistence checks with `OFFERS_TEST_DATABASE_URL` pointing to a disposable test database.
 
+## Request dashboard date scopes
+
+**All incoming** and its total show requests received today in the hotel's timezone. Its status filters remain within today when search is empty. Searching by reservation number, guest, room or board searches across all dates and keeps the daily total unchanged. Clearing search returns to today's list.
+
+**To do** includes all outstanding new, payment-link-needed and attention requests, including requests from previous days. Its action counts and pending payment value use that same all-date scope, independent of the current search, filter or page. Marking a payment link as sent removes the request from To do but preserves exact-number search and client history.
+
+The dashboard API accepts `scope=today` (default) or `scope=actions`. Deploy the server before the updated staff app; the older server rejects the new query field. No database migration is required. Run the PostgreSQL regression tests with `DASHBOARD_TEST_DATABASE_URL` pointing to a disposable database.
+
 ## Форма для сайта
 
 После создания отеля и добавления домена в intake settings вставьте на сайт:

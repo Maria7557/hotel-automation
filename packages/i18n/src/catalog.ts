@@ -1,5 +1,7 @@
 // English source messages are stable keys; interpolation names must match.
 export const italian = {
+  "Loading requests…": "Caricamento richieste…",
+  "Searching requests from all dates.": "Ricerca nelle richieste di tutte le date.",
   "App language": "Lingua dell’app",
   "Language saved on this device. Could not sync to your account. Try again.": "Lingua salvata su questo dispositivo. Sincronizzazione con l’account non riuscita. Riprova.",
   " Check the channel connection if it stays unavailable; sending resumes automatically when it is ready.": " Controlla la connessione del canale se resta indisponibile; l’invio riprenderà automaticamente quando sarà pronto.",

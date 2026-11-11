@@ -47,6 +47,7 @@ export type HotelRequest = {
 };
 
 export type DashboardSnapshot = {
+  hasRequests: boolean;
   totalCount: number;
   newCount: number;
   waitingCount: number;

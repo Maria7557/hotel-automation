@@ -1,12 +1,12 @@
 import { locale as uiLocale, getLanguage, t } from "../i18n";
 import { requestLabel } from "../requests/status";
 import { AUTOMATIC_SENDING_TIMEOUT_MS, AUTOMATIC_SENDING_TIMEOUT_REASON } from "@hotel/contracts";
-import { DASHBOARD_PAGE_SIZE, OFFER_VALIDITY_MS, dashboardQuerySchema, type DashboardQuery, type InquiryFormInput, type OfferEditorData, type OfferQuote, type OfferSettings, type ReservationOffer, type SendReservationOffersInput } from "@hotel/contracts";
+import { DASHBOARD_PAGE_SIZE, OFFER_VALIDITY_MS, dashboardQuerySchema, dashboardIncludesRequest, type DashboardQuery, type InquiryFormInput, type OfferEditorData, type OfferQuote, type OfferSettings, type ReservationOffer, type SendReservationOffersInput } from "@hotel/contracts";
 import { demoOfferEditor, getDemoOfferSettings, prefillDemoOffers, quoteDemoOffer, saveDemoOfferSettings } from "./demo-offers";
 import type { ClientFilters, ClientFilterOptions, ClientPage, ClientHistory, ClientInput, ClientProfile, RequestClientStatus } from "./types";
 import { Platform } from "react-native";
 import * as SecureStore from "expo-secure-store";
-import { mockDashboard, refreshDemoSendingStatuses } from "./mock";
+import { mockDashboard, mockProfile, refreshDemoSendingStatuses } from "./mock";
 import type {
   AuthSession,
   DashboardSnapshot,
@@ -68,6 +68,7 @@ type ApiHotel = {
 type ApiDeliveryState = NonNullable<DeliverySummary["state"]>;
 
 type ApiDashboard = {
+  hasRequests: boolean;
   nextProcessingDeadlineAt?: string | null;
   counts: { total: number; new: number; offerSent: number; requiresConfirmation: number; requiresConfirmationTotalCents: number; needsAttention: number };
   pagination: DashboardSnapshot["pagination"];
@@ -679,17 +680,20 @@ export const apiClient = {
       await new Promise((resolve) => setTimeout(resolve, 240));
       refreshDemoSendingStatuses();
       const requests = mockDashboard.requests;
+      const day = new Intl.DateTimeFormat("en-CA", { timeZone: mockProfile.timezone });
+      const today = day.format(new Date());
+      const receivedToday = (request: HotelRequest) => day.format(new Date(request.receivedAt)) === today;
       const reservationNumber = /^#?\s*(\d+)$/.exec(query.search)?.[1];
-      const filtered = requests.filter((request) => (query.status === "all" || request.status === query.status) && (!query.search ||
+      const filtered = requests.filter((request) => dashboardIncludesRequest(query, request.status, receivedToday(request)) && (query.status === "all" || request.status === query.status) && (!query.search ||
         (reservationNumber !== undefined ? request.reservationNumber === reservationNumber :
           [request.guestName, request.mealPlan ?? "", request.email.recipient ?? "", request.whatsapp.recipient ?? "", request.stayLabel, request.roomLabel, request.guestLabel, request.statusLabel]
             .some((value) => value.toLocaleLowerCase().includes(query.search.toLocaleLowerCase())))));
       const direction = query.sort === "asc" ? 1 : -1;
       filtered.sort((left, right) => direction * (Date.parse(left.receivedAt) - Date.parse(right.receivedAt) || left.id.localeCompare(right.id)));
       const page = Math.min(query.page, Math.max(1, Math.ceil(filtered.length / query.limit)));
-      return { totalCount: requests.length,
+      return { hasRequests: requests.length > 0, totalCount: requests.filter(receivedToday).length,
         newCount: requests.filter((request) => request.status === "new").length,
-        waitingCount: requests.filter((request) => request.status === "waiting").length,
+        waitingCount: requests.filter((request) => receivedToday(request) && request.status === "waiting").length,
         attentionCount: requests.filter((request) => request.status === "attention").length,
         paymentPendingCount: requests.filter((request) => request.status === "payment").length,
         paymentPendingTotalCents: requests.filter((request) => request.status === "payment").reduce((total, request) => total + request.totalCents, 0),
@@ -795,6 +799,7 @@ function countLabel(value: number, singular: string, plural: string): string {
 
 function mapDashboard(input: ApiDashboard): DashboardSnapshot {
   return {
+    hasRequests: input.hasRequests,
     nextProcessingDeadlineAt: input.nextProcessingDeadlineAt ?? null,
     totalCount: input.counts.total,
     newCount: input.counts.new,

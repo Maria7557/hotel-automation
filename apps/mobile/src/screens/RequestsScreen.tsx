@@ -63,6 +63,7 @@ export function RequestsScreen({ profile, demo, reloadVersion, onOpenProfile, on
   const [creating, setCreating] = useState(false);
   const [createdMessage, setCreatedMessage] = useState<string | null>(null);
 
+  const scope: DashboardQuery["scope"] = viewMode === "actions" ? "actions" : "today";
   const status = viewMode === "actions" ? actionFilter : allFilter;
   const search = viewMode === "all" ? debouncedSearch : "";
   const load = useCallback(async (refresh = false) => {
@@ -71,7 +72,7 @@ export function RequestsScreen({ profile, demo, reloadVersion, onOpenProfile, on
     setRefreshing(refresh);
     setError(null);
     try {
-      const nextDashboard = await apiClient.getDashboard({ demo, status, search, sort, page, limit: DASHBOARD_PAGE_SIZE });
+      const nextDashboard = await apiClient.getDashboard({ demo, scope, status, search, sort, page, limit: DASHBOARD_PAGE_SIZE });
       if (sequence === requestSequence.current) setDashboard(nextDashboard);
     } catch {
       if (sequence === requestSequence.current) setError("Could not load requests. Check your connection and try again.");
@@ -82,7 +83,7 @@ export function RequestsScreen({ profile, demo, reloadVersion, onOpenProfile, on
         setRefreshing(false);
       }
     }
-  }, [demo, status, search, sort, page]);
+  }, [demo, scope, status, search, sort, page]);
   const latestLoad = useRef(load);
   latestLoad.current = load;
 
@@ -157,7 +158,7 @@ export function RequestsScreen({ profile, demo, reloadVersion, onOpenProfile, on
       : t("Request #{{v0}} saved for review. No guest message was sent.", { v0: result.reservationNumber }));
   }} /> : null;
 
-  if (loading) return <View style={[uiStyles.screen, styles.loading]} accessibilityLabel={t("Loading requests")}><ActivityIndicator color={theme.colors.action} size="large" /><Text style={styles.loadingText}>{t("Loading today’s worklist…")}</Text></View>;
+  if (loading) return <View style={[uiStyles.screen, styles.loading]} accessibilityLabel={t("Loading requests")}><ActivityIndicator color={theme.colors.action} size="large" /><Text style={styles.loadingText}>{t("Loading requests…")}</Text></View>;
   if (!dashboard) return <View style={[uiStyles.screen, styles.errorState]}><EmptyState title={t("Requests unavailable")} description={error ?? t("Try loading again.")} /><Button onPress={() => void load()}>{t("Try again")}</Button></View>;
 
   const setupComplete = Boolean(profile.name && profile.city && profile.countryCode)
@@ -167,7 +168,7 @@ export function RequestsScreen({ profile, demo, reloadVersion, onOpenProfile, on
     && connections.some((connection) => connection.kind === "waha" && connection.state === "connected")
     && profile.allowedOrigins.length > 0;
 
-  if (!demo && dashboard.totalCount === 0 && !setupComplete) {
+  if (!demo && !dashboard.hasRequests && !setupComplete) {
     return <><SetupPath
       profile={profile}
       connections={connections}
@@ -321,6 +322,7 @@ function DashboardHeader(props: {
       {connectionNames.length > 0 && actionFilter === "attention" ? <View style={styles.requestAlert}><InlineState tone="danger">{t("Reconnect")}{" "}{connectionNames.join(" and ")}.</InlineState></View> : null}
     </> : <>
       <View style={styles.titleBlock}><Text style={styles.pageTitle}>{t("All incoming")}</Text><Text style={styles.pageSubtitle}>{dashboard.totalCount} {" "}{t("requests received today.")}</Text></View>
+      {searchQuery.trim() ? <Text style={styles.pageSubtitle}>{t("Searching requests from all dates.")}</Text> : null}
       <View style={styles.searchField}>
         <Search size={20} color={theme.colors.textMuted} />
         <TextInput accessibilityLabel={t("Search requests by reservation number, guest, room or board")} value={searchQuery} onChangeText={setSearchQuery} maxLength={160} placeholder={t("Search #number, guest, room or board")} placeholderTextColor={theme.colors.textMuted} style={styles.searchInput} returnKeyType="search" />
