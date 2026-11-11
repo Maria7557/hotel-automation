@@ -40,3 +40,11 @@ download, and recovery after retry before deploying. Verify the public bundle
 response has `Content-Encoding: gzip` when requested with `Accept-Encoding: gzip`;
 a successful API health check alone does not verify that the browser can download
 and start the application.
+
+Session restoration and the hotel lookup each have a 10-second deadline, followed
+by an English/Italian error and a session retry action. Other API requests have a
+30-second deadline; image uploads, message tests, and SMTP setup allow 90 seconds.
+Contacts retain their separate 4-second deadline. Deadlines also cover response
+bodies. Requests are not automatically replayed: a timed-out write tells staff to
+refresh before trying again because the server may still complete the action.
+Web text renders with fallback fonts while custom fonts load or if they fail.

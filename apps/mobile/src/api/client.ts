@@ -7,6 +7,7 @@ import type { ClientFilters, ClientFilterOptions, ClientPage, ClientHistory, Cli
 import { Platform } from "react-native";
 import * as SecureStore from "expo-secure-store";
 import { mockDashboard, refreshDemoSendingStatuses } from "./mock";
+import { requestJson, RequestTimeoutError, SESSION_REQUEST_TIMEOUT_MS, SLOW_REQUEST_TIMEOUT_MS } from "./request-json";
 import type {
   AuthSession,
   DashboardSnapshot,
@@ -151,7 +152,7 @@ async function clearToken(): Promise<void> {
 
 async function apiRequest<T>(
   path: string,
-  options: RequestInit = {},
+  options: RequestInit & { timeoutMs?: number } = {},
   token?: string | null,
   clearUnauthorized = true,
 ): Promise<T> {
@@ -163,19 +164,28 @@ async function apiRequest<T>(
   if (token && token !== webCookieSession) headers.set("Authorization", `Bearer ${token}`);
 
   let response: Response;
+  let payload: unknown;
+  const { timeoutMs, ...requestOptions } = options;
   try {
-    response = await fetch(`${baseUrl}${path}`, {
-      ...options,
+    const result = await requestJson(`${baseUrl}${path}`, {
+      ...requestOptions,
       headers,
       ...(Platform.OS === "web" ? { credentials: "include" as const } : {}),
-    });
-  } catch {
+    }, timeoutMs);
+    response = result.response;
+    payload = result.body;
+  } catch (error) {
+    if (error instanceof RequestTimeoutError) {
+      const readOnly = ["GET", "HEAD", "OPTIONS"].includes((options.method ?? "GET").toUpperCase());
+      throw new ApiError("REQUEST_TIMEOUT", readOnly ? error.message
+        : "The server took too long to respond. The action may still complete. Refresh before trying again.");
+    }
     throw new ApiError("NETWORK_ERROR", "Could not reach the server. Check your connection and try again.");
   }
 
   if (response.status === 204) return undefined as T;
 
-  const body = (await response.json().catch(() => null)) as (ApiErrorPayload & T) | null;
+  const body = payload as (ApiErrorPayload & T) | null;
   if (!response.ok) {
     if (response.status === 401 && token && clearUnauthorized) await clearToken();
     const serverError = body?.error;
@@ -233,10 +243,7 @@ async function requireToken(): Promise<string> {
 // Contacts have their own short timeout and never participate in dashboard loading.
 async function clientRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
   const token = await requireToken();
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 4000);
-  try { return await apiRequest<T>(path, { ...options, signal: controller.signal }, token, false); }
-  finally { clearTimeout(timeout); }
+  return apiRequest<T>(path, { ...options, timeoutMs: 4000 }, token, false);
 }
 
 export const apiClient = {
@@ -287,7 +294,7 @@ export const apiClient = {
     try {
       const response = await apiRequest<{ data: { user: SessionUser } }>(
         "/v1/auth/session",
-        {},
+        { timeoutMs: SESSION_REQUEST_TIMEOUT_MS },
         token,
       );
       if (Platform.OS === "web") volatileWebToken = webCookieSession;
@@ -336,7 +343,7 @@ export const apiClient = {
 
   async getHotel(): Promise<HotelProfile> {
     const token = await requireToken();
-    const response = await apiRequest<{ data: { hotel: ApiHotel } }>("/v1/hotel", {}, token);
+    const response = await apiRequest<{ data: { hotel: ApiHotel } }>("/v1/hotel", { timeoutMs: SESSION_REQUEST_TIMEOUT_MS }, token);
     return mapHotel(response.data.hotel);
   },
 
@@ -431,7 +438,7 @@ export const apiClient = {
     const token = await requireToken();
     const response = await apiRequest<{ data: { url: string } }>(
       "/v1/media/images",
-      { method: "POST", body: JSON.stringify(input) },
+      { method: "POST", body: JSON.stringify(input), timeoutMs: SLOW_REQUEST_TIMEOUT_MS },
       token,
     );
     return response.data.url;
@@ -493,7 +500,7 @@ export const apiClient = {
     const token = await requireToken();
     const response = await apiRequest<{ data: TestSendResult }>(
       "/v1/hotel/message-settings/test-send",
-      { method: "POST", body: JSON.stringify({ channel, recipient, sample: { language } }) },
+      { method: "POST", body: JSON.stringify({ channel, recipient, sample: { language } }), timeoutMs: SLOW_REQUEST_TIMEOUT_MS },
       token,
     );
     return response.data;
@@ -620,7 +627,7 @@ export const apiClient = {
     const token = await requireToken(); const response = await apiRequest<{ data: { authorizationUrl: string; expiresAt: string } }>(`/v1/connections/mail/${provider}/oauth/start`, { method: "POST", body: JSON.stringify({ email }) }, token); return response.data;
   },
   async connectSmtp(input: { email: string; hostname: string; port: 465 | 587; username: string; appPassword: string; encryption: "tls" | "starttls" }): Promise<ConnectionStatus> {
-    const token = await requireToken(); const response = await apiRequest<{ data: { connection: ConnectionStatus } }>("/v1/connections/mail/smtp", { method: "POST", body: JSON.stringify(input) }, token); return response.data.connection;
+    const token = await requireToken(); const response = await apiRequest<{ data: { connection: ConnectionStatus } }>("/v1/connections/mail/smtp", { method: "POST", body: JSON.stringify(input), timeoutMs: SLOW_REQUEST_TIMEOUT_MS }, token); return response.data.connection;
   },
 
   async createFormRequest(input: InquiryFormInput, idempotencyKey: string, options: { demo?: boolean } = {}): Promise<ManualInquiryResult> {
@@ -883,6 +890,7 @@ export function authErrorMessage(error: unknown): string {
   const messages: Record<string, string> = {
     API_NOT_CONFIGURED: error.message,
     NETWORK_ERROR: error.message,
+    REQUEST_TIMEOUT: error.message,
     EMAIL_IN_USE: "An account with this email already exists. Try signing in.",
     INVALID_CREDENTIALS: "Incorrect email or password.",
     VALIDATION_ERROR: "Check the fields and try again.",
