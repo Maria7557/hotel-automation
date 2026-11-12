@@ -52,3 +52,28 @@ continues handling requests if the contact worker is stopped.
    Deploy API changes before a frontend that requires new API parameters.
 7. Verify `/health`, both hotel services, the public app bundle, the retained legal
    pages, and recent service errors. Do not modify unrelated sites or services.
+
+## Web startup and script delivery
+
+The host template enables gzip for the JavaScript bundle and returns 404 for
+missing bundles. Apply this location block to the existing Ospio HTTPS host when
+releasing; this checked-in HTTP template does not replace its live TLS
+configuration. Validate the edited configuration with `nginx -t` before reload.
+Preserve the separately maintained `privacy.html`, `terms.html`, and `terms-it.html`
+in the web directory.
+
+The exported HTML now displays a loading screen before the application JavaScript
+runs. A failed bundle download or a 20-second startup delay displays an English or
+Italian error with a retry button. Check a fresh browser load, a failed script
+download, and recovery after retry before deploying. Verify the public bundle
+response has `Content-Encoding: gzip` when requested with `Accept-Encoding: gzip`;
+a successful API health check alone does not verify that the browser can download
+and start the application.
+
+Session restoration and the hotel lookup each have a 10-second deadline, followed
+by an English/Italian error and a session retry action. Other API requests have a
+30-second deadline; image uploads, message tests, and SMTP setup allow 90 seconds.
+Contacts retain their separate 4-second deadline. Deadlines also cover response
+bodies. Requests are not automatically replayed: a timed-out write tells staff to
+refresh before trying again because the server may still complete the action.
+Web text renders with fallback fonts while custom fonts load or if they fail.

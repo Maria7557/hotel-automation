@@ -256,6 +256,8 @@ export const italian = {
   "Could not open {{v0}}. Copy the contact and try again.": "Impossibile aprire {{v0}}. Copia il recapito e riprova.",
   "Could not prepare offers.": "Impossibile preparare le offerte.",
   "Could not reach the server. Check your connection and try again.": "Impossibile raggiungere il server. Controlla la connessione e riprova.",
+  "The server took too long to respond. Please try again.": "Il server ha impiegato troppo tempo a rispondere. Riprova.",
+  "The server took too long to respond. The action may still complete. Refresh before trying again.": "Il server ha impiegato troppo tempo a rispondere. L’operazione potrebbe ancora essere completata. Aggiorna prima di riprovare.",
   "Could not restart {{v0}}. The incident was recorded on the connection.": "Impossibile riavviare {{v0}}. Il problema è stato registrato nella connessione.",
   "Could not save offer settings.": "Impossibile salvare le impostazioni delle offerte.",
   "Could not send offers. Try again.": "Impossibile inviare le offerte. Riprova.",

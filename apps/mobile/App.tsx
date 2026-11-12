@@ -2,8 +2,8 @@ import { t, translateLabel, getLanguage } from "./src/i18n";
 import { useTranslation } from "react-i18next";
 import { TranslationProvider, setLanguage } from "./src/i18n/Provider";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
-import { useFonts } from "expo-font";
+import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from "react-native";
+import { FontDisplay, useFonts } from "expo-font";
 import { Inter_400Regular } from "@expo-google-fonts/inter/400Regular";
 import { Inter_500Medium } from "@expo-google-fonts/inter/500Medium";
 import { Inter_600SemiBold } from "@expo-google-fonts/inter/600SemiBold";
@@ -51,13 +51,14 @@ function AppContent() {
 }
 
 function HotelApp() {
-  const [fontsLoaded] = useFonts({
-    Inter_400Regular,
-    Inter_500Medium,
-    Inter_600SemiBold,
-    Inter_700Bold,
+  const [fontsLoaded, fontError] = useFonts({
+    Inter_400Regular: { uri: Inter_400Regular, display: FontDisplay.SWAP },
+    Inter_500Medium: { uri: Inter_500Medium, display: FontDisplay.SWAP },
+    Inter_600SemiBold: { uri: Inter_600SemiBold, display: FontDisplay.SWAP },
+    Inter_700Bold: { uri: Inter_700Bold, display: FontDisplay.SWAP },
   });
   const [appState, setAppState] = useState<AppState>({ status: "booting" });
+  const [sessionAttempt, setSessionAttempt] = useState(0);
   const [tab, setTab] = useState<Tab>("requests");
   const [logoutLoading, setLogoutLoading] = useState(false);
   const [logoutError, setLogoutError] = useState<string | null>(null);
@@ -104,7 +105,7 @@ function HotelApp() {
     };
     void restore();
     return () => { active = false; };
-  }, []);
+  }, [sessionAttempt]);
 
   const handleLogout = async () => {
     details.clear();
@@ -142,7 +143,8 @@ function HotelApp() {
     }
   };
 
-  if (!fontsLoaded) return <View style={styles.loadingCanvas} />;
+  // Web remains usable with fallback fonts while custom fonts load or if they fail.
+  if (Platform.OS !== "web" && !fontsLoaded && !fontError) return <View style={styles.loadingCanvas} />;
 
   const profile = appState.status === "authenticated" ? appState.profile : appState.status === "demo" ? appState.profile : null;
   const openTab = (nextTab: Tab) => {
@@ -174,6 +176,12 @@ function HotelApp() {
             {appState.status === "signedOut" && appState.error ? (
               <View style={styles.restoreError} accessibilityRole="alert">
                 <Text style={styles.restoreErrorText}>{translateLabel(appState.error)}</Text>
+                <Pressable accessibilityRole="button" onPress={() => {
+                  setAppState({ status: "booting" });
+                  setSessionAttempt((attempt) => attempt + 1);
+                }} style={styles.restoreRetry}>
+                  <Text style={styles.restoreErrorText}>{t("Try again")}</Text>
+                </Pressable>
               </View>
             ) : null}
             <AuthFlow
@@ -310,6 +318,7 @@ const styles = StyleSheet.create({
   bootText: { ...theme.typography.bodySmall, color: theme.colors.textSecondary },
   restoreError: { backgroundColor: theme.colors.dangerTint, paddingHorizontal: theme.spacing[4], paddingVertical: theme.spacing[3] },
   restoreErrorText: { ...theme.typography.bodySmallMedium, color: theme.colors.danger, textAlign: "center" },
+  restoreRetry: { alignSelf: "center", paddingHorizontal: theme.spacing[4], paddingVertical: theme.spacing[3] },
   navSafeArea: { backgroundColor: theme.colors.surface, borderTopWidth: 1, borderTopColor: theme.colors.border },
   nav: { minHeight: 68, flexDirection: "row", paddingHorizontal: theme.spacing[4], paddingTop: theme.spacing[2], gap: theme.spacing[2] },
   navItem: { flex: 1, minHeight: 54, borderRadius: theme.radii.md, alignItems: "center", justifyContent: "center", gap: theme.spacing[1] },

@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="%LANG_ISO_CODE%">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
+    <title>%WEB_TITLE%</title>
+    <style>
+      html, body { height: 100%; margin: 0; }
+      body { display: flex; flex-direction: column; overflow: hidden; background: #f8f9fb; }
+      #root { display: flex; flex: 1; min-height: 0; }
+      #ospio-startup { position: absolute; inset: 0 0 32px; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px; text-align: center; font: 16px/1.5 system-ui, sans-serif; color: #182230; }
+      #ospio-startup[hidden], #ospio-retry[hidden] { display: none; }
+      #ospio-startup h1 { margin: 0 0 12px; font-size: 28px; }
+      #ospio-startup p { max-width: 420px; }
+      #ospio-retry { min-height: 44px; padding: 10px 24px; border: 0; border-radius: 12px; background: #1769ff; color: white; font: inherit; cursor: pointer; }
+      #ospio-legal-footer { flex: 0 0 auto; text-align: center; padding: 7px 12px; background: #f7faf9; font: 12px/1.5 system-ui, sans-serif; }
+      #ospio-legal-footer a { color: #176b60; text-decoration: underline; }
+    </style>
+  </head>
+  <body>
+    <noscript>Enable JavaScript to use Ospio. / Attiva JavaScript per usare Ospio.</noscript>
+    <div id="ospio-startup" role="status" aria-live="polite">
+      <h1>Ospio</h1>
+      <p id="ospio-startup-message">Loading… / Caricamento…</p>
+      <button id="ospio-retry" type="button" hidden>Try again / Riprova</button>
+    </div>
+    <div id="root"></div>
+    <footer id="ospio-legal-footer"><a href="/privacy.html">Privacy Policy</a> · <a href="/terms.html">Terms and Conditions</a> · <a href="/terms-it.html">Termini e condizioni</a></footer>
+    <script>
+      // This runs before the app bundle, so a failed download cannot leave a blank page.
+      (function () {
+        var panel = document.getElementById("ospio-startup");
+        var message = document.getElementById("ospio-startup-message");
+        var retry = document.getElementById("ospio-retry");
+        var root = document.getElementById("root");
+        var language = navigator.language;
+        try { language = localStorage.getItem("hotel.ui.language") || language; } catch (_) {}
+        var italian = /^it(?:[-_]|$)/i.test(language || "");
+        message.textContent = italian ? "Caricamento di Ospio…" : "Loading Ospio…";
+        retry.textContent = italian ? "Riprova" : "Try again";
+        retry.addEventListener("click", function () { location.reload(); });
+
+        function failed() {
+          if (panel.hidden) return;
+          clearTimeout(deadline);
+          panel.setAttribute("role", "alert");
+          message.textContent = italian
+            ? "Impossibile caricare Ospio. Controlla la connessione e riprova."
+            : "Ospio could not load. Check your connection and try again.";
+          retry.hidden = false;
+        }
+        function scriptFailed(event) {
+          if (event.target instanceof HTMLScriptElement && event.target.src.indexOf("/_expo/") !== -1) failed();
+        }
+        window.addEventListener("error", scriptFailed, true);
+        var deadline = setTimeout(failed, 20000);
+        var observer = new MutationObserver(function () {
+          if (!root.hasChildNodes()) return;
+          panel.hidden = true;
+          clearTimeout(deadline);
+          window.removeEventListener("error", scriptFailed, true);
+          observer.disconnect();
+        });
+        observer.observe(root, { childList: true });
+      })();
+    </script>
+  </body>
+</html>
