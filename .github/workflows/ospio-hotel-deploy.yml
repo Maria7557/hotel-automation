@@ -20,6 +20,8 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    outputs:
+      artifact_id: ${{ steps.artifact.outputs.artifact-id }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -28,7 +30,7 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s deploy -p test_ospio_release.py
+      - run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s deploy -p "test_ospio_*.py"
       - run: npm ci
       - run: npm run check
       - run: npm exec --workspace @hotel/server -- drizzle-kit check
@@ -55,7 +57,8 @@ jobs:
           tar -czf ospio-hotel-release.tar.gz -C release commit source.tar.gz build.tar.gz
           checksum="$(sha256sum ospio-hotel-release.tar.gz | cut -d ' ' -f 1)"
           python3 deploy/ospio_release.py ospio-hotel-release.tar.gz "$RUNNER_TEMP/ospio-validated" "$GITHUB_SHA" "$checksum"
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - id: artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ospio-hotel-release
           path: ospio-hotel-release.tar.gz
@@ -63,6 +66,9 @@ jobs:
           retention-days: 3
 
   production:
+    permissions:
+      contents: read
+      actions: read
     if: github.ref == 'refs/heads/main' && (inputs.deploy_to_production || inputs.stage_on_server)
     needs: build
     runs-on: ubuntu-latest
@@ -80,6 +86,8 @@ jobs:
       - name: Send release to the restricted Hotel deploy entrypoint
         shell: bash
         env:
+          ARTIFACT_ID: ${{ needs.build.outputs.artifact_id }}
+          GH_TOKEN: ${{ github.token }}
           LIVE_DEPLOY: ${{ inputs.deploy_to_production }}
           DEPLOY_READY: ${{ vars.OSPIO_HOTEL_DEPLOY_READY }}
           DEPLOY_KEY: ${{ secrets.OSPIO_HOTEL_DEPLOY_KEY }}
@@ -103,11 +111,22 @@ jobs:
           trap 'rm -rf "$auth"' EXIT
           printf '%s\n' "$DEPLOY_KEY" > "$auth/key"
           printf '%s\n' "$KNOWN_HOSTS" > "$auth/known_hosts"
-          checksum="$(sha256sum ospio-hotel-release.tar.gz | cut -d ' ' -f 1)"
+          if [[ "$mode" == ospio-hotel-deploy ]]; then
+            [[ "$ARTIFACT_ID" =~ ^[0-9]+$ ]]
+            # Send the untouched GitHub ZIP. The target independently checks its
+            # digest and provenance against GitHub's public API, without our token.
+            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID/zip" > "$auth/github.zip"
+            payload="$auth/github.zip"
+            command="$mode $GITHUB_SHA $ARTIFACT_ID $GITHUB_RUN_ID"
+          else
+            payload=ospio-hotel-release.tar.gz
+            checksum="$(sha256sum "$payload" | cut -d ' ' -f 1)"
+            command="$mode $GITHUB_SHA $checksum"
+          fi
           ssh -T -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=yes \
             -o IdentitiesOnly=yes -o UserKnownHostsFile="$auth/known_hosts" \
             -i "$auth/key" ospio-hotel-deploy@ospio.online \
-            "$mode $GITHUB_SHA $checksum" < ospio-hotel-release.tar.gz
+            "$command" < "$payload"
       - name: Verify the public API and app after deployment
         if: inputs.deploy_to_production
         run: |
