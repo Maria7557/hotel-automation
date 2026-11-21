@@ -1,0 +1,118 @@
+name: Deploy Ospio Hotel
+
+on:
+  workflow_dispatch:
+    inputs:
+      stage_on_server:
+        description: 'Upload a verified candidate to isolated Ospio staging; do not touch the running site'
+        type: boolean
+        default: false
+      deploy_to_production:
+        description: 'Publish this main commit to Ospio Hotel (off = verify and build only)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s deploy -p test_ospio_release.py
+      - run: npm ci
+      - run: npm run check
+      - run: npm exec --workspace @hotel/server -- drizzle-kit check
+      - run: npm run build --workspace @hotel/server
+      - run: npm run export --workspace @hotel/mobile
+        env:
+          EXPO_PUBLIC_API_URL: https://ospio.online
+          EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID: ${{ vars.OSPIO_WEB_GOOGLE_WEB_CLIENT_ID }}
+          EXPO_PUBLIC_SUPPORT_PHONE: ${{ vars.OSPIO_WEB_SUPPORT_PHONE }}
+          EXPO_PUBLIC_SUPPORT_EMAIL: ${{ vars.OSPIO_WEB_SUPPORT_EMAIL }}
+          EXPO_PUBLIC_SUPPORT_WHATSAPP: ${{ vars.OSPIO_WEB_SUPPORT_WHATSAPP }}
+          EXPO_PUBLIC_SUPPORT_TELEGRAM: ${{ vars.OSPIO_WEB_SUPPORT_TELEGRAM }}
+      - name: Package the exact commit and build outputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          git archive --format=tar.gz --output=release/source.tar.gz "$GITHUB_SHA"
+          test -s apps/server/dist/index.js
+          test -s apps/server/dist/client-worker.js
+          test -s apps/mobile/dist/index.html
+          tar -czf release/build.tar.gz apps/server/dist apps/mobile/dist
+          printf '%s\n' "$GITHUB_SHA" > release/commit
+          tar -czf ospio-hotel-release.tar.gz -C release commit source.tar.gz build.tar.gz
+          checksum="$(sha256sum ospio-hotel-release.tar.gz | cut -d ' ' -f 1)"
+          python3 deploy/ospio_release.py ospio-hotel-release.tar.gz "$RUNNER_TEMP/ospio-validated" "$GITHUB_SHA" "$checksum"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ospio-hotel-release
+          path: ospio-hotel-release.tar.gz
+          if-no-files-found: error
+          retention-days: 3
+
+  production:
+    if: github.ref == 'refs/heads/main' && (inputs.deploy_to_production || inputs.stage_on_server)
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment:
+      name: ospio-hotel-production
+      url: https://ospio.online
+    concurrency:
+      group: ospio-hotel-production
+      cancel-in-progress: false
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ospio-hotel-release
+      - name: Send release to the restricted Hotel deploy entrypoint
+        shell: bash
+        env:
+          LIVE_DEPLOY: ${{ inputs.deploy_to_production }}
+          DEPLOY_READY: ${{ vars.OSPIO_HOTEL_DEPLOY_READY }}
+          DEPLOY_KEY: ${{ secrets.OSPIO_HOTEL_DEPLOY_KEY }}
+          KNOWN_HOSTS: ${{ secrets.OSPIO_HOTEL_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          mode=ospio-hotel-stage
+          if [[ "$LIVE_DEPLOY" == true ]]; then
+            if [[ "$DEPLOY_READY" != true ]]; then
+              echo "::error::Ospio Hotel production deployment is disabled."
+              exit 1
+            fi
+            mode=ospio-hotel-deploy
+          fi
+          if [[ -z "$DEPLOY_KEY" || -z "$KNOWN_HOSTS" ]]; then
+            echo "::error::Ospio Hotel production access has not been configured."
+            exit 1
+          fi
+          umask 077
+          auth="$(mktemp -d)"
+          trap 'rm -rf "$auth"' EXIT
+          printf '%s\n' "$DEPLOY_KEY" > "$auth/key"
+          printf '%s\n' "$KNOWN_HOSTS" > "$auth/known_hosts"
+          checksum="$(sha256sum ospio-hotel-release.tar.gz | cut -d ' ' -f 1)"
+          ssh -T -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=yes \
+            -o IdentitiesOnly=yes -o UserKnownHostsFile="$auth/known_hosts" \
+            -i "$auth/key" ospio-hotel-deploy@ospio.online \
+            "$mode $GITHUB_SHA $checksum" < ospio-hotel-release.tar.gz
+      - name: Verify the public API and app after deployment
+        if: inputs.deploy_to_production
+        run: |
+          curl --fail --silent --show-error --retry 4 --retry-connrefused https://ospio.online/health >/dev/null
+          curl --fail --silent --show-error https://ospio.online/ >/dev/null
+          for page in privacy.html terms.html terms-it.html; do
+            curl --fail --silent --show-error "https://ospio.online/$page" >/dev/null
+          done
