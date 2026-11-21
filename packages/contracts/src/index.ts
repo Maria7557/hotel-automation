@@ -9,3 +9,4 @@ export * from "./inquiry-form.js";
 export * from "./enquiry-details.js";
 export * from "./offers.js";
 export * from "./dashboard.js";
+export * from "./ui-diagnostics.js";

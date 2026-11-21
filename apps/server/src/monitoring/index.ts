@@ -54,7 +54,7 @@ export function attachMonitoring(app: FastifyInstance, env: Partial<SignalEnv>, 
         else app.addHook(name === "onRequest" ? "preValidation" : name, hook);
       } }, {
         ...credentials, platform: "server", service: "ospio-api", serviceVersion: env.SIGNAL_API_RELEASE ?? env.SIGNAL_RELEASE ?? "0.1.0",
-        strictPrivacy: false, maxQueueSize: 500, maxRetries: 5, maxQueueAgeMs: 3_600_000,
+        strictPrivacy: env.NODE_ENV === "production", maxQueueSize: 500, maxRetries: 5, maxQueueAgeMs: 3_600_000,
         getContext: (incoming) => {
           const request = incoming as FastifyRequest;
           return { ...request.signalIdentity, userId: request.currentUser?.id ?? "", userName: request.currentUser?.displayName ?? "",
@@ -88,7 +88,7 @@ export function createWorkerMonitor(env: SignalEnv, service = "ospio-client-work
   const credentials = signalCredentials({ endpoint: env.SIGNAL_ENDPOINT, environment: env.NODE_ENV === "production" ? "production" : "development",
     developmentKey: env.SIGNAL_WRITE_KEY_DEVELOPMENT, productionKey: env.SIGNAL_WRITE_KEY_PRODUCTION });
   if (!credentials) return null;
-  try { return createMonitor({ ...credentials, platform: "server", service, serviceVersion: env.SIGNAL_WORKER_RELEASE ?? env.SIGNAL_RELEASE ?? "0.1.0", strictPrivacy: false, maxRetries: 5, maxQueueAgeMs: 3_600_000,
+  try { return createMonitor({ ...credentials, platform: "server", service, serviceVersion: env.SIGNAL_WORKER_RELEASE ?? env.SIGNAL_RELEASE ?? "0.1.0", strictPrivacy: env.NODE_ENV === "production", maxRetries: 5, maxQueueAgeMs: 3_600_000,
     onDiagnostic: ({ reason, count }) => console.warn("Signal worker monitoring:", reason, count ?? 0) }); }
   catch { return null; }
 }
@@ -96,15 +96,41 @@ export function createWorkerMonitor(env: SignalEnv, service = "ospio-client-work
 type Monitor = ReturnType<typeof createMonitor>;
 type Logger = { info(fields: Record<string, unknown>, message: string): void; error(fields: Record<string, unknown>, message: string): void };
 export function monitoredLogger(logger: Logger, monitor: Monitor | null, placement: string): Logger {
+  const worker = placement === "deliveryWorker" ? "delivery" : placement === "clientWorker" ? "contacts" : null;
+  let lastActivity = -Infinity, failureWindow = Date.now(), failures = 0;
+  const legacy = (event: "activity" | "failed" | "unknown" | "retry") => {
+    if (!worker) return;
+    if (event !== "activity") {
+      const now = Date.now();
+      if (now - failureWindow >= 60_000) { failureWindow = now; failures = 0; }
+      if (failures++ >= 10) return;
+    }
+    const name = `${worker}.worker.${event}`;
+    if (event === "failed") monitor?.error(name, monitoringError(null));
+    else if (event === "activity") monitor?.info(name);
+    else monitor?.warn(name);
+  };
+  // Keep the production monitor’s existing worker signals alongside richer events.
+  observe(() => { if (worker) monitor?.info(`${worker}.worker.started`); });
   return {
     info(fields, message) {
       logger.info(fields, message);
+      observe(() => {
+        const now = Date.now();
+        if (now - lastActivity >= 60_000) { lastActivity = now; legacy("activity"); }
+        if (worker === "delivery") {
+          if (fields.state === "failed") legacy("failed");
+          else if (fields.state === "unknown") legacy("unknown");
+          else if (fields.state === "scheduled") legacy("retry");
+        }
+      });
       observe(() => monitor?.info("worker.log.info", { ...scope.getStore(), placement, source: "worker", attributes: {
         count: typeof fields.processed === "number" ? fields.processed : 1,
       } }));
     },
     error(fields, message) {
       logger.error(fields, message);
+      observe(() => legacy("failed"));
       observe(() => monitor?.error("worker.log.error", monitoringError(null), { ...scope.getStore(), placement, source: "worker",
         attributes: { failureCode: typeof fields.code === "string" && /^[A-Z][A-Z0-9_]{0,99}$/.test(fields.code) ? fields.code : "WORKER_FAILED" } }));
     },

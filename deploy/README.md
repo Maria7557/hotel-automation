@@ -87,7 +87,9 @@ Web text renders with fallback fonts while custom fonts load or if they fail.
 ## Manual deployment from GitHub
 
 The **Deploy Ospio Hotel** workflow only runs from `main`. Leave the production
-checkbox off to verify and build an artifact without accessing the server.
+and staging checkboxes off to verify and build without accessing the server.
+**Stage on server** validates the bundle and uploads only to the isolated
+receiver, without replacing API or web files.
 A collaborator with GitHub Write access can dispatch the workflow from **Actions**.
 The repository owner configures `ospio-hotel-production` to accept only the exact
 `main` branch before adding the two environment secrets (no repository-wide secrets).
@@ -95,8 +97,8 @@ Protect main against direct pushes and require review of deployment changes befo
 provisioning access. Do not share credentials between operators or with the
 Monitoring repository.
 
-Production requires a separately provisioned key and pinned host key. The server
-entrypoint is not installed by this workflow. It must accept the release bundle
+Production requires a separately provisioned key and pinned host key. The live cutover entrypoint is not installed by this workflow. The separately
+provisioned staging receiver accepts only `ospio-hotel-stage` and a status check. It must accept the release bundle
 on stdin only for `ospio-hotel-deploy <40-hex commit> <64-hex SHA-256>`, verify
 the checksum and embedded commit, and reject other commands and unsafe archives.
 Use a dedicated account with a forced command and no forwarding or interactive
@@ -110,3 +112,12 @@ current release uses it, resolve this difference before enabling deploys.
 Never copy confidential settings into `EXPO_PUBLIC_*`. After testing both
 the build configuration and server receiver, set the environment variable
 `OSPIO_HOTEL_DEPLOY_READY` to `true` to enable the production job.
+
+Local release checks:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s deploy -p test_ospio_release.py`
+- `python3 deploy/ospio_release.py BUNDLE DESTINATION COMMIT SHA256` checks both
+  archives and creates a verified staging tree without running application code.
+- The paired-directory switch and rollback are exercised in isolation. Do not
+  install or enable a live runner until PostgreSQL backup/migrations, both Hotel
+  services, and the web/API cutover have been exercised together outside production.

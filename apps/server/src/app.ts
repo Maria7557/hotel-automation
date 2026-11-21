@@ -20,6 +20,8 @@ import { registerHotelRoutes } from "./http/routes/hotels.js";
 import { registerInventoryRoutes } from "./http/routes/inventory.js";
 import { registerMediaRoutes } from "./http/routes/media.js";
 import { registerPlatformWhatsAppAdminRoutes } from "./http/routes/platform-whatsapp-admin.js";
+import { safeRequest, safeResponse, safeError, safeLogFields } from "./safe-logging.js";
+import { registerUiDiagnostics } from "./http/routes/ui-diagnostics.js";
 import { registerNotificationRoutes } from "./http/routes/notifications.js";
 import { AppError } from "./lib/errors.js";
 import { GoogleProvider } from "./providers/google.js";
@@ -70,16 +72,13 @@ export async function createApp(options: AppOptions): Promise<FastifyInstance> {
     trustProxy: ["127.0.0.1", "::1"],
     logger: options.logger
       ? {
-          redact: [
-            "req.headers.authorization",
-            "req.body.password",
-            "req.body.token",
-            "req.body.idToken",
-            "req.body.apiKey",
-            "req.body.appPassword",
-            "req.query.code",
-            "res.headers['set-cookie']",
-          ],
+          hooks: {
+            logMethod(args, method) {
+              if (args[0] && typeof args[0] === "object") method.call(this, safeLogFields(args[0]), "Application event");
+              else method.call(this, "Application event");
+            },
+          },
+          serializers: { req: safeRequest, res: safeResponse, err: safeError },
         }
       : false,
     bodyLimit: 128 * 1_024,
@@ -193,6 +192,7 @@ export async function createApp(options: AppOptions): Promise<FastifyInstance> {
   await registerMailConnectionRoutes(app, authService, mailService);
   await registerPlatformWhatsAppAdminRoutes(app, authService, platformWhatsAppAdminService);
   await registerNotificationRoutes(app, authService, notificationService);
+  await registerUiDiagnostics(app, authService, options.env);
   await registerHotelRoutes(app, authService, hotelService);
   await registerInventoryRoutes(app, authService, inventoryService);
   await registerMediaRoutes(app, authService, options.env.PUBLIC_BASE_URL);

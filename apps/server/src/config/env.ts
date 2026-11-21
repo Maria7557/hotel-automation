@@ -70,10 +70,19 @@ const envSchema = z.object({
 export type AppEnv = z.infer<typeof envSchema> & { corsOrigins: string[]; platformAdminEmails: string[] };
 
 export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
-  const parsed = envSchema.parse(source);
+  // Older production deployments entered only the canonical public HTTPS URL.
+  // Keep explicit APP_BASE_URL authoritative and run normal validation on the fallback.
+  const parsed = envSchema.parse({
+    ...source,
+    APP_BASE_URL: source.APP_BASE_URL ?? (source.NODE_ENV === "production" ? source.PUBLIC_BASE_URL : undefined),
+  });
 
   return {
     ...parsed,
+    // Production previously used one private server key. Never copy it to a
+    // public client, or use it as a fallback outside production.
+    SIGNAL_WRITE_KEY_PRODUCTION: parsed.SIGNAL_WRITE_KEY_PRODUCTION ??
+      (parsed.NODE_ENV === "production" ? optionalString.parse(source.SIGNAL_WRITE_KEY) : undefined),
     corsOrigins: parsed.CORS_ORIGINS.split(",")
       .map((origin) => origin.trim())
       .filter(Boolean),
