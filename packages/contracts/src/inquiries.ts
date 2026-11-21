@@ -3,6 +3,7 @@ import { isoDateSchema } from "./common.js";
 import { DEFAULT_GUEST_LANGUAGE } from "./languages.js";
 import { mealPlanSchema, occupancySchema } from "./entities.js";
 import { MAX_RESERVATION_OFFERS, reservationOfferInputSchema } from "./offers.js";
+import { enquiryDetailsSchema } from "./enquiry-details.js";
 
 export const manualRequestSourceSchema = z.enum(["phone", "walk_in", "website", "email", "whatsapp", "other"]);
 export type ManualRequestSource = z.infer<typeof manualRequestSourceSchema>;
@@ -24,6 +25,7 @@ export const manualInquiryInputSchema = z.object({
   }),
   mealPlan: mealPlanSchema,
   note: z.string().trim().max(2_000).default(""),
+  details: enquiryDetailsSchema.optional(),
   receivedVia: manualRequestSourceSchema.default("phone"),
   sendOffer: z.boolean().default(false),
   offers: z.array(reservationOfferInputSchema).min(1).max(MAX_RESERVATION_OFFERS).optional(),

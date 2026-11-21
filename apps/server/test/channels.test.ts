@@ -116,6 +116,41 @@ describe("message settings and channel connections", () => {
     expect(JSON.stringify(invalid.json())).toContain("Unknown template variable");
   });
 
+  it("saves European translations and uses Legacy copy for missing languages in previews and test sends", async () => {
+    const owner = await onboard(app, "owner@example.com", "Casa Blu");
+    const legacy = {
+      emailSubjectTemplate: "Offerta {{hotel_name}}",
+      emailBodyTemplate: "Corpo italiano per {{guest_name}} {{offer_url}}",
+      whatsappBodyTemplate: "Messaggio italiano per {{guest_name}} {{offer_url}}",
+    };
+    const french = {
+      emailSubjectTemplate: "Offre {{hotel_name}}",
+      emailBodyTemplate: "Bonjour {{guest_name}}, votre offre {{offer_url}}",
+      whatsappBodyTemplate: "Bonjour {{guest_name}}, votre offre {{offer_url}}",
+    };
+    const saved = await app.inject({ method: "PUT", url: "/v1/hotel/message-settings", headers: auth(owner.token),
+      payload: { ...legacy, templateLanguage: "it", translations: { fr: french } } });
+    expect(saved.statusCode, saved.body).toBe(200);
+    const loaded = await app.inject({ method: "GET", url: "/v1/hotel/message-settings", headers: auth(owner.token) });
+    expect(loaded.json().data.settings).toMatchObject({ ...legacy, templateLanguage: "it", translations: { fr: french } });
+
+    for (const channel of ["email", "whatsapp"] as const) {
+      const preview = await app.inject({ method: "POST", url: "/v1/hotel/message-settings/preview", headers: auth(owner.token),
+        payload: { channel, sample: { language: "fr" } } });
+      expect(preview.statusCode, preview.body).toBe(200);
+      expect(preview.json().data.preview.text).toContain("Bonjour Mario Rossi");
+      const fallback = await app.inject({ method: "POST", url: "/v1/hotel/message-settings/preview", headers: auth(owner.token),
+        payload: { channel, sample: { language: "de" } } });
+      expect(fallback.statusCode, fallback.body).toBe(200);
+      expect(fallback.json().data.preview.text).toContain("italiano per Mario Rossi");
+      const test = await app.inject({ method: "POST", url: "/v1/hotel/message-settings/test-send", headers: auth(owner.token),
+        payload: { channel, recipient: channel === "email" ? "guest@example.com" : "+393331234567", sample: { language: "fr" } } });
+      expect(test.statusCode, test.body).toBe(202);
+      expect(test.json().data.rendered.text).toContain("Bonjour Mario Rossi");
+    }
+    expect(providerFetchMock).not.toHaveBeenCalled();
+  });
+
   it("renders safe preview HTML and never appends PII to the offer URL", async () => {
     const owner = await onboard(app, "owner@example.com", "Casa <Blu>");
     await app.inject({

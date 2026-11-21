@@ -122,6 +122,12 @@ export function renderPublicOfferPage(snapshot: OfferSnapshot, context: PageRend
   const copy = copyFor(context.locale);
   const action = requireAcceptActionPath(context.acceptActionPath);
   const lang = languageFor(context.locale);
+  let collectorOrigin = "";
+  try {
+    const url = new URL(context.monitoring?.collectorOrigin ?? "");
+    if (["http:", "https:"].includes(url.protocol) && url.origin === context.monitoring?.collectorOrigin) collectorOrigin = url.origin;
+  } catch { /* Invalid optional telemetry must not change page rendering. */ }
+  const monitoringPolicy = collectorOrigin ? `; script-src 'self'; connect-src ${collectorOrigin}` : "";
   const languageHref = (language: "en" | "it"): string => {
     const query = new URLSearchParams();
     // Preview selection lives in the URL; real acceptance remains repository-backed.
@@ -172,8 +178,8 @@ export function renderPublicOfferPage(snapshot: OfferSnapshot, context: PageRend
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="robots" content="noindex,nofollow,noarchive,nosnippet">
   <meta name="referrer" content="no-referrer">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https:; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'">
-  <title>${escapeHtml(copy.title(snapshot.hotelSnapshot.name))}</title>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https:; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'${monitoringPolicy}">
+  ${collectorOrigin ? '<script defer src="/signal.js" data-signal-screen="Offer"></script>\n  ' : ""}<title>${escapeHtml(copy.title(snapshot.hotelSnapshot.name))}</title>
   <style>
     .offer-details{display:grid;gap:8px;font-size:14px;color:#4a4a4a;white-space:pre-line}
     .booking-link{display:block;margin-top:24px;padding:16px 20px;background:#1769ff;color:#fff;border-radius:12px;text-align:center;text-decoration:none;font-weight:600}

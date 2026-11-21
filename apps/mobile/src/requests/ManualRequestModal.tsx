@@ -1,21 +1,22 @@
+import { Switch } from "../monitoring/controls";
+import { monitoredAction } from "../monitoring/actions";
+import { scopedApiClient } from "../api/client";
 import { t, translateLabel, getLanguage, locale } from "../i18n";
 import { validationMessage } from "@hotel/i18n";
 
 import { useRef, useState } from "react";
-import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from "react-native";
+import { KeyboardAvoidingView, Modal, Platform, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Pressable } from "@/monitoring/Pressable";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { ClipboardPlus, Trash2, X } from "lucide-react-native";
 import { DEFAULT_GUEST_LANGUAGE, manualInquiryInputSchema, type ManualRequestSource, type MealPlan } from "@hotel/contracts";
 import { theme } from "@hotel/design";
 import { ApiError, apiClient } from "../api/client";
 import type { ClientProfile, HotelRequest, ManualInquiryResult } from "../api/types";
-import { FilterDateField } from "../clients/FilterDateField";
 import { ExistingClientPicker } from "../clients/ExistingClientPicker";
 import { demoLinkRequestClient } from "../clients/demo";
 import { actionStyles } from "../components/actionStyles";
-import { GuestLanguageField } from "../components/GuestLanguageField";
-import { MealPlanField } from "../components/MealPlanField";
-import { ChildrenFields } from "./ChildrenFields";
+import { EnquiryFields, enquiryInput, newEnquiryDraft } from "./EnquiryFields";
 import { Button, Field, InlineState } from "../components/ui";
 import { duplicateRequestDraft } from "./duplicate-request";
 import { requestSourceOptions } from "./sources";
@@ -27,17 +28,8 @@ export function ManualRequestModal({ demo, initialRequest, onClose, onCreated }:
   onCreated: (result: ManualInquiryResult) => void;
 }) {
   const [initial] = useState(() => initialRequest ? duplicateRequestDraft(initialRequest) : null);
-  const [name, setName] = useState(initial?.guest.name ?? "");
-  const [email, setEmail] = useState(initial?.guest.email ?? "");
-  const [phone, setPhone] = useState(initial?.guest.phone ?? "");
-  const [language, setLanguage] = useState(initial?.guest.language ?? DEFAULT_GUEST_LANGUAGE);
-  const [checkIn, setCheckIn] = useState(initial?.checkIn ?? "");
-  const [checkOut, setCheckOut] = useState(initial?.checkOut ?? "");
-  const [adults, setAdults] = useState(String(initial?.occupancy.adults ?? 2));
-  const [childAges, setChildAges] = useState<string[]>(() => initial?.occupancy.childAges.map(String) ?? []);
-  const [mealPlan, setMealPlan] = useState<MealPlan | null>(initial?.mealPlan ?? null);
+  const [draft, setDraft] = useState(() => newEnquiryDraft(initial));
   const [receivedVia, setReceivedVia] = useState<ManualRequestSource>(initial?.receivedVia ?? "phone");
-  const [note, setNote] = useState(initial?.note ?? "");
   const [offers, setOffers] = useState(() => initial?.offers?.map(({ totalCents: _oldPrice, ...choice }) => ({ ...choice, pricingMode: "automatic" as const })) ?? []);
   const [sendOffer, setSendOffer] = useState(initial?.sendOffer ?? true);
   const [guestMode, setGuestMode] = useState<"manual" | "existing">("manual");
@@ -47,31 +39,27 @@ export function ManualRequestModal({ demo, initialRequest, onClose, onCreated }:
   const [saving, setSaving] = useState(false);
   const submitting = useRef(false);
   const submission = useRef<{ body: string; key: string } | null>(null);
+  const needsReview = draft.rooms.length > 1 || draft.alternativeDates.length > 0;
   const close = () => { if (!submitting.current) onClose(); };
   const selectClient = (client: ClientProfile) => {
     setSelectedClient(client);
-    setName(client.name);
-    setEmail(client.email ?? "");
-    setPhone(client.phone ?? "");
-    setLanguage(client.locale || DEFAULT_GUEST_LANGUAGE);
+    const [firstName = "", ...lastName] = client.name.trim().split(/\s+/);
+    setDraft((current) => ({ ...current, firstName, lastName: lastName.join(" "), email: client.email ?? "", phone: client.phone ?? "", language: client.locale || DEFAULT_GUEST_LANGUAGE }));
     setErrors((current) => Object.fromEntries(Object.entries(current).filter(([key]) => key !== "client" && !key.startsWith("guest."))));
   };
 
-  const submit = async () => {
+  const submit = monitoredAction("action.ManualRequestModal.submit", "ManualRequestModal.submit", async (signalScope) => {
+    const apiClient = scopedApiClient(signalScope);
     if (submitting.current) return;
     if (guestMode === "existing" && !selectedClient) {
       setErrors({ client: t("Choose a client.") });
       setError(null);
       return;
     }
+    const input = enquiryInput(draft);
     const result = manualInquiryInputSchema.safeParse({
-      guest: { name, email: email.trim(), phone: phone.trim(), language },
-      checkIn, checkOut,
-      occupancy: {
-        adults: /^\d+$/.test(adults.trim()) ? Number(adults) : NaN,
-        childAges: childAges.map((age) => /^\d{1,2}$/.test(age) ? Number(age) : NaN),
-      },
-      mealPlan, receivedVia, note, sendOffer,
+      ...input, guest: { ...input.guest, email: draft.email.trim(), phone: draft.phone.trim() },
+      receivedVia, sendOffer: sendOffer && !needsReview,
       ...(offers.length ? { offers } : {}),
     });
     setError(null);
@@ -83,7 +71,7 @@ export function ManualRequestModal({ demo, initialRequest, onClose, onCreated }:
         mealPlan: "Choose BB, HB or FB.", "guest.language": t("Select the guest’s language."),
       };
       setErrors(Object.fromEntries(result.error.issues.map((issue) => {
-        const path = (issue.path[0] === "offers" ? issue.path : issue.path.slice(0, 2)).join(".");
+        const path = (["offers", "details"].includes(String(issue.path[0])) ? issue.path : issue.path.slice(0, 2)).join(".");
         if (issue.path[0] === "offers" && issue.path[2] === "totalCents") return [path, t("Enter a valid total price with up to two decimal places.")];
         return [path, issue.code === "custom" ? validationMessage(getLanguage(), issue) : messages[path] ?? validationMessage(getLanguage(), issue)];
       })));
@@ -100,9 +88,9 @@ export function ManualRequestModal({ demo, initialRequest, onClose, onCreated }:
       const created = await apiClient.createManualRequest(result.data, submission.current.key, { demo });
       if (demo && guestMode === "existing" && selectedClient) demoLinkRequestClient(created.inquiryId, selectedClient.id);
       onCreated(created);
-    } catch (cause) {
+    } catch (cause) { signalScope.fail(cause);
       if (cause instanceof ApiError && cause.code === "VALIDATION_ERROR" && Array.isArray(cause.details)) {
-        setErrors(Object.fromEntries(cause.details.map((issue: { path: string; message: string }) => [issue.path.startsWith("offers") ? issue.path : issue.path.split(".").slice(0, 2).join("."), issue.message])));
+        setErrors(Object.fromEntries(cause.details.map((issue: { path: string; message: string }) => [/^(offers|details)\./.test(issue.path) ? issue.path : issue.path.split(".").slice(0, 2).join("."), issue.message])));
         setError(null);
       } else {
         setError(cause instanceof ApiError ? cause.message : t("Could not create the request. Please try again."));
@@ -111,14 +99,14 @@ export function ManualRequestModal({ demo, initialRequest, onClose, onCreated }:
       submitting.current = false;
       setSaving(false);
     }
-  };
+  });
 
   return <Modal visible transparent animationType="fade" onRequestClose={close}>
     <View style={styles.backdrop}><SafeAreaView style={styles.sheet}>
       <KeyboardAvoidingView style={styles.keyboard} behavior={Platform.OS === "ios" ? "padding" : undefined}>
         <View style={styles.header}>
           <View style={styles.heading}><ClipboardPlus size={20} color={theme.colors.action} /><Text accessibilityRole="header" style={styles.title}>{t("New request")}</Text></View>
-          <Pressable accessibilityRole="button" accessibilityLabel={t("Close new request")} accessibilityState={{ disabled: saving }} disabled={saving} onPress={close} style={actionStyles.iconButton}><X size={20} color={theme.colors.textMuted} /></Pressable>
+          <Pressable signalAction="ui.ManualRequestModal.close.press" signalPlacement="ManualRequestModal.close" accessibilityRole="button" accessibilityLabel={t("Close new request")} accessibilityState={{ disabled: saving }} disabled={saving} onPress={close} style={actionStyles.iconButton}><X size={20} color={theme.colors.textMuted} /></Pressable>
         </View>
         <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
           <Text style={styles.hint}>{initialRequest ? t("Duplicating request #{{v0}}.", { v0: initialRequest.reservationNumber }) : t("New request")}</Text>
@@ -127,33 +115,19 @@ export function ManualRequestModal({ demo, initialRequest, onClose, onCreated }:
             <Text accessibilityRole="header" style={styles.sectionTitle}>{t("Guest details")}</Text>
             <Choices label={t("Guest")} value={guestMode} onChange={(value) => { setGuestMode(value); setErrors({}); if (value === "existing" && selectedClient) selectClient(selectedClient); }} options={[{ value: "manual", label: t("Enter details") }, { value: "existing", label: t("Choose existing client") }]} />
             {guestMode === "existing" ? <ExistingClientPicker demo={demo} selected={selectedClient} disabled={saving} onSelect={selectClient} error={errors.client} /> : null}
-            {guestMode === "manual" || selectedClient ? <>
-            <Field label={t("Guest name")} value={name} onChangeText={setName} error={errors["guest.name"]} maxLength={160} autoComplete="name" editable={!saving} />
-            <Field label={t("Email")} value={email} onChangeText={setEmail} error={errors["guest.email"]} keyboardType="email-address" autoCapitalize="none" autoCorrect={false} maxLength={320} editable={!saving} />
-            <Field label={t("Phone / WhatsApp")} value={phone} onChangeText={setPhone} error={errors["guest.phone"]} keyboardType="phone-pad" helper={t("Country code required, e.g. +39.")} maxLength={50} editable={!saving} />
-            <GuestLanguageField value={language} onChange={setLanguage} error={errors["guest.language"]} disabled={saving} />
-            </> : null}
-            <Text accessibilityRole="header" style={styles.sectionTitle}>{t("Stay details")}</Text>
-            <View style={styles.row}>
-              <View style={styles.column}><FilterDateField label={t("Check-in")} value={checkIn} onChange={setCheckIn} error={errors.checkIn} /></View>
-              <View style={styles.column}><FilterDateField label={t("Check-out")} value={checkOut} onChange={setCheckOut} error={errors.checkOut} /></View>
-            </View>
-            <Field label={t("Adults")} value={adults} onChangeText={setAdults} error={errors["occupancy.adults"]} keyboardType="number-pad" maxLength={2} editable={!saving} />
-            <ChildrenFields value={childAges} onChange={setChildAges} error={errors["occupancy.childAges"]} disabled={saving} />
-            <MealPlanField value={mealPlan} onChange={setMealPlan} error={errors.mealPlan} disabled={saving} />
-            <Field label={t("Notes (optional)")} value={note} onChangeText={setNote} error={errors.note} multiline numberOfLines={3} style={styles.notes} maxLength={2_000} editable={!saving} />
+            <EnquiryFields value={draft} onChange={setDraft} errors={errors} disabled={saving} staff contactsVisible={guestMode === "manual" || !!selectedClient} noteHelper={t("Record offers, prices or arrangements discussed by phone. Use Prepare offers on the reservation to review and send up to six choices.")} />
             {offers.length ? <View style={styles.fields}>
               <Text accessibilityRole="header" style={styles.sectionTitle}>{t("Copied offers")}</Text>
               {offers.map((offer, index) => <View key={index} style={styles.delivery}>
-                <View style={styles.deliveryHeading}><Text style={[styles.label, styles.column]}>{initialRequest?.offers?.find(({ roomId }) => roomId === offer.roomId)?.roomName ?? t("Room")}</Text><Pressable accessibilityRole="button" accessibilityLabel={t("Remove offer")} disabled={saving} onPress={() => setOffers((current) => current.filter((_, i) => i !== index))} style={actionStyles.iconButton}><Trash2 size={18} color={theme.colors.danger} /></Pressable></View>
+                <View style={styles.deliveryHeading}><Text style={[styles.label, styles.column]}>{initialRequest?.offers?.find(({ roomId }) => roomId === offer.roomId)?.roomName ?? t("Room")}</Text><Pressable signalAction="ui.ManualRequestModal.setOffers.press" signalPlacement="ManualRequestModal.setOffers" accessibilityRole="button" accessibilityLabel={t("Remove offer")} disabled={saving} onPress={() => setOffers((current) => current.filter((_, i) => i !== index))} style={actionStyles.iconButton}><Trash2 size={18} color={theme.colors.danger} /></Pressable></View>
                 <Field label={t("Name")} value={offer.planName ?? t("Stay offer")} onChangeText={(planName) => setOffers((current) => current.map((item, i) => i === index ? { ...item, planName } : item))} error={errors[`offers.${index}.planName`]} maxLength={160} editable={!saving} />
                 <Field label={t("Guest note")} value={offer.note} onChangeText={(note) => setOffers((current) => current.map((item, i) => i === index ? { ...item, note } : item))} error={errors[`offers.${index}.note`]} multiline maxLength={2_000} editable={!saving} />
                 {errors[`offers.${index}.roomId`] ? <Text accessibilityRole="alert" style={styles.error}>{errors[`offers.${index}.roomId`]}</Text> : null}
               </View>)}
             </View> : null}
             <View style={styles.delivery}>
-              <View style={styles.deliveryHeading}><Text style={styles.label}>{t("Send offer")}</Text><Switch accessibilityLabel={t("Send offer")} value={sendOffer} onValueChange={setSendOffer} disabled={saving} trackColor={{ true: theme.colors.action }} /></View>
-              <Text style={styles.hint}>{sendOffer ? t("Send by connected channels after creating the request.") : t("Save without sending.")}</Text>
+              <View style={styles.deliveryHeading}><Text style={styles.label}>{t("Send offer now")}</Text><Switch signalPlacement="ManualRequestModal" accessibilityLabel={t("Send offer now")} value={sendOffer && !needsReview} onValueChange={setSendOffer} disabled={saving || needsReview} trackColor={{ true: theme.colors.action }} /></View>
+              <Text style={styles.hint}>{sendOffer && !needsReview ? t("Send by email and WhatsApp.") : t("Save only. Send later.")}</Text>
             </View>
           </View>
         </ScrollView>
@@ -161,7 +135,7 @@ export function ManualRequestModal({ demo, initialRequest, onClose, onCreated }:
           {demo ? <Text style={styles.hint}>{t("Demo mode: requests stay in this preview and no messages are sent.")}</Text> : null}
           {Object.keys(errors).length ? <Text accessibilityRole="alert" style={styles.error}>{manualRequestErrorSummary(errors)}</Text> : null}
           {error ? <InlineState tone="danger">{translateLabel(error)}</InlineState> : null}
-          <View style={styles.row}><View style={styles.column}><Button variant="tertiary" onPress={close} disabled={saving}>{t("Cancel")}</Button></View><View style={styles.column}><Button onPress={() => void submit()} loading={saving}>{sendOffer ? t("Send") : t("Create")}</Button></View></View>
+          <View style={styles.row}><View style={styles.column}><Button signalAction="ui.ManualRequestModal.close.press" signalPlacement="ManualRequestModal.close" variant="tertiary" onPress={close} disabled={saving}>{t("Cancel")}</Button></View><View style={styles.column}><Button signalAction="ui.ManualRequestModal.submit.press" signalPlacement="ManualRequestModal.submit" onPress={() => void submit()} loading={saving}>{sendOffer && !needsReview ? t("Create & send offer") : t("Create request")}</Button></View></View>
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView></View>
@@ -179,7 +153,7 @@ function manualRequestErrorSummary(errors: Record<string, string>): string {
 }
 
 function Choices<T extends string>({ label, value, options, onChange }: { label: string; value: T | null; options: Array<{ value: T; label: string }>; onChange: (value: T) => void }) {
-  return <View style={styles.choices}><Text style={styles.label}>{translateLabel(label)}</Text><View style={styles.choiceRow}>{options.map((option) => <Pressable key={option.value} accessibilityRole="radio" accessibilityLabel={`${label}: ${option.label}`} accessibilityState={{ checked: value === option.value }} onPress={() => onChange(option.value)} style={[styles.choice, value === option.value && styles.choiceSelected]}><Text style={[styles.choiceText, value === option.value && styles.choiceTextSelected]}>{translateLabel(option.label)}</Text></Pressable>)}</View></View>;
+  return <View style={styles.choices}><Text style={styles.label}>{translateLabel(label)}</Text><View style={styles.choiceRow}>{options.map((option) => <Pressable signalAction="ui.Choices.onChange.press" signalPlacement="Choices.onChange" key={option.value} accessibilityRole="radio" accessibilityLabel={`${label}: ${option.label}`} accessibilityState={{ checked: value === option.value }} onPress={() => onChange(option.value)} style={[styles.choice, value === option.value && styles.choiceSelected]}><Text style={[styles.choiceText, value === option.value && styles.choiceTextSelected]}>{translateLabel(option.label)}</Text></Pressable>)}</View></View>;
 }
 
 const styles = StyleSheet.create({

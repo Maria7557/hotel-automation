@@ -1,6 +1,10 @@
+import { Switch, TextInput } from "../monitoring/controls";
+import { monitoredAction } from "../monitoring/actions";
+import { scopedApiClient } from "../api/client";
 import { t, translateLabel } from "../i18n";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Platform, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Pressable } from "@/monitoring/Pressable";
 import { ArrowLeft, Bell, Check, Mail } from "lucide-react-native";
 import { theme } from "@hotel/design";
 
@@ -43,7 +47,8 @@ export function NotificationSettingsScreen({ onBack, demo }: { onBack: () => voi
     return () => { active = false; };
   }, [demo]);
 
-  const save = async () => {
+  const save = monitoredAction("action.NotificationSettingsScreen.save", "NotificationSettingsScreen.save", async (signalScope) => {
+    const apiClient = scopedApiClient(signalScope);
     if (emailIncomingRequests && !/^\S+@\S+\.\S+$/.test(emailAddress.trim())) {
       setError("Enter the email address for notifications.");
       return;
@@ -61,30 +66,31 @@ export function NotificationSettingsScreen({ onBack, demo }: { onBack: () => voi
           });
       apply(next);
       setSaved(true);
-    } catch (cause) {
+    } catch (cause) { signalScope.fail(cause);
       setError(messageFor(cause));
     } finally {
       setSaving(false);
     }
-  };
+  });
 
-  const connectPhone = async () => {
+  const connectPhone = monitoredAction("action.NotificationSettingsScreen.connectPhone", "NotificationSettingsScreen.connectPhone", async (signalScope) => {
+    const apiClient = scopedApiClient(signalScope);
     setConnecting(true);
     setError(null);
     try {
       const device = await registerThisPhoneForPush();
       const next = demo ? { ...demoSettings, pushDeviceRegistered: true, pushDeviceCount: 1 } : await apiClient.registerPushDevice(device);
       setSettings(next);
-    } catch (cause) {
+    } catch (cause) { signalScope.fail(cause);
       setError(messageFor(cause));
     } finally {
       setConnecting(false);
     }
-  };
+  });
 
   return <View style={uiStyles.screen}>
     <View style={styles.topBar}>
-      <Pressable accessibilityRole="button" accessibilityLabel={t("Back")} onPress={onBack} style={styles.back}><ArrowLeft size={22} color={theme.colors.text} /></Pressable>
+      <Pressable signalAction="ui.NotificationSettingsScreen.onBack.press" signalPlacement="NotificationSettingsScreen.onBack" accessibilityRole="button" accessibilityLabel={t("Back")} onPress={onBack} style={styles.back}><ArrowLeft size={22} color={theme.colors.text} /></Pressable>
       <Text style={styles.topTitle}>{t("Notifications")}</Text>
       <View style={styles.backSpacer} />
     </View>
@@ -104,9 +110,9 @@ export function NotificationSettingsScreen({ onBack, demo }: { onBack: () => voi
             </View>
             <View style={[styles.row, styles.divider]}>
               <View style={styles.rowText}><Text style={styles.title}>{t("All incoming requests")}</Text></View>
-              <Switch value={pushAllRequests} onValueChange={setPushAllRequests} trackColor={{ false: theme.colors.border, true: theme.colors.action }} />
+              <Switch signalPlacement="NotificationSettingsScreen" value={pushAllRequests} onValueChange={setPushAllRequests} trackColor={{ false: theme.colors.border, true: theme.colors.action }} />
             </View>
-            <Pressable disabled={connecting || Platform.OS === "web"} onPress={() => void connectPhone()} style={({ pressed }) => [styles.deviceButton, pressed && styles.pressed, Platform.OS === "web" && styles.disabled]}>
+            <Pressable signalAction="ui.NotificationSettingsScreen.connectPhone.press" signalPlacement="NotificationSettingsScreen.connectPhone" disabled={connecting || Platform.OS === "web"} onPress={() => void connectPhone()} style={({ pressed }) => [styles.deviceButton, pressed && styles.pressed, Platform.OS === "web" && styles.disabled]}>
               {connecting ? <ActivityIndicator color={theme.colors.action} /> : settings.pushDeviceRegistered ? <Check size={18} color={theme.colors.success} /> : <Bell size={18} color={theme.colors.action} />}
               <Text style={styles.deviceButtonText}>{settings.pushDeviceRegistered ? t("This phone is connected") : Platform.OS === "web" ? t("Connect in the mobile app") : t("Enable on this phone")}</Text>
             </Pressable>
@@ -119,17 +125,17 @@ export function NotificationSettingsScreen({ onBack, demo }: { onBack: () => voi
             <View style={styles.row}>
               <View style={styles.icon}><Mail size={20} color={theme.colors.action} /></View>
               <View style={styles.rowText}><Text style={styles.title}>{t("Incoming requests")}</Text></View>
-              <Switch value={emailIncomingRequests} onValueChange={setEmailIncomingRequests} trackColor={{ false: theme.colors.border, true: theme.colors.action }} />
+              <Switch signalPlacement="NotificationSettingsScreen" value={emailIncomingRequests} onValueChange={setEmailIncomingRequests} trackColor={{ false: theme.colors.border, true: theme.colors.action }} />
             </View>
             {emailIncomingRequests ? <View style={[styles.emailField, styles.divider]}>
               <Text style={styles.label}>{t("Notification email")}</Text>
-              <TextInput accessibilityLabel={t("Notification email")} accessibilityHint={emailError ?? t("Every incoming request notification will be sent to this address.")} value={emailAddress} onChangeText={(value) => { setEmailAddress(value); setError(null); setSaved(false); }} keyboardType="email-address" autoCapitalize="none" autoCorrect={false} placeholder="manager@hotel.com" style={[styles.input, emailError && styles.inputError]} />
+              <TextInput signalPlacement="NotificationSettingsScreen" accessibilityLabel={t("Notification email")} accessibilityHint={emailError ?? t("Every incoming request notification will be sent to this address.")} value={emailAddress} onChangeText={(value) => { setEmailAddress(value); setError(null); setSaved(false); }} keyboardType="email-address" autoCapitalize="none" autoCorrect={false} placeholder="manager@hotel.com" style={[styles.input, emailError && styles.inputError]} />
               <Text accessibilityRole={emailError ? "alert" : undefined} style={emailError ? styles.fieldError : styles.fieldHelper}>{emailError ?? t("Every incoming request notification will be sent to this address.")}</Text>
             </View> : null}
           </View>
         </View>
 
-        <Pressable disabled={saving} onPress={() => void save()} style={({ pressed }) => [styles.save, pressed && styles.pressed, saving && styles.disabled]}>
+        <Pressable signalAction="ui.NotificationSettingsScreen.save.press" signalPlacement="NotificationSettingsScreen.save" disabled={saving} onPress={() => void save()} style={({ pressed }) => [styles.save, pressed && styles.pressed, saving && styles.disabled]}>
           {saving ? <ActivityIndicator color={theme.colors.onAction} /> : <Text style={styles.saveText}>{t("Save")}</Text>}
         </Pressable>
       </> : null}

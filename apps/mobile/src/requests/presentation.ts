@@ -13,9 +13,12 @@ export function formatStay(checkIn: string, checkOut: string): string {
   return `${start.getUTCDate()} - ${end.getUTCDate()} ${month(start)}`;
 }
 
-export function formatOccupancyParts(request: Pick<HotelRequest, "checkIn" | "checkOut" | "occupancy">) {
+type RequestStay = Pick<HotelRequest, "checkIn" | "checkOut" | "occupancy" | "details" | "acceptedAt">;
+export function formatOccupancyParts(request: RequestStay) {
   const nights = Math.max(0, Math.round((dateParts(request.checkOut).getTime() - dateParts(request.checkIn).getTime()) / dayMs));
-  const { adults, childAges } = request.occupancy;
+  const rooms = [request.occupancy, ...(request.acceptedAt ? [] : request.details?.additionalRooms?.map((room) => room.occupancy) ?? [])];
+  const adults = rooms.reduce((total, room) => total + room.adults, 0);
+  const childAges = rooms.flatMap((room) => room.childAges);
   const people = adults + childAges.length;
   const nightsLabel = t("{{count}} night", { count: nights });
   return {
@@ -26,7 +29,7 @@ export function formatOccupancyParts(request: Pick<HotelRequest, "checkIn" | "ch
   };
 }
 
-export function formatOccupancy(request: Pick<HotelRequest, "checkIn" | "checkOut" | "occupancy">): string {
+export function formatOccupancy(request: RequestStay): string {
   const { summary, breakdown } = formatOccupancyParts(request);
   return `${summary} ${breakdown}`;
 }

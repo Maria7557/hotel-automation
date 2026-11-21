@@ -1,7 +1,12 @@
+import { RefreshControl } from "../monitoring/controls";
+import { monitoredAction } from "../monitoring/actions";
+import { scopedApiClient } from "../api/client";
 import { t, translateLabel, getLanguage } from "../i18n";
 import { LanguageSelector } from "../i18n/LanguageSelector";
 import { useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Alert } from "../monitoring/dialogs";
+import { Pressable } from "@/monitoring/Pressable";
 import {
   BedDouble,
   Bell,
@@ -61,7 +66,8 @@ export function SettingsScreen({
   const [setupLoading, setSetupLoading] = useState(!demo);
   const [refreshing, setRefreshing] = useState(false);
 
-  const loadSetup = async (refresh = false) => {
+  const loadSetup = monitoredAction("action.SettingsScreen.loadSetup", "SettingsScreen.loadSetup", async (signalScope, refresh: boolean = false) => {
+    const apiClient = scopedApiClient(signalScope);
     if (demo) return;
     refresh ? setRefreshing(true) : setSetupLoading(true);
     try {
@@ -76,7 +82,7 @@ export function SettingsScreen({
     } finally {
       refresh ? setRefreshing(false) : setSetupLoading(false);
     }
-  };
+  });
 
   useEffect(() => { void loadSetup(); }, [demo]);
 
@@ -98,7 +104,7 @@ export function SettingsScreen({
     <ScrollView
       style={uiStyles.screen}
       contentContainerStyle={styles.content}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void loadSetup(true)} tintColor={theme.colors.action} />}
+      refreshControl={<RefreshControl signalPlacement="SettingsScreen" refreshing={refreshing} onRefresh={() => void loadSetup(true)} tintColor={theme.colors.action} />}
       showsVerticalScrollIndicator={false}
     >
       <View style={styles.titleBlock}>
@@ -143,7 +149,7 @@ export function SettingsScreen({
         </View>
       </View>
 
-      <Pressable
+      <Pressable signalAction="ui.SettingsScreen.onLogout.press" signalPlacement="SettingsScreen.onLogout"
         accessibilityRole="button"
         accessibilityState={{ disabled: logoutLoading, busy: logoutLoading }}
         disabled={logoutLoading}
@@ -177,7 +183,7 @@ function SetupRow({
   onPress: () => void;
   last: boolean;
 }) {
-  return <Pressable accessibilityRole="button" accessibilityLabel={`${title}. ${complete ? t("Completed") : t(detail)}`} onPress={onPress} style={({ pressed }) => [styles.setupRow, !last && styles.settingDivider, pressed && styles.rowPressed]}>
+  return <Pressable signalAction="ui.SetupRow.onPress.press" signalPlacement="SetupRow.onPress" accessibilityRole="button" accessibilityLabel={`${title}. ${complete ? t("Completed") : t(detail)}`} onPress={onPress} style={({ pressed }) => [styles.setupRow, !last && styles.settingDivider, pressed && styles.rowPressed]}>
     <View style={[styles.setupNumber, complete && styles.setupNumberComplete]}>{complete ? <Check size={18} color={theme.colors.onAction} strokeWidth={3} /> : <Text style={styles.setupNumberText}>{index}</Text>}</View>
     <View style={styles.settingIcon}><Icon size={20} color={complete ? theme.colors.success : theme.colors.action} /></View>
     <View style={{ flex: 1 }}><Text style={styles.settingTitle}>{translateLabel(title)}</Text><Text style={styles.settingSubtitle}>{complete ? t("Completed") : t(detail)}</Text></View>
@@ -201,7 +207,7 @@ function SettingRow({
   last?: boolean;
 }) {
   return (
-    <Pressable
+    <Pressable signalAction="ui.SettingRow.onPress.press" signalPlacement="SettingRow.onPress"
       accessibilityRole="button"
       accessibilityLabel={`${title}. ${subtitle}`}
       onPress={onPress}

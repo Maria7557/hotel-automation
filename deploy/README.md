@@ -1,5 +1,9 @@
 # Ospio deployment: ospio.online
 
+Optional Signal Monitoring requires the updated collector, environment-specific
+write-only keys and an Expo rebuild. Follow [the monitoring setup](../docs/monitoring.md)
+before enabling it in production.
+
 The Ospio deployment is isolated from the existing `paddock.ae` site:
 
 - Expo web files: `/var/www/hotel-automation`
@@ -54,6 +58,8 @@ continues handling requests if the contact worker is stopped.
    pages, and recent service errors. Do not modify unrelated sites or services.
 
 ## Web startup and script delivery
+
+Password recovery requires migration `0016_password_reset_tokens`, the rebuilt API/web app, `APP_BASE_URL=https://hotel.chatsocials.app` (or the deployment's actual public web origin), and the platform `NOTIFICATION_SMTP_*` / `NOTIFICATION_FROM_EMAIL` values in `server.env`. Verify a reset email, the link's web form, a fresh login and rejection of the old password after deployment. Guest mail OAuth and WAHA settings do not provide the platform recovery sender.
 
 The host template enables gzip for the JavaScript bundle and returns 404 for
 missing bundles. Apply this location block to the existing Ospio HTTPS host when

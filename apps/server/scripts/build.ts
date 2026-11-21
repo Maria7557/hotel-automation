@@ -2,8 +2,10 @@ import { rm } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import { build } from "esbuild";
+import { buildBrowserMonitoring } from "./build-browser-monitoring.js";
 
 const serverRoot = resolve(import.meta.dirname, "..");
+await buildBrowserMonitoring();
 
 await rm(resolve(serverRoot, "dist"), { recursive: true, force: true });
 await build({
@@ -16,6 +18,8 @@ await build({
   sourcemap: true,
   packages: "external",
   alias: {
+    "@hotel/monitoring/adapters": resolve(serverRoot, "../../packages/monitoring/src/integrations/adapters.ts"),
+    "@hotel/monitoring": resolve(serverRoot, "../../packages/monitoring/src/index.ts"),
     "@hotel/contracts": resolve(serverRoot, "../../packages/contracts/src/index.ts"),
     "@hotel/design": resolve(serverRoot, "../../packages/design/src/index.ts"),
     "@hotel/domain": resolve(serverRoot, "../../packages/domain/src/index.ts"),

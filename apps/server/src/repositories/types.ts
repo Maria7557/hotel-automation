@@ -1,4 +1,5 @@
-import type { DashboardPagination, DashboardQuery, MealPlan, OfferSettings } from "@hotel/contracts";
+import type { DashboardPagination, DashboardQuery, MealPlan, MessageTemplateSettings, OfferSettings } from "@hotel/contracts";
+export type { MessageTemplates } from "@hotel/contracts";
 
 export type UserRecord = {
   uiLanguage?: "en" | "it" | null;
@@ -18,6 +19,7 @@ export type HotelProfile = {
   id: string;
   publicKey: string;
   allowedOrigins: string[];
+  widgetCss: string;
   name: string;
   city: string;
   countryCode: string;
@@ -37,9 +39,10 @@ export type HotelProfile = {
 
 export type HotelCreate = Omit<
   HotelProfile,
-  "id" | "publicKey" | "allowedOrigins" | "createdAt" | "updatedAt"
+  "id" | "publicKey" | "allowedOrigins" | "widgetCss" | "createdAt" | "updatedAt"
 >;
 export type HotelUpdate = Partial<HotelCreate>;
+export type HotelIntakeUpdate = Partial<Pick<HotelProfile, "allowedOrigins" | "widgetCss">>;
 
 export type Bed = {
   type: "single" | "double" | "queen" | "king" | "sofa_bed" | "bunk" | "crib";
@@ -108,7 +111,7 @@ export interface AuthRepository {
     displayName: string | null;
     allowEmailLink: boolean;
   }): Promise<UserRecord>;
-  createSession(input: { userId: string; tokenHash: string; expiresAt: Date }): Promise<void>;
+  createSession(input: { userId: string; tokenHash: string; expiresAt: Date; expectedPasswordHash?: string }): Promise<boolean>;
   findUserBySessionHash(tokenHash: string, now: Date): Promise<PublicUser | null>;
   refreshSessionExpiry(input: {
     tokenHash: string;
@@ -117,13 +120,25 @@ export interface AuthRepository {
     expiresAt: Date;
   }): Promise<void>;
   deleteSession(tokenHash: string): Promise<void>;
+  issuePasswordReset(input: {
+    userId: string;
+    tokenHash: string;
+    expiresAt: Date;
+    requestedAt: Date;
+    resendBefore: Date;
+  }): Promise<boolean>;
+  consumePasswordReset(input: {
+    tokenHash: string;
+    passwordHash: string;
+    now: Date;
+  }): Promise<PublicUser | null>;
 }
 
 export interface HotelRepository {
   createForUser(userId: string, input: HotelCreate): Promise<HotelProfile>;
   findForUser(userId: string): Promise<HotelProfile | null>;
   updateForUser(userId: string, input: HotelUpdate): Promise<HotelProfile | null>;
-  updateIntakeSettingsForUser(userId: string, allowedOrigins: string[]): Promise<HotelProfile | null>;
+  updateIntakeSettingsForUser(userId: string, settings: HotelIntakeUpdate): Promise<HotelProfile | null>;
   softDeleteForUser(userId: string): Promise<boolean>;
 }
 
@@ -235,6 +250,7 @@ export type ReservationOffersCreate = {
   userId: string;
   inquiryId: string;
   baseOfferId: string | null;
+  locale: string;
   offer: Omit<OfferRecord, "createdAt" | "version">;
   deliveries: Array<Omit<DeliveryRecord, "createdAt" | "updatedAt">>;
   now: Date;
@@ -339,14 +355,8 @@ export interface NotificationRepository {
   listTargetsForHotel(hotelId: string): Promise<NotificationTarget[]>;
 }
 
-export type MessageTemplates = { emailSubjectTemplate: string; emailBodyTemplate: string; whatsappBodyTemplate: string };
-export type MessageSettings = {
-  templateLanguage?: "en" | "it" | undefined;
-  translations?: Partial<Record<"en" | "it", MessageTemplates>> | undefined;
+export type MessageSettings = MessageTemplateSettings & {
   hotelId: string;
-  emailSubjectTemplate: string;
-  emailBodyTemplate: string;
-  whatsappBodyTemplate: string;
   createdAt: Date;
   updatedAt: Date;
 };

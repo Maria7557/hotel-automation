@@ -9,6 +9,6 @@ const options = [
   { value: "FB", label: "FB · Full board" },
 ];
 
-export function MealPlanField({ value, onChange, disabled = false, error }: { value: MealPlan | null; onChange: (value: MealPlan | null) => void; disabled?: boolean; error?: string | undefined }) {
-  return <SelectField label={t("Board basis")} value={value ?? ""} options={options.map((option) => ({ ...option, label: t(option.label) }))} onChange={(next) => onChange(next === "BB" || next === "HB" || next === "FB" ? next : null)} disabled={disabled} error={error} />;
+export function MealPlanField({ value, onChange, disabled = false, error, label = t("Treatment") }: { value: MealPlan | null; onChange: (value: MealPlan | null) => void; disabled?: boolean; error?: string | undefined; label?: string }) {
+  return <SelectField label={label} value={value ?? ""} options={options.map((option) => ({ ...option, label: t(option.label) }))} onChange={(next) => onChange(next === "BB" || next === "HB" || next === "FB" ? next : null)} disabled={disabled} error={error} />;
 }

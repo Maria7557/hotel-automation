@@ -1,29 +1,34 @@
+import { monitoredAction } from "../monitoring/actions";
+import { actions } from "../monitoring/actions";
+import { scopedApiClient } from "../api/client";
 import { t, translateLabel, locale } from "../i18n";
 import { LanguageSelector } from "../i18n/LanguageSelector";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { screenViewed } from "@/monitoring";
 import {
   ActivityIndicator,
   Image,
   KeyboardAvoidingView,
   Linking,
   Platform,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from "react-native";
+import { Pressable } from "@/monitoring/Pressable";
 import * as ImagePicker from "expo-image-picker";
 import { BedDouble, BellRing, Building2, Check, LogIn, Sparkles, Upload } from "lucide-react-native";
 import Svg, { Path } from "react-native-svg";
 import { theme } from "@hotel/design";
 import { ApiError, apiClient, authErrorMessage } from "@/api/client";
+import { PasswordRecoveryScreen } from "./PasswordRecoveryScreen";
 import { mockProfile } from "@/api/mock";
 import type { HotelProfile, SessionUser } from "@/api/types";
 import { Button, Field, InlineState, uiStyles } from "@/components/ui";
 import { SelectField } from "@/components/SelectField";
 
-type AuthStep = "welcome" | "account" | "hotel";
+type AuthStep = "welcome" | "account" | "hotel" | "forgotPassword";
 type AuthMode = "register" | "login";
 type LogoDraft = { uri: string; base64: string; mimeType: "image/jpeg" | "image/png" };
 
@@ -48,15 +53,17 @@ export type SocialAuthProvider = "google" | "apple";
 export type SocialAuthResult = { user: SessionUser; profile?: HotelProfile | null };
 
 type AuthFlowProps = {
+  startWithLogin?: boolean;
   initialUser?: SessionUser | undefined;
   onAuthenticated: (user: SessionUser, profile: HotelProfile) => void;
   onDemo: (profile: HotelProfile) => void;
   onSocialAuth?: (provider: SocialAuthProvider) => Promise<SocialAuthResult>;
 };
 
-export function AuthFlow({ initialUser, onAuthenticated, onDemo, onSocialAuth }: AuthFlowProps) {
-  const [step, setStep] = useState<AuthStep>(initialUser ? "hotel" : "welcome");
-  const [mode, setMode] = useState<AuthMode>("register");
+export function AuthFlow({ initialUser, onAuthenticated, onDemo, onSocialAuth, startWithLogin = false }: AuthFlowProps) {
+  const [step, setStep] = useState<AuthStep>(initialUser ? "hotel" : startWithLogin ? "account" : "welcome");
+  const [mode, setMode] = useState<AuthMode>(startWithLogin ? "login" : "register");
+  useEffect(() => { screenViewed(step === "welcome" ? "Welcome" : step === "hotel" ? "HotelSetup" : step === "forgotPassword" ? "PasswordRecovery" : mode === "login" ? "Login" : "Registration"); }, [step, mode]);
   const [user, setUser] = useState<SessionUser | null>(initialUser ?? null);
   const [name, setName] = useState(initialUser?.displayName ?? "");
   const [email, setEmail] = useState(initialUser?.email ?? "");
@@ -83,7 +90,8 @@ export function AuthFlow({ initialUser, onAuthenticated, onDemo, onSocialAuth }:
     setStep("account");
   };
 
-  const submitSocial = async (provider: SocialAuthProvider) => {
+  const submitSocial = monitoredAction("action.AuthFlow.submitSocial", "AuthFlow.submitSocial", async (signalScope, provider: SocialAuthProvider) => {
+    const apiClient = scopedApiClient(signalScope);
     setRequestError(null);
     if (!onSocialAuth) {
       setRequestError(t("{{v0}} sign-in is not connected to the backend yet. Continue with email and password.", { v0: provider === "google" ? "Google" : "Apple" }));
@@ -102,14 +110,15 @@ export function AuthFlow({ initialUser, onAuthenticated, onDemo, onSocialAuth }:
       }
       setSubmitted(false);
       setStep("hotel");
-    } catch (error) {
+    } catch (error) { signalScope.fail(error);
       setRequestError(authErrorMessage(error));
     } finally {
       setSocialLoading(null);
     }
-  };
+  });
 
-  const submitAccount = async () => {
+  const submitAccount = monitoredAction("action.AuthFlow.submitAccount", "AuthFlow.submitAccount", async (signalScope) => {
+    const apiClient = scopedApiClient(signalScope);
     setSubmitted(true);
     setRequestError(null);
     if (!accountValid) return;
@@ -130,7 +139,7 @@ export function AuthFlow({ initialUser, onAuthenticated, onDemo, onSocialAuth }:
       try {
         const profile = await apiClient.getHotel();
         onAuthenticated(session.user, profile);
-      } catch (error) {
+      } catch (error) { signalScope.fail(error);
         if (error instanceof ApiError && error.code === "HOTEL_NOT_FOUND") {
           setStep("hotel");
           setSubmitted(false);
@@ -138,14 +147,15 @@ export function AuthFlow({ initialUser, onAuthenticated, onDemo, onSocialAuth }:
         }
         throw error;
       }
-    } catch (error) {
+    } catch (error) { signalScope.fail(error);
       setRequestError(authErrorMessage(error));
     } finally {
       setLoading(false);
     }
-  };
+  });
 
-  const submitHotel = async () => {
+  const submitHotel = monitoredAction("action.AuthFlow.submitHotel", "AuthFlow.submitHotel", async (signalScope) => {
+    const apiClient = scopedApiClient(signalScope);
     setSubmitted(true);
     setRequestError(null);
     if (!hotelValid || !user) return;
@@ -166,14 +176,15 @@ export function AuthFlow({ initialUser, onAuthenticated, onDemo, onSocialAuth }:
         countryCode: profile.countryCode || countryCode.trim().toUpperCase(),
         locale: profile.locale || "en-GB",
       });
-    } catch (error) {
+    } catch (error) { signalScope.fail(error);
       setRequestError(authErrorMessage(error));
     } finally {
       setLoading(false);
     }
-  };
+  });
 
-  const pickLogo = async () => {
+  const pickLogo = monitoredAction("action.AuthFlow.pickLogo", "AuthFlow.pickLogo", async (signalScope) => {
+    const apiClient = scopedApiClient(signalScope);
     setRequestError(null);
     try {
       if (Platform.OS !== "web") {
@@ -192,10 +203,13 @@ export function AuthFlow({ initialUser, onAuthenticated, onDemo, onSocialAuth }:
         return;
       }
       setLogo({ uri: asset.uri, base64: asset.base64, mimeType });
-    } catch {
+    } catch { signalScope.fail(undefined);
       setRequestError(t("Could not choose a photo. Try again."));
     }
-  };
+  });
+  if (step === "forgotPassword") {
+    return <PasswordRecoveryScreen initialEmail={email} onBack={() => openAccount("login")} />;
+  }
 
   if (step === "welcome") {
     return (
@@ -244,14 +258,14 @@ export function AuthFlow({ initialUser, onAuthenticated, onDemo, onSocialAuth }:
             <Text style={styles.authDividerText}>{t("OR USE EMAIL")}</Text>
             <View style={styles.authDividerLine} />
           </View>
-          <Button disabled={socialLoading !== null} onPress={() => openAccount("register")}>{t("Create account with email")}</Button>
-          <Button disabled={socialLoading !== null} variant="secondary" icon={LogIn} onPress={() => openAccount("login")}>{t("Sign in with password")}</Button>
-          <Button disabled={socialLoading !== null} variant="tertiary" onPress={() => onDemo(mockProfile)}>{t("Open demo without an account")}</Button>
+          <Button signalAction="ui.AuthFlow.openAccount.press" signalPlacement="AuthFlow.openAccount" disabled={socialLoading !== null} onPress={() => openAccount("register")}>{t("Create account with email")}</Button>
+          <Button signalAction="ui.AuthFlow.openAccount.press" signalPlacement="AuthFlow.openAccount" disabled={socialLoading !== null} variant="secondary" icon={LogIn} onPress={() => openAccount("login")}>{t("Sign in with password")}</Button>
+          <Button signalAction="ui.AuthFlow.onDemo.press" signalPlacement="AuthFlow.onDemo" disabled={socialLoading !== null} variant="tertiary" onPress={() => onDemo(mockProfile)}>{t("Open demo without an account")}</Button>
         </View>
         <View style={styles.legalLinks}>
-          <Text accessibilityRole="link" style={styles.legalLink} onPress={() => void Linking.openURL("https://ospio.online/privacy.html")}>Privacy Policy</Text>
-          <Text accessibilityRole="link" style={styles.legalLink} onPress={() => void Linking.openURL("https://ospio.online/terms.html")}>Terms and Conditions</Text>
-          <Text accessibilityRole="link" style={styles.legalLink} onPress={() => void Linking.openURL("https://ospio.online/terms-it.html")}>Termini e condizioni</Text>
+          <Text accessibilityRole="link" style={styles.legalLink} onPress={() => actions.run("ui.privacy.open", "AuthFlow.privacy", () => Linking.openURL("https://ospio.online/privacy.html"), "manual")}>Privacy Policy</Text>
+          <Text accessibilityRole="link" style={styles.legalLink} onPress={() => actions.run("ui.terms.open", "AuthFlow.terms", () => Linking.openURL("https://ospio.online/terms.html"), "manual")}>Terms and Conditions</Text>
+          <Text accessibilityRole="link" style={styles.legalLink} onPress={() => actions.run("ui.terms.open", "AuthFlow.terms", () => Linking.openURL("https://ospio.online/terms-it.html"), "manual")}>Termini e condizioni</Text>
         </View>
       </ScrollView>
     );
@@ -276,7 +290,7 @@ export function AuthFlow({ initialUser, onAuthenticated, onDemo, onSocialAuth }:
         </View>
 
         {!initialUser ? (
-          <Pressable
+          <Pressable signalAction="ui.AuthFlow.setRequestError.press" signalPlacement="AuthFlow.setRequestError"
             accessibilityRole="button"
             accessibilityLabel={t("Back")}
             disabled={loading}
@@ -305,6 +319,8 @@ export function AuthFlow({ initialUser, onAuthenticated, onDemo, onSocialAuth }:
               {mode === "register" ? (
                 <Field
                   label={t("Name")}
+                  autoComplete="name"
+                  textContentType="name"
                   placeholder={t("For example, Maria")}
                   autoCapitalize="words"
                   value={name}
@@ -339,10 +355,16 @@ export function AuthFlow({ initialUser, onAuthenticated, onDemo, onSocialAuth }:
                 helper={mode === "register" ? t("Do not reuse your hotel email password") : undefined}
               />
             </View>
-            <Button onPress={() => void submitAccount()} loading={loading}>
+            {mode === "login" ? (
+              <Button signalAction="ui.AuthFlow.setPassword.press" signalPlacement="AuthFlow.setPassword" variant="tertiary" disabled={loading} onPress={() => {
+                setPassword("");
+                setStep("forgotPassword");
+              }}>{t("Forgot password?")}</Button>
+            ) : null}
+            <Button signalAction="ui.AuthFlow.submitAccount.press" signalPlacement="AuthFlow.submitAccount" onPress={() => void submitAccount()} loading={loading}>
               {mode === "login" ? t("Sign in") : t("Create account")}
             </Button>
-            <Button
+            <Button signalAction="ui.AuthFlow.setMode.press" signalPlacement="AuthFlow.setMode"
               variant="tertiary"
               disabled={loading}
               onPress={() => {
@@ -362,7 +384,7 @@ export function AuthFlow({ initialUser, onAuthenticated, onDemo, onSocialAuth }:
             </View>
             {requestError ? <InlineState tone="danger">{requestError}</InlineState> : null}
 
-            <Pressable
+            <Pressable signalAction="ui.AuthFlow.pickLogo.press" signalPlacement="AuthFlow.pickLogo"
               accessibilityRole="button"
               accessibilityLabel={t("Add hotel logo")}
               disabled={loading}
@@ -404,7 +426,7 @@ export function AuthFlow({ initialUser, onAuthenticated, onDemo, onSocialAuth }:
             </View>
 
             <InlineState tone="success">{t("EUR, Europe/Rome and English are selected for the first setup")}</InlineState>
-            <Button onPress={() => void submitHotel()} icon={Check} loading={loading}>
+            <Button signalAction="ui.AuthFlow.submitHotel.press" signalPlacement="AuthFlow.submitHotel" onPress={() => void submitHotel()} icon={Check} loading={loading}>
               {t("Create hotel profile")}{" "}</Button>
           </>
         )}
@@ -447,7 +469,7 @@ function SocialButton({
   const apple = provider === "apple";
   const label = apple ? t("Continue with Apple") : t("Continue with Google");
   return (
-    <Pressable
+    <Pressable signalAction="ui.SocialButton.onPress.press" signalPlacement="SocialButton.onPress"
       accessibilityRole="button"
       accessibilityLabel={translateLabel(label)}
       accessibilityState={{ disabled, busy: loading }}

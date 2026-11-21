@@ -2,12 +2,15 @@ import { t, getLanguage } from "../i18n";
 import { useMemo, useState, type SyntheticEvent } from "react";
 import { resolveLanguage } from "@hotel/i18n";
 import { DEMO_OFFER_PATH, renderDemoOfferPage } from "@hotel/templates";
+import { createDOMActions } from "@hotel/monitoring/browser";
+import { monitor } from "../monitoring";
 
 export function isDemoOfferPreview(): boolean {
   return window.location.pathname.replace(/\/$/, "") === DEMO_OFFER_PATH;
 }
 
 export function DemoOfferPreviewScreen() {
+  const signal = useMemo(() => createDOMActions(monitor), []);
   const [language, setLanguage] = useState(() => resolveLanguage(new URLSearchParams(window.location.search).get("lang") ?? getLanguage()));
   const [selectedOption, setSelectedOption] = useState<number | null>(null);
   // Fragment links in srcdoc otherwise resolve to the host app's URL.
@@ -15,6 +18,7 @@ export function DemoOfferPreviewScreen() {
     .replaceAll('href="#', 'href="about:srcdoc#'), [selectedOption, language]);
   const onLoad = (event: SyntheticEvent<HTMLIFrameElement>) => {
     const document = event.currentTarget.contentDocument;
+    if (document) signal.bind(document, "DemoOffer");
     document?.querySelectorAll<HTMLAnchorElement>('nav a[href*="lang="]').forEach((link) => link.addEventListener("click", (click) => {
       click.preventDefault();
       const value = new URL(link.href).searchParams.get("lang");
@@ -25,6 +29,7 @@ export function DemoOfferPreviewScreen() {
       submit.preventDefault();
       const option = Number(new FormData(form).get("option"));
       setSelectedOption(option);
+      signal.finish(form);
     });
   };
   return <iframe title={t("Demo offer preview")} srcDoc={html} onLoad={onLoad} sandbox="allow-same-origin allow-forms"

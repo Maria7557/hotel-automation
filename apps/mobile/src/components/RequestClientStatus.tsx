@@ -1,6 +1,9 @@
+import { monitoredAction } from "../monitoring/actions";
+import { scopedApiClient } from "../api/client";
 import { t, translateLabel } from "../i18n";
 import { createContext, memo, useCallback, useContext, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
+import { Pressable } from "@/monitoring/Pressable";
 import { AlertCircle, Info, UserPlus } from "lucide-react-native";
 import { theme } from "@hotel/design";
 import { apiClient } from "@/api/client";
@@ -36,26 +39,27 @@ export const RequestClientStatus = memo(function RequestClientStatus({ inquiryId
   const { store, demo, status } = useRequestClient(inquiryId);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const add = async () => {
+  const add = monitoredAction("action.RequestClientStatus.add", "RequestClientStatus.add", async (signalScope) => {
+    const apiClient = scopedApiClient(signalScope);
     setBusy(true); setError(null);
     try {
       const client = demo ? demoAddRequestClient(inquiryId) : await apiClient.addRequestClient(inquiryId);
       if (!client) throw new Error(t("Request was not found."));
       store.markPresent(inquiryId, client.id);
-    } catch (e) { setError(e instanceof Error ? e.message : t("Could not add client. Try again.")); }
+    } catch (e) { signalScope.fail(e); setError(e instanceof Error ? e.message : t("Could not add client. Try again.")); }
     finally { setBusy(false); }
-  };
+  });
   if (status === "loading" || status === "present") return null;
-  if (status === "error") return <Pressable accessibilityRole="button" accessibilityLabel={t("Failed to load client status. Retry")} onPress={(e) => { e.stopPropagation(); store.retry(inquiryId); }} style={styles.badge}>
+  if (status === "error") return <Pressable signalAction="ui.RequestClientStatus.control.press" signalPlacement="RequestClientStatus.control" accessibilityRole="button" accessibilityLabel={t("Failed to load client status. Retry")} onPress={(e) => { e.stopPropagation(); store.retry(inquiryId); }} style={styles.badge}>
     <AlertCircle size={theme.controls.actionIconSize} style={actionStyles.icon} color={theme.colors.danger} /><Text style={styles.label}>{t("Failed to load client status")}</Text>
   </Pressable>;
   return <View style={styles.wrap}>
     <View style={styles.row}>
-      <Pressable accessibilityRole="button" accessibilityLabel={t("Add client to contacts")} accessibilityHint={t("Client is not in the clients list yet")} accessibilityState={{ disabled: busy, busy }} disabled={busy} hitSlop={theme.controls.helperHitSlop} onPress={(e) => { e.stopPropagation(); void add(); }} style={({ pressed }) => [styles.add, (pressed || busy) && { opacity: 0.6 }]}>
+      <Pressable signalAction="ui.RequestClientStatus.add.press" signalPlacement="RequestClientStatus.add" accessibilityRole="button" accessibilityLabel={t("Add client to contacts")} accessibilityHint={t("Client is not in the clients list yet")} accessibilityState={{ disabled: busy, busy }} disabled={busy} hitSlop={theme.controls.helperHitSlop} onPress={(e) => { e.stopPropagation(); void add(); }} style={({ pressed }) => [styles.add, (pressed || busy) && { opacity: 0.6 }]}>
         {busy ? <ActivityIndicator size="small" style={actionStyles.helperIcon} color={theme.colors.danger} /> : <UserPlus size={theme.controls.helperIconSize} style={actionStyles.helperIcon} color={theme.colors.danger} />}
         <Text style={styles.addLabel}>{t("Add client to contacts")}</Text>
       </Pressable>
-      <Tooltip content={t("Client is not in the clients list yet")}>{({ triggerProps, visible, toggle }) => <Pressable {...triggerProps} accessibilityRole="button" accessibilityLabel={t("Why add this client?")} accessibilityState={{ expanded: visible }} hitSlop={theme.controls.helperHitSlop} onPress={(e) => { e.stopPropagation(); toggle(); }} style={styles.info}>
+      <Tooltip content={t("Client is not in the clients list yet")}>{({ triggerProps, visible, toggle }) => <Pressable signalAction="ui.RequestClientStatus.toggle.press" signalPlacement="RequestClientStatus.toggle" {...triggerProps} accessibilityRole="button" accessibilityLabel={t("Why add this client?")} accessibilityState={{ expanded: visible }} hitSlop={theme.controls.helperHitSlop} onPress={(e) => { e.stopPropagation(); toggle(); }} style={styles.info}>
         <Info size={theme.controls.helperIconSize} color={theme.colors.helperIcon} />
       </Pressable>}</Tooltip>
     </View>

@@ -1,5 +1,8 @@
 # Hotel
 
+Signal Monitoring setup, privacy and production configuration:
+[docs/monitoring.md](docs/monitoring.md).
+
 Мобильное приложение для автоматической обработки гостиничных заявок: тарифы по датам, персональные предложения, Google email, WhatsApp через WAHA и подтверждение гостя.
 
 ## Структура
@@ -49,6 +52,12 @@ npm run dev:clients
 Вход в аккаунт запрашивает только базовый профиль и подтверждённый email. OAuth-доступ к Gmail для отправки писем подключается отдельно в настройках.
 
 ## Проверка
+
+Password recovery is available from **Sign in with password → Forgot password?** on web and mobile. Reset links open the web app, expire after 30 minutes and can be used once. A new link replaces the previous one; emails are limited to one per account per minute. After resetting, all account sessions are revoked and the user signs in again. Google/Apple-only accounts continue using their provider.
+
+Run migration `0016_password_reset_tokens` before enabling recovery. Set server `APP_BASE_URL` to the public web app URL (for example `https://hotel.chatsocials.app`, or `http://localhost:8081` locally), and configure `NOTIFICATION_SMTP_HOST`, `NOTIFICATION_SMTP_PORT`, `NOTIFICATION_SMTP_USERNAME`, `NOTIFICATION_SMTP_PASSWORD` and `NOTIFICATION_FROM_EMAIL`. This platform sender is shared with staff notifications; a hotel's guest-mail connection is separate. SMTP must support TLS (465) or STARTTLS. Missing sender configuration shows an unavailable message. Links keep the token in the URL fragment so it does not appear in HTTP access logs. Emails use the user's saved language, with the request language as fallback.
+
+The public API endpoints are `POST /v1/auth/forgot-password` (`{ email }`, generic `202` response) and `POST /v1/auth/reset-password` (`{ token, password }`, `204` on success). Passwords use the registration policy of 10–128 characters. Requests are limited per IP, and the account email cooldown is persisted across API instances. Recovery emails are sent in the background; shutdown drains pending work. PostgreSQL persistence and concurrency checks use `AUTH_TEST_DATABASE_URL` pointing to a disposable test database.
 
 ```bash
 npm run check
@@ -103,6 +112,16 @@ The dashboard API accepts `scope=today` (default) or `scope=actions`. Deploy the
 Виджет наследует только собственные безопасные стили, отправляет заявку в публичный API с `Idempotency-Key` и показывает результат гостю. Сервер принимает запрос только с разрешённого домена отеля.
 
 Тот же код можно получить и скопировать в мобильном приложении: `Настройки → Форма на сайте`. Разрешённые сайты указываются как точные origin, например `https://hotel.example`.
+
+In **Settings → Website form → Mode 1**, paste the CSS generated from your website design into **Custom CSS**, then select **Save custom CSS**. The web app previews unsaved changes using the actual widget at desktop or mobile width; preview submissions never create enquiries. In the native app, save and use **Open saved form preview**. CSS is stored per hotel and loaded by the installed widget on each page load, so the embed snippet stays the same. Clear the field and save to restore the default design. Website origins and CSS save independently.
+
+CSS is appended after the widget's default styles inside its Shadow DOM. Supply CSS only, without `<style>` tags, up to 60,000 characters. When asking Codex to generate a branded stylesheet, target `:host` (the widget container), `.box` (the form), `.grid` / `.two` / `.three` (layout), `.rooms` / `.room-fields` (rooms), `.child-fields` / `.ages` (children's ages), `.alternative-ranges` (additional dates), `.consent` (checkboxes), `label`, `input`, `select`, `textarea`, `button`, and `.message` / `.success` / `.error`. Specific fields can be selected by name, such as `input[name="checkIn"]` or `textarea[name="note"]`. Media queries, font declarations and imports are supported; use absolute URLs for fonts and images. Visual rules are scoped to the form. Font-face rules are registered on the document so the browser can use custom fonts in the Shadow DOM. Mode 2 keeps using the existing website's styles.
+
+Apply migration `0017_widget_css` before starting the updated server (`npm run db:migrate --workspace @hotel/server`). The authenticated `PUT /v1/hotel/intake-settings` accepts `allowedOrigins`, `widgetCss`, or both, and returns the saved settings. The public `/v1/public/hotels/:publicKey/widget.css` endpoint serves only the stylesheet, with revalidation on reload.
+
+The standard enquiry layout is shared by the website widget, the in-app Form, manual requests and duplicates: first/last name, email/phone, stay dates, optional alternative dates, treatment/adults/children for each room, separate child-age selects, message, guest language and consent choices. Offer editing and the rate calculator use the same stay controls. Dates use calendar inputs on web and a date-selection dialog on native; guest counts and ages use selects. Names, email and phone have autofill hints. The widget's CSS uses the existing Ospio colors, 54px controls and 12px control corners.
+
+Up to six rooms and three alternative date ranges are stored as structured `details` in the enquiry source and shown on the reservation. Requests with additional rooms or alternative dates wait for staff review, so the automatic single-room pricing flow never ignores them. A guest's privacy choice is required on the standard guest form; marketing is optional. Staff record consent only when actually provided, and duplication does not copy consent. The adapter can map `data-first-name` and `data-last-name` alongside the existing full-name mapping. Set `data-privacy-url="https://hotel.example/privacy"` on the widget script to link to the hotel's own privacy policy; otherwise the existing application policy is used.
 
 ## Подключения
 

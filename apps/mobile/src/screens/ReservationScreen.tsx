@@ -1,7 +1,11 @@
+import { RefreshControl } from "../monitoring/controls";
+import { monitoredAction } from "../monitoring/actions";
+import { scopedApiClient } from "../api/client";
 import { t, translateLabel } from "../i18n";
 import { requestLabel } from "../requests/status";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Pressable } from "@/monitoring/Pressable";
 import { ArrowLeft, CopyPlus, Plus } from "lucide-react-native";
 import { theme } from "@hotel/design";
 import { apiClient } from "@/api/client";
@@ -35,7 +39,8 @@ export function ReservationScreen({ id, demo, onBack, onOpenClient, onOpenReques
     const timer = setTimeout(() => setReload((value) => value + 1), Math.max(250, deadline - Date.now() + 50));
     return () => clearTimeout(timer);
   }, [request?.id, request?.status, request?.processingDeadlineAt]);
-  const markSent = async () => {
+  const markSent = monitoredAction("action.ReservationScreen.markSent", "ReservationScreen.markSent", async (signalScope) => {
+    const apiClient = scopedApiClient(signalScope);
     if (!request) return;
     setSaving(true); setError(null);
     try {
@@ -43,14 +48,14 @@ export function ReservationScreen({ id, demo, onBack, onOpenClient, onOpenReques
       const { nextAction: _next, ...rest } = request;
       const completed: HotelRequest = { ...rest, status: "completed", statusLabel: requestLabel("completed"), paymentLinkSentAt: new Date().toISOString() };
       setRequest(completed); onChanged();
-    } catch { setError("Could not mark the payment link as sent. Try again."); }
+    } catch { signalScope.fail(undefined); setError("Could not mark the payment link as sent. Try again."); }
     finally { setSaving(false); }
-  };
-  return <><ScrollView style={uiStyles.screen} contentContainerStyle={styles.content} refreshControl={<RefreshControl refreshing={loading && !!request} onRefresh={() => setReload((value) => value + 1)} tintColor={theme.colors.action} />}>
-    <View style={styles.heading}><Pressable accessibilityRole="button" accessibilityLabel={t("Back")} onPress={onBack} style={styles.back}><ArrowLeft size={theme.controls.actionIconSize} color={theme.colors.text} /></Pressable><Text selectable accessibilityRole="header" style={styles.title}>{t("Request")}{request ? ` #${request.reservationNumber}` : ""}</Text>{request ? <View style={styles.actions}><Button variant="create" icon={Plus} disabled={loading || saving || !!request.acceptedAt || request.status === "payment" || request.status === "completed"} onPress={() => setCreateOfferSignal((value) => value + 1)}>{request.offers?.length ? t("Edit offers") : t("Create offer")}</Button><Button variant="tertiary" icon={CopyPlus} disabled={loading || saving} onPress={() => setDuplicating(true)}>{t("Duplicate")}</Button></View> : null}</View>
+  });
+  return <><ScrollView style={uiStyles.screen} contentContainerStyle={styles.content} refreshControl={<RefreshControl signalPlacement="ReservationScreen" refreshing={loading && !!request} onRefresh={() => setReload((value) => value + 1)} tintColor={theme.colors.action} />}>
+    <View style={styles.heading}><Pressable signalAction="ui.ReservationScreen.onBack.press" signalPlacement="ReservationScreen.onBack" accessibilityRole="button" accessibilityLabel={t("Back")} onPress={onBack} style={styles.back}><ArrowLeft size={theme.controls.actionIconSize} color={theme.colors.text} /></Pressable><Text selectable accessibilityRole="header" style={styles.title}>{t("Request")}{request ? ` #${request.reservationNumber}` : ""}</Text>{request ? <View style={styles.actions}><Button signalAction="ui.ReservationScreen.setCreateOfferSignal.press" signalPlacement="ReservationScreen.setCreateOfferSignal" variant="create" icon={Plus} disabled={loading || saving || !!request.acceptedAt || request.status === "payment" || request.status === "completed"} onPress={() => setCreateOfferSignal((value) => value + 1)}>{request.offers?.length ? t("Edit offers") : t("Create offer")}</Button><Button signalAction="ui.ReservationScreen.setDuplicating.press" signalPlacement="ReservationScreen.setDuplicating" variant="tertiary" icon={CopyPlus} disabled={loading || saving} onPress={() => setDuplicating(true)}>{t("Duplicate")}</Button></View> : null}</View>
     {loading && !request ? <ActivityIndicator color={theme.colors.action} /> : null}
     {error ? <InlineState tone="danger">{translateLabel(error)}</InlineState> : null}
-    {!loading && !request ? <><EmptyState title={t("Request unavailable")} description={t("Try again or go back to the request list.")} /><Button onPress={() => setReload((value) => value + 1)}>{t("Try again")}</Button></> : null}
+    {!loading && !request ? <><EmptyState title={t("Request unavailable")} description={t("Try again or go back to the request list.")} /><Button signalAction="ui.ReservationScreen.setReload.press" signalPlacement="ReservationScreen.setReload" onPress={() => setReload((value) => value + 1)}>{t("Try again")}</Button></> : null}
     {request ? <RequestCard request={request} demo={demo} onOpenClient={onOpenClient} variant="page" onManualSent={(updated) => { setRequest(updated); onChanged(); }}>{request.status === "payment" ? <PaymentLinkSentAction busy={saving} onPress={() => void markSent()} /> : null}</RequestCard> : null}
     {request ? <ReservationOffers request={request} demo={demo} createSignal={createOfferSignal} onSent={(updated) => { setRequest(updated); onChanged(); }} /> : null}
   </ScrollView>{duplicating && request ? <ManualRequestModal demo={demo} initialRequest={request} onClose={() => setDuplicating(false)} onCreated={(result) => { setDuplicating(false); onChanged(); onOpenRequest(result.inquiryId); }} /> : null}</>;

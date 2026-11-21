@@ -1,5 +1,9 @@
+import { monitoredAction } from "../monitoring/actions";
+import { scopedApiClient } from "../api/client";
 import { t, translateLabel } from "../i18n";
-import { Alert, Linking, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Linking, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Alert } from "../monitoring/dialogs";
+import { Pressable } from "@/monitoring/Pressable";
 import { ArrowUpRight, Clock3, Mail, MessageCircle, Phone, Send, type LucideIcon } from "lucide-react-native";
 import { theme } from "@hotel/design";
 
@@ -27,7 +31,8 @@ const methods: ContactMethod[] = [
 ];
 
 export function SupportScreen() {
-  const open = async (method: ContactMethod) => {
+  const open = monitoredAction("action.SupportScreen.open", "SupportScreen.open", async (signalScope, method: ContactMethod) => {
+    const apiClient = scopedApiClient(signalScope);
     if (!method.url) {
       Alert.alert(t("{{v0}} is not connected yet", { v0: method.title }), t("Contact us at {{v0}}.", { v0: supportEmail }), [
         { text: t("Cancel"), style: "cancel" },
@@ -37,10 +42,10 @@ export function SupportScreen() {
     }
     try {
       await Linking.openURL(method.url);
-    } catch {
+    } catch { signalScope.fail(undefined);
       Alert.alert(t("Could not open this channel"), t("Contact us at {{v0}}.", { v0: supportEmail }));
     }
-  };
+  });
 
   return <View style={uiStyles.screen}>
     <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
@@ -51,7 +56,7 @@ export function SupportScreen() {
       <View style={styles.grid}>
         {methods.map((method) => {
           const Icon = method.icon;
-          return <Pressable key={method.id} accessibilityRole="button" accessibilityLabel={translateLabel(method.title)} onPress={() => void open(method)} style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}>
+          return <Pressable signalAction="ui.SupportScreen.open.press" signalPlacement="SupportScreen.open" key={method.id} accessibilityRole="button" accessibilityLabel={translateLabel(method.title)} onPress={() => void open(method)} style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}>
             <View style={[styles.icon, { backgroundColor: method.background }]}><Icon size={24} color={method.color} /></View>
             <Text style={styles.title}>{translateLabel(method.title)}</Text>
             <ArrowUpRight size={19} color={theme.colors.textMuted} />

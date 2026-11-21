@@ -1,18 +1,12 @@
+import { TextInput } from "../monitoring/controls";
 import { t, translateLabel } from "../i18n";
 import type { ReactNode } from "react";
-import {
-  ActivityIndicator,
-  Pressable,
-  StyleSheet,
-  Text,
-  TextInput,
-  type TextInputProps,
-  View,
-  type ViewStyle,
-} from "react-native";
-import { AlertCircle, CheckCircle2, Clock3, type LucideIcon } from "lucide-react-native";
+import { ActivityIndicator, StyleSheet, Text, type TextInputProps, View, type ViewStyle } from "react-native";
+import { Pressable } from "@/monitoring/Pressable";
+import { AlertCircle, CheckCircle2, Clock3, Info, type LucideIcon } from "lucide-react-native";
 import { theme } from "@hotel/design";
 import { actionStyles } from "./actionStyles";
+import { Tooltip } from "./Tooltip";
 
 type ButtonProps = {
   children: ReactNode;
@@ -22,6 +16,8 @@ type ButtonProps = {
   loading?: boolean;
   icon?: LucideIcon;
   accessibilityHint?: string;
+  signalPlacement?: string;
+  signalAction?: string;
 };
 
 export function Button({
@@ -32,11 +28,13 @@ export function Button({
   loading = false,
   icon: Icon,
   accessibilityHint,
+  signalPlacement = "ui.Button",
+  signalAction = "ui.button.press",
 }: ButtonProps) {
   const blocked = disabled || loading;
   const filled = variant === "primary" || variant === "create";
   return (
-    <Pressable
+    <Pressable signalPlacement={signalPlacement} signalAction={signalAction}
       accessibilityRole="button"
       accessibilityState={{ disabled: blocked, busy: loading }}
       accessibilityHint={accessibilityHint}
@@ -82,16 +80,35 @@ type FieldProps = TextInputProps & {
   label: string;
   error?: string | undefined;
   helper?: string | undefined;
+  tooltip?: string | undefined;
 };
 
-export function Field({ label, error, helper, style, ...inputProps }: FieldProps) {
+export function Field({ label, error, helper, tooltip, style, ...inputProps }: FieldProps) {
+  const contactType = inputProps.keyboardType === "email-address" ? "email" : inputProps.keyboardType === "phone-pad" ? "tel" : undefined;
+  const fieldLabel = <Text style={styles.fieldLabel}>{translateLabel(label)}</Text>;
   return (
     <View style={styles.fieldWrap}>
-      <Text style={styles.fieldLabel}>{translateLabel(label)}</Text>
-      <TextInput
+      {tooltip ? <View style={actionStyles.associated}>
+        {fieldLabel}
+        <Tooltip content={tooltip}>{({ triggerProps, visible, toggle }) => <Pressable
+          signalAction="ui.Field.tooltip.press"
+          signalPlacement="Field.tooltip"
+          {...triggerProps}
+          accessibilityRole="button"
+          accessibilityLabel={t("About {{v0}}", { v0: translateLabel(label) })}
+          accessibilityState={{ expanded: visible }}
+          hitSlop={theme.controls.helperHitSlop}
+          onPress={(event) => { event.stopPropagation(); toggle(); }}
+          style={({ pressed }) => [actionStyles.helperIconButton, visible && styles.fieldTooltipActive, pressed && styles.fieldTooltipPressed]}
+        >
+          <Info size={theme.controls.helperIconSize} color={theme.colors.helperIcon} />
+        </Pressable>}</Tooltip>
+      </View> : fieldLabel}
+      <TextInput signalPlacement="ui"
+        {...(contactType ? { autoComplete: contactType, textContentType: contactType === "email" ? "emailAddress" : "telephoneNumber", autoCorrect: false, autoCapitalize: "none", inputMode: contactType } as const : {})}
         {...inputProps}
         accessibilityLabel={translateLabel(label)}
-        accessibilityHint={error ? t(error) : helper ? t(helper) : undefined}
+        accessibilityHint={error ? t(error) : helper ? t(helper) : tooltip ? t(tooltip) : undefined}
         style={[styles.field, error ? styles.fieldError : undefined, style]}
         placeholderTextColor={theme.colors.textMuted}
         selectionColor={theme.colors.action}
@@ -200,7 +217,9 @@ const styles = StyleSheet.create({
   buttonLabelPrimary: { color: theme.colors.onAction },
   buttonLabelSecondary: { color: theme.colors.action },
   fieldWrap: { gap: theme.spacing[2] },
-  fieldLabel: { ...theme.typography.bodySmallMedium, color: theme.colors.text },
+  fieldLabel: { ...theme.typography.bodySmallMedium, color: theme.colors.text, flexShrink: 1 },
+  fieldTooltipActive: { backgroundColor: theme.colors.actionTint },
+  fieldTooltipPressed: { opacity: 0.7 },
   field: {
     minHeight: theme.controls.inputHeight,
     borderRadius: theme.radii.md,

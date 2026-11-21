@@ -14,6 +14,8 @@ export const errors = {
   unauthorized: () => new AppError(401, "UNAUTHORIZED", "Authentication is required."),
   forbidden: () => new AppError(403, "FORBIDDEN", "This account does not have access to this area."),
   invalidCredentials: () => new AppError(401, "INVALID_CREDENTIALS", "Email or password is incorrect."),
+  passwordResetInvalid: () => new AppError(400, "PASSWORD_RESET_INVALID", "This reset link is invalid or expired. Request a new one."),
+  passwordResetUnavailable: () => new AppError(503, "PASSWORD_RESET_UNAVAILABLE", "Password reset is temporarily unavailable. Please try again later."),
   socialTokenInvalid: () =>
     new AppError(401, "SOCIAL_TOKEN_INVALID", "The identity token is invalid or expired."),
   socialEmailUnverified: () =>

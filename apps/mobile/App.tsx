@@ -1,8 +1,11 @@
+import { monitoredAction } from "src/monitoring/actions";
+import { scopedApiClient } from "src/api/client";
 import { t, translateLabel, getLanguage } from "./src/i18n";
 import { useTranslation } from "react-i18next";
 import { TranslationProvider, setLanguage } from "./src/i18n/Provider";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Platform, StyleSheet, Text, View } from "react-native";
+import { Pressable } from "./src/monitoring/Pressable";
 import { FontDisplay, useFonts } from "expo-font";
 import { Inter_400Regular } from "@expo-google-fonts/inter/400Regular";
 import { Inter_500Medium } from "@expo-google-fonts/inter/500Medium";
@@ -33,6 +36,11 @@ import { NotificationSettingsScreen } from "@/screens/NotificationSettingsScreen
 import { InquiryFormScreen } from "@/screens/InquiryFormScreen";
 import { OfferSettingsScreen } from "@/screens/OfferSettingsScreen";
 import { DemoOfferPreviewScreen, isDemoOfferPreview } from "@/screens/DemoOfferPreviewScreen";
+import { PasswordRecoveryScreen } from "@/screens/PasswordRecoveryScreen";
+import { passwordResetTokenFromHash } from "@/auth/password-reset-link";
+import { observe } from "@hotel/monitoring";
+import { installMonitoring, monitor, screenViewed } from "./src/monitoring";
+import { MonitoringErrorBoundary } from "./src/monitoring/ErrorBoundary";
 
 type Tab = "requests" | "clients" | "settings" | "support";
 type AppState =
@@ -42,15 +50,43 @@ type AppState =
   | { status: "demo"; profile: HotelProfile };
 
 export default function App() {
-  return <TranslationProvider><AppContent /></TranslationProvider>;
+  useEffect(() => installMonitoring(), []);
+  return <MonitoringErrorBoundary><TranslationProvider><AppContent /></TranslationProvider></MonitoringErrorBoundary>;
 }
 
 function AppContent() {
   useTranslation();
-  return isDemoOfferPreview() ? <DemoOfferPreviewScreen /> : <HotelApp />;
+  const readResetToken = () => Platform.OS === "web" ? passwordResetTokenFromHash(window.location.hash) : null;
+  const [resetToken, setResetToken] = useState(readResetToken);
+  const [startWithLogin, setStartWithLogin] = useState(false);
+  useEffect(() => {
+    if (resetToken !== null) screenViewed("PasswordRecovery");
+    else if (isDemoOfferPreview()) screenViewed("DemoOfferPreview");
+  }, [resetToken]);
+  useEffect(() => {
+    if (Platform.OS !== "web") return;
+    const update = () => setResetToken(readResetToken());
+    window.addEventListener("hashchange", update);
+    window.addEventListener("popstate", update);
+    return () => {
+      window.removeEventListener("hashchange", update);
+      window.removeEventListener("popstate", update);
+    };
+  }, []);
+  if (resetToken !== null) {
+    return <SafeAreaProvider><SafeAreaView style={styles.safeArea}>
+      <StatusBar style="dark" />
+      <PasswordRecoveryScreen key={resetToken} token={resetToken} onBack={() => {
+        window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+        setStartWithLogin(true);
+        setResetToken(null);
+      }} />
+    </SafeAreaView></SafeAreaProvider>;
+  }
+  return isDemoOfferPreview() ? <DemoOfferPreviewScreen /> : <HotelApp startWithLogin={startWithLogin} />;
 }
 
-function HotelApp() {
+function HotelApp({ startWithLogin = false }: { startWithLogin?: boolean }) {
   const [fontsLoaded, fontError] = useFonts({
     Inter_400Regular: { uri: Inter_400Regular, display: FontDisplay.SWAP },
     Inter_500Medium: { uri: Inter_500Medium, display: FontDisplay.SWAP },
@@ -74,10 +110,34 @@ function HotelApp() {
   const [requestRevision, setRequestRevision] = useState(0);
   const openRequest = (id: string) => details.open({ kind: "reservation", id });
   const openClient = (id: string) => details.open({ kind: "client", id });
+  const currentScreen = appState.status === "booting" ? "Bootstrap"
+    : appState.status === "signedOut" ? "Authentication"
+    : appState.status === "authenticated" && !appState.profile ? "HotelSetup"
+    : details.page ? (details.page.kind === "client" ? "Client" : "Reservation")
+    : profileOpen ? "HotelProfile" : inventoryOpen ? "Inventory" : offerSettingsOpen ? "OfferSettings"
+    : messagesOpen ? "MessageSettings" : connectionsOpen ? "Connections" : siteIntegrationOpen ? "SiteIntegration"
+    : notificationsOpen ? "Notifications" : formOpen ? "InquiryForm"
+    : ({ requests: "Requests", clients: "Clients", settings: "Settings", support: "Support" } as const)[tab];
+  useEffect(() => {
+    if (currentScreen !== "Authentication" && currentScreen !== "Inventory") screenViewed(currentScreen);
+  }, [currentScreen, details.page]);
+  const monitoringUser = appState.status === "authenticated" ? appState.user.id : "";
+  const monitoringUserName = appState.status === "authenticated" ? appState.user.displayName ?? "" : "";
+  const monitoringCompany = appState.status === "authenticated" ? appState.profile?.id ?? "" : "";
+  const monitoringCompanyName = appState.status === "authenticated" && monitoringCompany ? appState.profile?.name ?? "" : "";
+  const monitoringAuthState = monitoringUser ? "authenticated" : appState.status === "demo" || appState.status === "signedOut" && !appState.error ? "anonymous" : "unknown";
+  useEffect(() => {
+    observe(() => monitor?.setContext({ userId: monitoringUser, companyId: monitoringCompany, companyName: monitoringCompanyName, userName: monitoringUserName,
+      authState: monitoringAuthState }));
+  }, [monitoringUser, monitoringUserName, monitoringCompany, monitoringCompanyName, monitoringAuthState]);
+  useEffect(() => {
+    if (fontError) observe(() => monitor?.warn("app.fonts.unavailable", { placement: "app.bootstrap" }));
+  }, [fontError]);
 
   useEffect(() => {
     let active = true;
-    const restore = async () => {
+    const restore = monitoredAction("action.HotelApp.restore", "HotelApp.restore", async (signalScope) => {
+    const apiClient = scopedApiClient(signalScope);
       try {
         const user = await apiClient.getSession();
         if (user?.uiLanguage) await setLanguage(user.uiLanguage);
@@ -90,24 +150,25 @@ function HotelApp() {
         try {
           const profile = await apiClient.getHotel();
           if (active) setAppState({ status: "authenticated", user, profile });
-        } catch (error) {
+        } catch (error) { signalScope.fail(error);
           if (error instanceof ApiError && error.code === "HOTEL_NOT_FOUND") {
             if (active) setAppState({ status: "authenticated", user, profile: null });
             return;
           }
           throw error;
         }
-      } catch (error) {
+      } catch (error) { signalScope.fail(error);
         if (active) {
           setAppState({ status: "signedOut", error: authErrorMessage(error) });
         }
       }
-    };
+    });
     void restore();
     return () => { active = false; };
   }, [sessionAttempt]);
 
-  const handleLogout = async () => {
+  const handleLogout = monitoredAction("action.HotelApp.handleLogout", "HotelApp.handleLogout", async (signalScope) => {
+    const apiClient = scopedApiClient(signalScope);
     details.clear();
     if (appState.status === "demo") {
       setAppState({ status: "signedOut", error: null });
@@ -120,28 +181,29 @@ function HotelApp() {
       await apiClient.logout();
       setTab("requests");
       setAppState({ status: "signedOut", error: null });
-    } catch (error) {
+    } catch (error) { signalScope.fail(error);
       setLogoutError(t("{{v0}} The local session was cleared.", { v0: authErrorMessage(error) }));
       setTab("requests");
       setAppState({ status: "signedOut", error: t("{{v0}} The local session was cleared.", { v0: authErrorMessage(error) }) });
     } finally {
       setLogoutLoading(false);
     }
-  };
+  });
 
-  const handleSocialAuth = async (provider: "google" | "apple") => {
+  const handleSocialAuth = monitoredAction("action.HotelApp.handleSocialAuth", "HotelApp.handleSocialAuth", async (signalScope, provider: "google" | "apple") => {
+    const apiClient = scopedApiClient(signalScope);
     const idToken = await getSocialIdentityToken(provider);
     const session = await apiClient.socialLogin({ provider, idToken });
     try {
       const profile = await apiClient.getHotel();
       return { user: session.user, profile };
-    } catch (error) {
+    } catch (error) { signalScope.fail(error);
       if (error instanceof ApiError && error.code === "HOTEL_NOT_FOUND") {
         return { user: session.user, profile: null };
       }
       throw error;
     }
-  };
+  });
 
   // Web remains usable with fallback fonts while custom fonts load or if they fail.
   if (Platform.OS !== "web" && !fontsLoaded && !fontError) return <View style={styles.loadingCanvas} />;
@@ -176,7 +238,7 @@ function HotelApp() {
             {appState.status === "signedOut" && appState.error ? (
               <View style={styles.restoreError} accessibilityRole="alert">
                 <Text style={styles.restoreErrorText}>{translateLabel(appState.error)}</Text>
-                <Pressable accessibilityRole="button" onPress={() => {
+                <Pressable signalAction="ui.HotelApp.setAppState.press" signalPlacement="HotelApp.setAppState" accessibilityRole="button" onPress={() => {
                   setAppState({ status: "booting" });
                   setSessionAttempt((attempt) => attempt + 1);
                 }} style={styles.restoreRetry}>
@@ -185,6 +247,7 @@ function HotelApp() {
               </View>
             ) : null}
             <AuthFlow
+              startWithLogin={startWithLogin}
               initialUser={appState.status === "authenticated" ? appState.user : undefined}
               onSocialAuth={handleSocialAuth}
               onAuthenticated={(user, nextProfile) => {
@@ -293,7 +356,7 @@ function HotelApp() {
 
 function NavItem({ label, icon: Icon, selected, onPress }: { label: string; icon: LucideIcon; selected: boolean; onPress: () => void }) {
   return (
-    <Pressable
+    <Pressable signalAction="ui.NavItem.onPress.press" signalPlacement="NavItem.onPress"
       accessibilityRole="tab"
       accessibilityState={{ selected }}
       accessibilityLabel={translateLabel(label)}

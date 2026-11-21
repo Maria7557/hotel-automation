@@ -3,6 +3,7 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 import { errors } from "../lib/errors.js";
 import type { PublicUser } from "../repositories/types.js";
 import type { AuthService } from "../services/auth.js";
+import { authenticatedMonitoringContext } from "../monitoring/index.js";
 
 export const sessionCookieName = "hotel_session";
 
@@ -34,5 +35,6 @@ export function requireAuthentication(authService: AuthService) {
     const token = sessionToken(request);
     request.currentUser = await authService.authenticate(token);
     request.accessToken = token;
+    await authenticatedMonitoringContext(request, request.currentUser);
   };
 }

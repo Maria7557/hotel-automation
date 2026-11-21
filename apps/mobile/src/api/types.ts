@@ -2,7 +2,8 @@ export type RequestStatus = "payment" | "completed" | "attention" | "waiting" | 
 export type { DashboardQuery, DashboardPagination } from "@hotel/contracts";
 export type { ClientFilters, ClientFilterOptions } from "@hotel/contracts";
 export type { ManualInquiryInput, ManualInquiryResult, ManualRequestSource } from "@hotel/contracts";
-import type { ManualRequestSource, ReservationOffer } from "@hotel/contracts";
+import type { EnquiryDetails, ManualRequestSource, MessageTemplateSettings, ReservationOffer } from "@hotel/contracts";
+export type { MessageTemplates } from "@hotel/contracts";
 
 export type DeliverySummary = {
   status: "sent" | "pending" | "failed" | "unused";
@@ -26,6 +27,7 @@ export type HotelRequest = {
   checkIn: string;
   checkOut: string;
   occupancy: { adults: number; childAges: number[] };
+  details?: EnquiryDetails | null;
   stayLabel: string;
   guestLabel: string;
   roomLabel: string;
@@ -81,14 +83,15 @@ export type HotelProfile = {
   termsText: string;
   publicKey: string;
   allowedOrigins: string[];
+  widgetCss: string;
 };
 
 export type HotelProfileInput = Omit<
   HotelProfile,
-  "id" | "currency" | "timezone" | "publicKey" | "allowedOrigins"
+  "id" | "currency" | "timezone" | "publicKey" | "allowedOrigins" | "widgetCss"
 >;
 
-export type HotelIntakeSettings = Pick<HotelProfile, "publicKey" | "allowedOrigins">;
+export type HotelIntakeSettings = Pick<HotelProfile, "publicKey" | "allowedOrigins" | "widgetCss">;
 
 export type SessionUser = {
   uiLanguage?: "en" | "it" | null;
@@ -161,13 +164,7 @@ export type RatePreview =
 
 export type MessageChannel = "email" | "whatsapp";
 
-export type MessageTemplates = { emailSubjectTemplate: string; emailBodyTemplate: string; whatsappBodyTemplate: string };
-export type MessageSettings = {
-  templateLanguage?: "en" | "it";
-  translations?: Partial<Record<"en" | "it", MessageTemplates>>;
-  emailSubjectTemplate: string;
-  emailBodyTemplate: string;
-  whatsappBodyTemplate: string;
+export type MessageSettings = MessageTemplateSettings & {
   allowedVariables: string[];
 };
 

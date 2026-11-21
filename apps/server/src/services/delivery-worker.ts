@@ -12,6 +12,8 @@ import type {
 import { MailSender } from "./mail-sender.js";
 import { renderOfferDelivery } from "./offer-delivery-renderer.js";
 import type { NotificationService } from "./notifications.js";
+import { jobContext } from "../monitoring/scope.js";
+import { monitoredJob, jobOutcome, type Monitor } from "../monitoring/workflows.js";
 
 type GoogleConfig = {
   GOOGLE_CLIENT_ID?: string;
@@ -43,12 +45,17 @@ export class DeliveryWorker {
     private readonly microsoftProvider = new MicrosoftProvider(fetch),
     private readonly smtpProvider = new SmtpProvider(),
     private readonly notifications?: NotificationService,
+    private readonly monitor?: Monitor | null,
   ) {}
 
   async processNext(now = new Date()): Promise<boolean> {
     const job = await this.repository.claimNextOfferDelivery(now);
     if (!job) return false;
-    await this.processClaim(job, now);
+    const context = jobContext(job.delivery.payload.monitoring);
+    await monitoredJob(this.monitor, "offer.delivery", {
+      ...context, companyId: job.delivery.hotelId, companyName: job.hotel?.name ?? "", placement: "deliveryWorker.processClaim",
+      attributes: { ...context.attributes, jobId: job.delivery.id, attempt: job.delivery.attemptCount + 1, channel: job.delivery.channel },
+    }, () => this.processClaim(job, now));
     return true;
   }
 
@@ -203,6 +210,7 @@ export class DeliveryWorker {
       processedAt: null,
       now,
     });
+    jobOutcome(this.monitor, "offer.delivery", "deferred", { failureCode: code, failedStep: "connection.ready", attempt: attemptCount });
   }
 
   private async retry(deliveryId: string, attemptCount: number, now: Date, code: string) {
@@ -217,6 +225,7 @@ export class DeliveryWorker {
       processedAt: null,
       now,
     });
+    jobOutcome(this.monitor, "offer.delivery", "retry", { failureCode: code, failedStep: "provider.send", attempt: attemptCount });
   }
 
   private async succeed(
@@ -236,6 +245,7 @@ export class DeliveryWorker {
       processedAt: now,
       now,
     });
+    jobOutcome(this.monitor, "offer.delivery", "completed", { state: "provider_accepted", attempt: attemptCount });
   }
 
   private async fail(deliveryId: string, attemptCount: number, now: Date, code: string) {
@@ -250,6 +260,7 @@ export class DeliveryWorker {
       processedAt: now,
       now,
     });
+    jobOutcome(this.monitor, "offer.delivery", "failed", { failureCode: code, failedStep: "delivery.process", attempt: attemptCount });
   }
 
   private async unknown(deliveryId: string, attemptCount: number, now: Date, code: string) {
@@ -264,6 +275,7 @@ export class DeliveryWorker {
       processedAt: now,
       now,
     });
+    jobOutcome(this.monitor, "offer.delivery", "unknown", { failureCode: code, failedStep: "provider.send", attempt: attemptCount });
   }
 
   private logOutcome(deliveryId: string, channel: string, state: string, code: string) {

@@ -1,8 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
-import { AUTOMATIC_SENDING_TIMEOUT_MS, AUTOMATIC_SENDING_TIMEOUT_REASON } from "@hotel/contracts";
+import { AUTOMATIC_SENDING_TIMEOUT_MS, AUTOMATIC_SENDING_TIMEOUT_REASON, enquiryDetailsSchema, enquiryNeedsReview, type EnquiryDetails } from "@hotel/contracts";
 import { DEFAULT_GUEST_LANGUAGE, OFFER_VALIDITY_MS, manualRequestSourceSchema, mealPlanSchema, occupancySchema, offerSettingsSchema, offerExtraLineSchema, type DashboardQuery, type InquiryFormInput, type ManualInquiryInput, type MealPlan, type OfferEditorData, type OfferSettings, type ReservationOffer, type SendReservationOffersInput } from "@hotel/contracts";
 
 import { buildOfferDraft } from "@hotel/domain";
+import { observe } from "@hotel/monitoring";
+import { monitoringCarrier, monitoringScope } from "../monitoring/scope.js";
+import type { Monitor } from "../monitoring/workflows.js";
 import { escapeHtml } from "@hotel/templates";
 import { quoteReservationOffer } from "./reservation-offer-pricing.js";
 
@@ -31,6 +34,7 @@ export type PublicInquiryInput = {
   mealPlan: MealPlan;
   note: string;
   source: Record<string, unknown>;
+  details?: EnquiryDetails | undefined;
 };
 
 export type TestOfferSample = {
@@ -47,6 +51,7 @@ export class AutomationService {
     private readonly authSecret: string,
     private readonly publicBaseUrl: string,
     private readonly notifications?: NotificationService,
+    private readonly monitor?: Monitor | null,
   ) {}
 
   async intake(publicKey: string, origin: string | undefined, idempotencyKey: string, input: PublicInquiryInput) {
@@ -55,7 +60,7 @@ export class AutomationService {
     if (!origin || !hotel.allowedOrigins.includes(origin)) throw errors.originNotAllowed();
     if (idempotencyKey.length < 1 || idempotencyKey.length > 160) throw errors.idempotencyKeyRequired();
 
-    return this.createInquiry(hotel, idempotencyKey, { ...input, source: { ...input.source, origin, heldForGuestNote: !!input.note.trim() } }, !input.note.trim());
+    return this.createInquiry(hotel, idempotencyKey, { ...input, source: { ...input.source, origin, heldForGuestNote: !!input.note.trim() } }, !input.note.trim() && !enquiryNeedsReview(input.details));
   }
 
   async createFormInquiry(userId: string, idempotencyKey: string, input: InquiryFormInput) {
@@ -64,7 +69,7 @@ export class AutomationService {
     return this.createInquiry(facts.hotel, `form:${idempotencyKey}`, {
       ...input,
       source: { type: "embed", widgetVersion: "v1", heldForGuestNote: !!input.note.trim() },
-    }, !input.note.trim());
+    }, !input.note.trim() && !enquiryNeedsReview(input.details));
   }
 
   async createManualInquiry(userId: string, idempotencyKey: string, input: ManualInquiryInput) {
@@ -73,12 +78,15 @@ export class AutomationService {
     return this.createInquiry(facts.hotel, `manual:${idempotencyKey}`, {
       ...input,
       source: { type: "manual", receivedVia: input.receivedVia, createdByUserId: userId },
-    }, input.sendOffer, input.offers);
+    }, input.sendOffer && !enquiryNeedsReview(input.details), enquiryNeedsReview(input.details) ? undefined : input.offers);
   }
 
   private async createInquiry(hotel: HotelProfile, idempotencyKey: string, input: PublicInquiryInput, sendOffer = true, choices?: ManualInquiryInput["offers"]) {
+    const current = monitoringScope.getStore();
+    if (current) Object.assign(current, { companyId: hotel.id, companyName: hotel.name });
     const now = new Date();
     const inquiryId = randomUUID();
+    const { enquiryDetails: _untrustedDetails, consentRecordedAt: _untrustedTime, ...source } = input.source;
     const inquiry: Omit<InquiryRecord, "reservationNumber"> = {
       id: inquiryId,
       hotelId: hotel.id,
@@ -91,7 +99,7 @@ export class AutomationService {
       checkOut: input.checkOut,
       occupancy: input.occupancy,
       mealPlan: input.mealPlan,
-      source: input.source,
+      source: { ...source, ...(input.details ? { enquiryDetails: input.details } : {}), ...(input.details?.consents ? { consentRecordedAt: now.toISOString() } : {}) },
       note: input.note,
       attentionReason: sendOffer ? null : "manual_review",
       currentOfferId: null,
@@ -113,6 +121,7 @@ export class AutomationService {
           source: { ...inquiry.source, automationIssues: result.issues },
         },
       });
+      observe(() => this.monitor?.warn("offer.automation.deferred", { ...monitoringScope.getStore(), placement: "automation.createInquiry", attributes: { reason: result.attentionReason, replayed: bundle.replayed } }));
       if (!bundle.replayed) {
         await this.safeNotify({
           type: "inquiry",
@@ -163,6 +172,7 @@ export class AutomationService {
       payload: {
         schemaVersion: 1,
         proposalUrlCiphertext: sealPrivateValue(proposalUrl, this.authSecret),
+        monitoring: monitoringCarrier(),
       },
       attemptCount: 0,
       nextAttemptAt: now,
@@ -267,7 +277,8 @@ export class AutomationService {
     const offerId = `${digest.slice(0, 8)}-${digest.slice(8, 12)}-8${digest.slice(13, 16)}-a${digest.slice(17, 20)}-${digest.slice(20, 32)}`;
     if (facts.offers.some(({ id }) => id === offerId)) return { inquiry: await this.request(userId, inquiryId), replayed: true };
     if (!inquiry.guestEmail && !inquiry.guestPhone) throw errors.offerContactRequired();
-    const draft = await this.buildStaffInquiryOffer(facts.hotel, inquiry, input.offers);
+    const locale = input.language ?? inquiry.locale;
+    const draft = await this.buildStaffInquiryOffer(facts.hotel, { ...inquiry, locale }, input.offers);
     const now = new Date();
     const rawToken = createPublicToken();
     const offer = {
@@ -281,11 +292,11 @@ export class AutomationService {
       ...(inquiry.guestPhone ? [{ channel: "whatsapp" as const, recipient: inquiry.guestPhone }] : []),
     ];
     const result = await this.repository.replaceReservationOffers({
-      userId, inquiryId, baseOfferId: input.baseOfferId, offer, now,
+      userId, inquiryId, baseOfferId: input.baseOfferId, locale, offer, now,
       deliveries: recipients.map(({ channel, recipient }) => ({
         id: randomUUID(), hotelId: facts.hotel.id, inquiryId, offerVersionId: offerId, kind: "offer", channel,
         state: "scheduled", idempotencyKey: `${offerId}:${channel}`, recipient,
-        payload: { schemaVersion: 1, proposalUrlCiphertext: sealPrivateValue(`${this.publicBaseUrl}/proposal/${rawToken}`, this.authSecret) },
+        payload: { schemaVersion: 1, proposalUrlCiphertext: sealPrivateValue(`${this.publicBaseUrl}/proposal/${rawToken}`, this.authSecret), monitoring: monitoringCarrier() },
         attemptCount: 0, nextAttemptAt: now, providerMessageId: null, lastErrorCode: null, lastErrorMessage: null, processedAt: null,
       })),
     });
@@ -508,6 +519,7 @@ export class AutomationService {
         checkOut: inquiry.checkOut,
         occupancy: inquiry.occupancy,
         mealPlan: inquiry.mealPlan,
+        details: enquiryDetailsSchema.safeParse(inquiry.source.enquiryDetails).data ?? null,
         offerSummary: latest ? offerSummary(latest) : null,
         currentOfferId: latest?.id ?? null,
         offers: latest ? reservationOffers(latest, now) : [],

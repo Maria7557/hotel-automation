@@ -11,5 +11,6 @@ const exactOrigin = z.string().url().refine((value) => {
 }, "Origin must contain only scheme, host, and optional port.");
 
 export const intakeSettingsSchema = z.object({
-  allowedOrigins: z.array(exactOrigin).max(20).transform((origins) => [...new Set(origins)]),
-});
+  allowedOrigins: z.array(exactOrigin).max(20).transform((origins) => [...new Set(origins)]).optional(),
+  widgetCss: z.string().max(60_000).optional(),
+}).refine((settings) => settings.allowedOrigins !== undefined || settings.widgetCss !== undefined, "Provide website settings or custom CSS.");

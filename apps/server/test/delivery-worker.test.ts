@@ -1,6 +1,7 @@
 import { MicrosoftProvider } from "../src/providers/microsoft.js";
 import { SmtpProvider } from "../src/providers/smtp.js";
 import { randomUUID } from "node:crypto";
+import { createMonitor } from "@hotel/monitoring";
 
 import { describe, expect, it, vi } from "vitest";
 
@@ -48,6 +49,31 @@ describe("delivery worker repository claim", () => {
 });
 
 describe("DeliveryWorker", () => {
+  it("links persisted workflow correlation to an explicit deferred job outcome without claiming delivery success", async () => {
+    const uploads: any[] = [];
+    const monitor = createMonitor({ endpoint: "https://collector.example/api/ingest", token: "synthetic", platform: "server", service: "ospio-delivery-worker", serviceVersion: "test-worker-release",
+      fetch: async (_input, init) => { uploads.push(JSON.parse(String(init?.body))); return Response.json({}); } });
+    try {
+      await monitor.ready;
+      const repositories = createMemoryRepositories();
+      const { delivery, hotel } = seedDelivery(repositories, "whatsapp");
+      const carrier = { sessionId: randomUUID(), actionId: randomUUID(), traceId: randomUUID() };
+      delivery.payload.monitoring = carrier;
+      const transport = vi.fn();
+      const worker = new DeliveryWorker(repositories.deliveryWorker, repositories.channels, secret, googleConfig,
+        new GoogleProvider(transport), new WahaProvider(transport), 5, undefined, {}, {}, undefined, undefined, undefined, monitor);
+      expect(await worker.processNext(now)).toBe(true);
+      await monitor.flush();
+      const events = uploads.flatMap((upload) => upload.events);
+      expect(events.map((event) => event.name)).toEqual(["offer.delivery.started", "offer.delivery.deferred"]);
+      expect(events.every((event) => event.source === "worker" && event.sessionKind === "process" && event.traceId === carrier.traceId && event.actionId === carrier.actionId)).toBe(true);
+      expect(events.every((event) => event.sessionId !== carrier.sessionId && event.attributes.originSessionId === carrier.sessionId)).toBe(true);
+      expect(events[1]).toMatchObject({ attributes: { failureCode: "WHATSAPP_CONNECTION_NOT_READY", attempt: 0, jobId: delivery.id } });
+      expect(uploads.flatMap((upload) => upload.contexts ?? []).some((context) => context.companyId === hotel.id && context.companyName === hotel.name)).toBe(true);
+      expect(transport).not.toHaveBeenCalled();
+    } finally { await monitor.stop(); }
+  });
+
   it.each([
     { language: undefined, greeting: "Gentile Anna," },
     { language: "it", greeting: "Gentile Anna," },
@@ -321,6 +347,7 @@ function hotelRecord(): HotelProfile {
     id: randomUUID(),
     publicKey: randomUUID(),
     allowedOrigins: [],
+    widgetCss: "",
     name: "Hotel Sole",
     city: "Roma",
     countryCode: "IT",

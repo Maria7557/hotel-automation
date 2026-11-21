@@ -223,6 +223,16 @@ describe("public offer page", () => {
 });
 
 describe("security boundaries", () => {
+  it.each(["en", "it"])("allows the supported %s language on offer links", (language) => {
+    const publicOfferUrl = `${messageContext.publicOfferUrl}?lang=${language}`;
+    expect(renderEmailText(offerSnapshot(), { publicOfferUrl })).toContain(publicOfferUrl);
+    expect(renderWhatsAppText(offerSnapshot(), { publicOfferUrl })).toContain(publicOfferUrl);
+  });
+
+  it.each(["lang=fr", "lang=en&email=anna%40example.com", "lang=en&lang=it", "lang=anna%40example.com"])("rejects unapproved language query parameters: %s", (query) => {
+    expect(() => renderEmailText(offerSnapshot(), { publicOfferUrl: `${messageContext.publicOfferUrl}?${query}` })).toThrow();
+  });
+
   function maliciousSnapshot(): OfferSnapshot {
     const safe = offerSnapshot();
     return {

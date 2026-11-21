@@ -1,6 +1,7 @@
 import { translateLabel } from "../i18n";
 import type { ReactNode } from "react";
-import { Platform, Pressable, type PressableProps } from "react-native";
+import { Platform, type PressableProps } from "react-native";
+import { Pressable } from "@/monitoring/Pressable";
 import { detailHref, shouldOpenInApp } from "../navigation/detail-href";
 
 type Props = {
@@ -14,7 +15,7 @@ type Props = {
 
 // Native uses the app's detail stack. Web also gets a real, copyable link.
 export function DetailLink({ kind, id, label, onOpen, style, children }: Props) {
-  return <Pressable
+  return <Pressable signalAction="ui.DetailLink.shouldOpenInApp.press" signalPlacement="DetailLink.shouldOpenInApp"
     {...(Platform.OS === "web" ? { href: detailHref(kind, id) } : {})}
     accessibilityRole="link"
     accessibilityLabel={translateLabel(label)}

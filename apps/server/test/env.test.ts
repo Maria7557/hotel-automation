@@ -3,6 +3,16 @@ import { describe, expect, it } from "vitest";
 import { loadEnv } from "../src/config/env.js";
 
 describe("environment validation", () => {
+  it("requires an HTTPS app URL in production for password recovery links", () => {
+    const base = {
+      DATABASE_URL: "postgres://hotel:hotel@localhost:5432/hotel",
+      AUTH_SECRET: "a-secret-that-is-definitely-at-least-32-characters",
+      NODE_ENV: "production",
+    };
+    expect(() => loadEnv(base)).toThrow("APP_BASE_URL");
+    expect(() => loadEnv({ ...base, APP_BASE_URL: "ftp://staff.example" })).toThrow();
+    expect(loadEnv({ ...base, APP_BASE_URL: "https://staff.example" }).APP_BASE_URL).toBe("https://staff.example");
+  });
   it("normalizes server configuration", () => {
     const env = loadEnv({
       DATABASE_URL: "postgres://hotel:hotel@localhost:5432/hotel",

@@ -54,6 +54,10 @@ export class SmtpNotificationMailer implements PlatformNotificationMailer {
       host: this.config.host!,
       port: this.config.port!,
       secure: this.config.port === 465,
+      requireTLS: this.config.port !== 465,
+      connectionTimeout: 10_000,
+      greetingTimeout: 10_000,
+      socketTimeout: 30_000,
       auth: { user: this.config.username!, pass: this.config.password! },
     });
     await transport.sendMail({

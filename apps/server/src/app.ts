@@ -1,4 +1,7 @@
 import { resolveLanguage, translate, validationMessage } from "@hotel/i18n";
+import { monitoringError, observe } from "@hotel/monitoring";
+import { attachMonitoring, monitoredProviderFetch } from "./monitoring/index.js";
+import { monitoredService } from "./monitoring/workflows.js";
 import { registerClientRoutes } from "./http/routes/clients.js";
 import type { ClientRepository } from "./repositories/clients.js";
 import cors from "@fastify/cors";
@@ -39,13 +42,14 @@ import { HotelService } from "./services/hotels.js";
 import { InventoryService } from "./services/inventory.js";
 import { PlatformWhatsAppAdminService } from "./services/platform-whatsapp-admin.js";
 import { NotificationService } from "./services/notifications.js";
+import type { PlatformNotificationMailer } from "./services/notifications.js";
 
 type AppOptions = {
   env: Pick<AppEnv, "AUTH_SECRET" | "SESSION_TTL_DAYS" | "corsOrigins"> &
     Partial<
       Pick<
         AppEnv,
-        "NODE_ENV" | "PUBLIC_BASE_URL" | "GOOGLE_CLIENT_ID" | "GOOGLE_CLIENT_SECRET" | "GOOGLE_REDIRECT_URI" |
+        "NODE_ENV" | "SIGNAL_ENDPOINT" | "SIGNAL_WRITE_KEY_DEVELOPMENT" | "SIGNAL_WRITE_KEY_PRODUCTION" | "SIGNAL_PUBLIC_WRITE_KEY_DEVELOPMENT" | "SIGNAL_PUBLIC_WRITE_KEY_PRODUCTION" | "SIGNAL_RELEASE" | "SIGNAL_API_RELEASE" | "SIGNAL_WORKER_RELEASE" | "PUBLIC_BASE_URL" | "APP_BASE_URL" | "GOOGLE_CLIENT_ID" | "GOOGLE_CLIENT_SECRET" | "GOOGLE_REDIRECT_URI" |
         "GOOGLE_AUTH_CLIENT_IDS" | "APPLE_AUTH_CLIENT_IDS" | "WAHA_BASE_URL" | "WAHA_API_KEY" |
         "MICROSOFT_CLIENT_ID" | "MICROSOFT_CLIENT_SECRET" | "MICROSOFT_REDIRECT_URI" | "platformAdminEmails" |
         "EXPO_ACCESS_TOKEN" | "NOTIFICATION_SMTP_HOST" | "NOTIFICATION_SMTP_PORT" |
@@ -56,16 +60,20 @@ type AppOptions = {
   clients?: ClientRepository;
   providerFetch?: ProviderFetch;
   socialTokenVerifier?: SocialTokenVerifier;
+  passwordResetMailer?: PlatformNotificationMailer;
   logger?: boolean;
 };
 
 export async function createApp(options: AppOptions): Promise<FastifyInstance> {
   const app = Fastify({
+    // The deployed nginx proxy is local; remote clients cannot supply a trusted IP chain.
+    trustProxy: ["127.0.0.1", "::1"],
     logger: options.logger
       ? {
           redact: [
             "req.headers.authorization",
             "req.body.password",
+            "req.body.token",
             "req.body.idToken",
             "req.body.apiKey",
             "req.body.appPassword",
@@ -79,6 +87,7 @@ export async function createApp(options: AppOptions): Promise<FastifyInstance> {
 
   app.decorateRequest("currentUser", null);
   app.decorateRequest("accessToken", null);
+  const signalMonitor = attachMonitoring(app, options.env, (userId) => options.repositories.hotels.findForUser(userId));
 
   await app.register(cors, {
     origin: options.env.corsOrigins,
@@ -88,7 +97,15 @@ export async function createApp(options: AppOptions): Promise<FastifyInstance> {
   await app.register(cookie);
   await app.register(formbody);
 
-  const authService = new AuthService(
+  const platformMailer = monitoredService(signalMonitor, new SmtpNotificationMailer({
+    host: options.env.NOTIFICATION_SMTP_HOST,
+    port: options.env.NOTIFICATION_SMTP_PORT,
+    username: options.env.NOTIFICATION_SMTP_USERNAME,
+    password: options.env.NOTIFICATION_SMTP_PASSWORD,
+    fromEmail: options.env.NOTIFICATION_FROM_EMAIL,
+    fromName: options.env.NOTIFICATION_FROM_NAME,
+  }), { send: "provider.notification_email.send" }, "notificationMailer");
+  const authService = monitoredService(signalMonitor, new AuthService(
     options.repositories.auth,
     options.env.AUTH_SECRET,
     options.env.SESSION_TTL_DAYS,
@@ -96,27 +113,32 @@ export async function createApp(options: AppOptions): Promise<FastifyInstance> {
       google: socialClientIds(options.env.GOOGLE_AUTH_CLIENT_IDS),
       apple: socialClientIds(options.env.APPLE_AUTH_CLIENT_IDS),
     }),
-  );
-  const hotelService = new HotelService(options.repositories.hotels);
-  const inventoryService = new InventoryService(options.repositories.inventory);
+    {
+      mailer: options.passwordResetMailer ?? platformMailer,
+      appBaseUrl: options.env.APP_BASE_URL ?? options.env.PUBLIC_BASE_URL ?? "http://localhost:8081",
+      onDeliveryError: () => {
+        app.log.error("Password recovery email could not be delivered.");
+        observe(() => signalMonitor?.error("auth.recovery.delivery_failed", monitoringError(null), { placement: "auth.recovery" }));
+      },
+    },
+  ), { register: "account.register", login: "account.login", socialLogin: "account.social_login", resetPassword: "account.password_reset", logout: "account.logout" }, "auth");
+  app.addHook("onClose", () => authService.finishPendingEmails());
+  const hotelService = monitoredService(signalMonitor, new HotelService(options.repositories.hotels), { create: "hotel.create", update: "hotel.update", remove: "hotel.delete", updateIntakeSettings: "hotel.intake_settings.update" }, "hotels");
+  const inventoryService = monitoredService(signalMonitor, new InventoryService(options.repositories.inventory), {
+    createRoom: "room.create", updateRoom: "room.update", deleteRoom: "room.delete", createRatePeriod: "rate.create", updateRatePeriod: "rate.update", deleteRatePeriod: "rate.delete",
+  }, "inventory");
   const notificationService = new NotificationService(
     options.repositories.notifications,
-    new ExpoPushProvider(options.providerFetch ?? fetch, options.env.EXPO_ACCESS_TOKEN),
-    new SmtpNotificationMailer({
-      host: options.env.NOTIFICATION_SMTP_HOST,
-      port: options.env.NOTIFICATION_SMTP_PORT,
-      username: options.env.NOTIFICATION_SMTP_USERNAME,
-      password: options.env.NOTIFICATION_SMTP_PASSWORD,
-      fromEmail: options.env.NOTIFICATION_FROM_EMAIL,
-      fromName: options.env.NOTIFICATION_FROM_NAME,
-    }),
+    new ExpoPushProvider(monitoredProviderFetch(signalMonitor, options.providerFetch ?? fetch, "expo"), options.env.EXPO_ACCESS_TOKEN),
+    platformMailer,
   );
-  const automationService = new AutomationService(
+  const automationService = monitoredService(signalMonitor, new AutomationService(
     options.repositories.automation,
     options.env.AUTH_SECRET,
     options.env.PUBLIC_BASE_URL ?? "http://localhost:4000",
     notificationService,
-  );
+    signalMonitor,
+  ), { intake: "inquiry.submit", createFormInquiry: "inquiry.form.submit", createManualInquiry: "reservation.create", sendReservationOffers: "offer.send", acceptProposal: "offer.accept", markPaymentLinkSent: "payment_link.record", markManualOfferSent: "offer.manual_delivery.record", saveOfferSettings: "offer_settings.update" }, "automation");
   const channelService = new ChannelService(
     options.repositories.channels,
     options.repositories.hotels,
@@ -131,23 +153,23 @@ export async function createApp(options: AppOptions): Promise<FastifyInstance> {
         ? { GOOGLE_REDIRECT_URI: options.env.GOOGLE_REDIRECT_URI }
         : {}),
     },
-    new GoogleProvider(options.providerFetch ?? fetch),
-    new WahaProvider(options.providerFetch ?? fetch),
+    new GoogleProvider(monitoredProviderFetch(signalMonitor, options.providerFetch ?? fetch, "google")),
+    new WahaProvider(monitoredProviderFetch(signalMonitor, options.providerFetch ?? fetch, "waha")),
     {
       ...(options.env.WAHA_BASE_URL ? { baseUrl: options.env.WAHA_BASE_URL } : {}),
       ...(options.env.WAHA_API_KEY ? { apiKey: options.env.WAHA_API_KEY } : {}),
     },
     options.env,
-    new MicrosoftProvider(options.providerFetch ?? fetch),
-    new SmtpProvider(),
+    new MicrosoftProvider(monitoredProviderFetch(signalMonitor, options.providerFetch ?? fetch, "microsoft")),
+    monitoredService(signalMonitor, new SmtpProvider(), { send: "provider.smtp.send" }, "smtpProvider"),
   );
   const mailService = new MailConnectionService(
     options.repositories.channels, options.repositories.hotels, options.env.AUTH_SECRET, options.env,
-    new GoogleProvider(options.providerFetch ?? fetch), new MicrosoftProvider(options.providerFetch ?? fetch), new SmtpProvider(),
+    new GoogleProvider(monitoredProviderFetch(signalMonitor, options.providerFetch ?? fetch, "google")), new MicrosoftProvider(monitoredProviderFetch(signalMonitor, options.providerFetch ?? fetch, "microsoft")), monitoredService(signalMonitor, new SmtpProvider(), { send: "provider.smtp.send" }, "smtpProvider"),
   );
   const platformWhatsAppAdminService = new PlatformWhatsAppAdminService(
     options.repositories.platformAdmin,
-    new WahaProvider(options.providerFetch ?? fetch),
+    new WahaProvider(monitoredProviderFetch(signalMonitor, options.providerFetch ?? fetch, "waha")),
     {
       ...(options.env.WAHA_BASE_URL ? { baseUrl: options.env.WAHA_BASE_URL } : {}),
       ...(options.env.WAHA_API_KEY ? { apiKey: options.env.WAHA_API_KEY } : {}),
@@ -175,7 +197,7 @@ export async function createApp(options: AppOptions): Promise<FastifyInstance> {
   await registerInventoryRoutes(app, authService, inventoryService);
   await registerMediaRoutes(app, authService, options.env.PUBLIC_BASE_URL);
   await registerAutomationRoutes(app, authService, automationService);
-  await registerEmbedRoutes(app);
+  await registerEmbedRoutes(app, options.repositories.automation);
   if (options.clients) await registerClientRoutes(app, authService, options.clients);
 
   app.setNotFoundHandler(async (request, reply) => {

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { BackHandler, Platform } from "react-native";
 import { detailHref } from "./detail-href";
+import { actions } from "../monitoring/actions";
 
 export type DetailPage = { kind: "reservation" | "client"; id: string };
 function pageFromHash(): DetailPage[] {
@@ -15,7 +16,7 @@ export function useDetailPages() {
   const [pages, setPages] = useState<DetailPage[]>(pageFromHash);
   useEffect(() => {
     if (Platform.OS !== "web") return;
-    const update = () => setPages(pageFromHash());
+    const update = () => actions.run("ui.navigation.history", "navigation.detailPages", () => setPages(pageFromHash()), "manual");
     window.addEventListener("popstate", update);
     window.addEventListener("hashchange", update);
     return () => { window.removeEventListener("popstate", update); window.removeEventListener("hashchange", update); };
@@ -37,7 +38,7 @@ export function useDetailPages() {
   }, []);
   useEffect(() => {
     if (!pages.length || Platform.OS === "web") return;
-    const handler = BackHandler.addEventListener("hardwareBackPress", () => { back(); return true; });
+    const handler = BackHandler.addEventListener("hardwareBackPress", () => actions.run("ui.navigation.back", "navigation.hardwareBack", () => { back(); return true; }, "manual"));
     return () => handler.remove();
   }, [pages.length, back]);
   return { page: pages.at(-1), open, back, clear };

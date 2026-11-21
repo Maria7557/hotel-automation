@@ -5,6 +5,8 @@ import * as SecureStore from "expo-secure-store";
 import { I18nextProvider } from "react-i18next";
 import { resolveLanguage, supportedLanguage, type Language } from "@hotel/i18n";
 import { getLanguage, i18n } from "./index";
+import { observe } from "@hotel/monitoring";
+import { monitor } from "../monitoring";
 
 const preferenceKey = "hotel.ui.language";
 async function readPreference(): Promise<string | null> {
@@ -12,6 +14,7 @@ async function readPreference(): Promise<string | null> {
   catch { return null; }
 }
 function persist(language: string) {
+  observe(() => monitor?.setContext({ locale: language }));
   if (Platform.OS === "web") {
     document.documentElement.lang = language;
     document.cookie = `hotel_language=${language}; Path=/; Max-Age=31536000; SameSite=Lax${location.protocol === "https:" ? "; Secure" : ""}`;

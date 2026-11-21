@@ -1,5 +1,6 @@
 import { t } from "../i18n";
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
+import { Pressable } from "@/monitoring/Pressable";
 import { Info } from "lucide-react-native";
 import { theme } from "@hotel/design";
 import { Tooltip } from "./Tooltip";
@@ -9,14 +10,14 @@ const paymentLinkSentHelp = "Mark your manually sent payment link as done. Remov
 
 export function PaymentLinkSentAction({ busy, onPress }: { busy: boolean; onPress: () => void }) {
   return <View style={styles.paymentAction}>
-    <Pressable accessibilityRole="button" accessibilityLabel={t("Mark payment link as sent")} accessibilityHint={paymentLinkSentHelp} accessibilityState={{ disabled: busy, busy }} disabled={busy} onPress={(event) => { event.stopPropagation(); onPress(); }} style={({ pressed }) => [StyleSheet.absoluteFill, styles.paymentButtonSurface, pressed && styles.paymentButtonPressed, busy && styles.pressed]} />
+    <Pressable signalAction="ui.PaymentLinkSentAction.onPress.press" signalPlacement="PaymentLinkSentAction.onPress" accessibilityRole="button" accessibilityLabel={t("Mark payment link as sent")} accessibilityHint={paymentLinkSentHelp} accessibilityState={{ disabled: busy, busy }} disabled={busy} onPress={(event) => { event.stopPropagation(); onPress(); }} style={({ pressed }) => [StyleSheet.absoluteFill, styles.paymentButtonSurface, pressed && styles.paymentButtonPressed, busy && styles.pressed]} />
     <View pointerEvents="box-none" style={styles.paymentButtonContent}>
       <View pointerEvents="none" aria-hidden importantForAccessibility="no-hide-descendants" style={styles.paymentButtonLabel}>
         {busy ? <ActivityIndicator color={theme.colors.onAction} /> : <>
           <Text style={[styles.reviewButtonText, styles.paymentButtonText]}>{t("Mark payment link as sent")}</Text>
         </>}
       </View>
-      <Tooltip content={paymentLinkSentHelp}>{({ triggerProps, visible, toggle }) => <Pressable
+      <Tooltip content={paymentLinkSentHelp}>{({ triggerProps, visible, toggle }) => <Pressable signalAction="ui.PaymentLinkSentAction.toggle.press" signalPlacement="PaymentLinkSentAction.toggle"
         {...triggerProps}
         accessibilityRole="button"
         accessibilityLabel={t("About marking a payment link as sent")}

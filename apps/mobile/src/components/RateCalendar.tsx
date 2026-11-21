@@ -1,6 +1,7 @@
 import { locale as uiLocale, t, translateLabel, getLanguage } from "../i18n";
 import { useMemo, useState } from "react";
-import { Pressable, StyleSheet, Text, useWindowDimensions, View } from "react-native";
+import { StyleSheet, Text, useWindowDimensions, View } from "react-native";
+import { Pressable } from "@/monitoring/Pressable";
 import { ChevronLeft, ChevronRight } from "lucide-react-native";
 import { theme } from "@hotel/design";
 import type { RatePeriod } from "@/api/types";
@@ -53,7 +54,7 @@ export function RateCalendar({
   return (
     <View style={styles.calendarCard}>
       <View style={styles.calendarHeader}>
-        <Pressable
+        <Pressable signalAction="ui.RateCalendar.setVisibleMonth.press" signalPlacement="RateCalendar.setVisibleMonth"
           accessibilityRole="button"
           accessibilityLabel={t("Show previous months")}
           disabled={disabled}
@@ -67,7 +68,7 @@ export function RateCalendar({
           <LegendSwatch style={styles.legendMissing} label={t("No rate")} />
           {interactive ? <LegendSwatch style={styles.legendSelected} label={t("Selected")} /> : null}
         </View>
-        <Pressable
+        <Pressable signalAction="ui.RateCalendar.setVisibleMonth.press" signalPlacement="RateCalendar.setVisibleMonth"
           accessibilityRole="button"
           accessibilityLabel={t("Show next months")}
           disabled={disabled}
@@ -146,7 +147,7 @@ function Month({
               : selectedStart === date));
           const unavailable = disabled || (interactive && coveredByOther);
           return (
-            <Pressable
+            <Pressable signalAction="ui.Month.onSelect.press" signalPlacement="Month.onSelect"
               key={date}
               accessibilityRole={interactive ? "button" : undefined}
               accessibilityLabel={`${formatLongDate(date)}${rate ? t(", {{v0}} per night", { v0: formatCalendarPrice(rate.nightlyBaseCents) }) : ", no rate"}`}

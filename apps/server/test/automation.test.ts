@@ -675,10 +675,14 @@ describe("public intake and proposal automation", () => {
   });
 
   it.each([
-    ["", "", "it"],
-    ["en-GB", "", "en-GB"],
-    ["en-GB", "it-IT", "it-IT"],
-  ])("captures an existing form with guest language %s / %s → %s", async (scriptLanguage, fieldLanguage, expectedLanguage) => {
+    ["", "", "it", null],
+    ["en-GB", "", "en-GB", null],
+    ["en-GB", "it-IT", "it-IT", null],
+    ["", "it", "it", [["0"], ["4"], ["4"], ["17"]]],
+    ["en", "", "en", [["0", "4", "17"]]],
+    ["en", "", "en", []],
+    ["en", "", "en", [[""]]],
+  ] satisfies Array<[string, string, string, string[][] | null]>)("captures an existing form with guest language %s / %s → %s and child dropdowns %j", async (scriptLanguage, fieldLanguage, expectedLanguage, ageSelections) => {
     const response = await app.inject({ method: "GET", url: "/embed.js" });
     const fields: Record<string, { value: string; type?: string }> = {
       "#arrival": { value: "2026-08-10" },
@@ -692,6 +696,8 @@ describe("public intake and proposal automation", () => {
       "#board": { value: "HB" },
       "#message": { value: "Late arrival" },
     };
+    const ageSelects = ageSelections?.map((values) => ({ tagName: "SELECT", selectedOptions: values.map((value) => ({ value })) })) ?? [];
+    if (ageSelections) delete fields["#ages"];
     const submitButton = { disabled: false };
     const status = { dataset: {} as Record<string, string>, textContent: "" };
     let submitHandler: ((event: { preventDefault(): void; stopImmediatePropagation(): void }) => Promise<void>) | undefined;
@@ -703,7 +709,7 @@ describe("public intake and proposal automation", () => {
         if (selector === "[data-hotel-inquiry-status]") return status;
         return fields[selector] ?? null;
       },
-      querySelectorAll: () => [submitButton],
+      querySelectorAll: (selector: string) => selector === "#ages" ? ageSelects : [submitButton],
       addEventListener(_name: string, handler: typeof submitHandler, options: unknown) {
         submitHandler = handler;
         listenerOptions = options;
@@ -758,6 +764,12 @@ describe("public intake and proposal automation", () => {
 
     expect(prevented).toBe(false);
     expect(propagationStopped).toBe(false);
+    if (ageSelections?.flat().includes("")) {
+      expect(requests).toHaveLength(0);
+      expect(status.dataset.state).toBe("error");
+      expect(dispatched).toEqual(["hotel-inquiry:sending", "hotel-inquiry:error"]);
+      return;
+    }
     expect(requests).toHaveLength(1);
     expect(requests[0]?.url).toBe("https://api.example.com/v1/public/hotels/11111111-1111-4111-8111-111111111111/inquiries");
     expect(requests[0]?.init.headers["Idempotency-Key"]).toBe("request-id");
@@ -765,7 +777,7 @@ describe("public intake and proposal automation", () => {
       guest: { name: "Giulia Bianchi", email: "giulia@example.com", phone: "+393331112222", language: expectedLanguage },
       checkIn: "2026-08-10",
       checkOut: "2026-08-13",
-      occupancy: { adults: 2, childAges: [4, 9] },
+      occupancy: { adults: 2, childAges: ageSelections ? ageSelections.flat().map(Number) : [4, 9] },
       mealPlan: "HB",
       note: "Late arrival",
       source: { type: "existing_form", page: "https://hotel.example/booking", widgetVersion: "v1" },

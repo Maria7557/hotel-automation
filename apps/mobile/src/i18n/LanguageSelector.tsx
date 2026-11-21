@@ -1,27 +1,30 @@
 import { useState } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { StyleSheet, Text, View } from "react-native";
+import { Pressable } from "@/monitoring/Pressable";
 import { useTranslation } from "react-i18next";
 import { theme } from "@hotel/design";
 import type { Language } from "@hotel/i18n";
 import { getLanguage, t } from "./index";
 import { setLanguage } from "./Provider";
-import { apiClient } from "../api/client";
+import { scopedApiClient } from "../api/client";
+import { monitoredAction } from "../monitoring/actions";
 
 export function LanguageSelector({ authenticated = false }: { authenticated?: boolean }) {
   useTranslation();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(false);
-  const select = async (language: Language) => {
+  const select = monitoredAction("action.LanguageSelector.select", "LanguageSelector.select", async (signalScope, language: Language) => {
+    const apiClient = scopedApiClient(signalScope);
     setError(false);
     await setLanguage(language);
     if (authenticated) {
       setSaving(true);
-      try { await apiClient.updateLanguage(language); } catch { setError(true); } finally { setSaving(false); }
+      try { await apiClient.updateLanguage(language); } catch (error) { signalScope.fail(error); setError(true); } finally { setSaving(false); }
     }
-  };
+  });
   return <View style={styles.wrap}>
     <View accessibilityRole="radiogroup" accessibilityLabel={t("App language")} style={styles.row}>
-      {([ ["en", "English"], ["it", "Italiano"] ] as const).map(([language, label]) => <Pressable key={language} accessibilityRole="radio" aria-checked={getLanguage() === language} accessibilityState={{ checked: getLanguage() === language, disabled: saving }} disabled={saving} onPress={() => void select(language)} style={[styles.option, getLanguage() === language && styles.selected]}>
+      {([ ["en", "English"], ["it", "Italiano"] ] as const).map(([language, label]) => <Pressable signalAction="ui.LanguageSelector.select.press" signalPlacement="LanguageSelector.select" key={language} accessibilityRole="radio" aria-checked={getLanguage() === language} accessibilityState={{ checked: getLanguage() === language, disabled: saving }} disabled={saving} onPress={() => void select(language)} style={[styles.option, getLanguage() === language && styles.selected]}>
         <Text style={styles.label}>{label}</Text>
       </Pressable>)}
     </View>

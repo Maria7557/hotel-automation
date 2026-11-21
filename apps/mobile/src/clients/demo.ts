@@ -49,7 +49,9 @@ export function demoListClients(search: string, filters: ClientFilters = {}): Cl
   const hasStayFilters = [filters.stayFrom, filters.stayTo, filters.minGuests, filters.maxGuests, filters.minAdults, filters.maxAdults,
     filters.minChildren, filters.maxChildren, filters.minNights, filters.maxNights, filters.roomId, filters.mealPlan, filters.status].some((value) => value !== undefined);
   const matchesStay = (request: HotelRequest) => {
-    const { adults, childAges } = request.occupancy;
+    const rooms = [request.occupancy, ...(request.acceptedAt ? [] : request.details?.additionalRooms?.map((room) => room.occupancy) ?? [])];
+    const adults = rooms.reduce((total, room) => total + room.adults, 0);
+    const childAges = rooms.flatMap((room) => room.childAges);
     const nights = (Date.parse(request.checkOut) - Date.parse(request.checkIn)) / 86_400_000;
     return (!filters.stayFrom || request.checkOut > filters.stayFrom) && (!filters.stayTo || request.checkIn <= filters.stayTo)
       && inRange(adults + childAges.length, filters.minGuests, filters.maxGuests)

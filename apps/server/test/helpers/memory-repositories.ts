@@ -16,6 +16,7 @@ import type {
   DeliveryRecord,
   DeliveryWorkerRepository,
   HotelCreate,
+  HotelIntakeUpdate,
   HotelProfile,
   HotelRepository,
   HotelUpdate,
@@ -50,6 +51,9 @@ import { acceptedStay } from "../../src/lib/accepted-stay.js";
 class MemoryAuthRepository implements AuthRepository {
   readonly users = new Map<string, UserRecord>();
   readonly sessions = new Map<string, { userId: string; expiresAt: Date }>();
+  readonly passwordResets = new Map<string, {
+    userId: string; tokenHash: string; expiresAt: Date; requestedAt: Date; consumedAt: Date | null;
+  }>();
 
   async findUserByEmail(email: string): Promise<UserRecord | null> {
     return [...this.users.values()].find((user) => user.email === email) ?? null;
@@ -115,8 +119,11 @@ class MemoryAuthRepository implements AuthRepository {
     if (user) user.uiLanguage = uiLanguage;
   }
 
-  async createSession(input: { userId: string; tokenHash: string; expiresAt: Date }): Promise<void> {
+  async createSession(input: { userId: string; tokenHash: string; expiresAt: Date; expectedPasswordHash?: string }): Promise<boolean> {
+    const user = this.users.get(input.userId);
+    if (!user || (input.expectedPasswordHash !== undefined && user.passwordHash !== input.expectedPasswordHash)) return false;
     this.sessions.set(input.tokenHash, { userId: input.userId, expiresAt: input.expiresAt });
+    return true;
   }
 
   async findUserBySessionHash(tokenHash: string, now: Date) {
@@ -141,6 +148,30 @@ class MemoryAuthRepository implements AuthRepository {
   async deleteSession(tokenHash: string): Promise<void> {
     this.sessions.delete(tokenHash);
   }
+
+  async issuePasswordReset(input: {
+    userId: string; tokenHash: string; expiresAt: Date; requestedAt: Date; resendBefore: Date;
+  }): Promise<boolean> {
+    if (!this.users.get(input.userId)?.passwordHash) return false;
+    const existing = this.passwordResets.get(input.userId);
+    if (existing && existing.requestedAt > input.resendBefore) return false;
+    const { resendBefore: _, ...token } = input;
+    this.passwordResets.set(input.userId, { ...token, consumedAt: null });
+    return true;
+  }
+
+  async consumePasswordReset(input: { tokenHash: string; passwordHash: string; now: Date }) {
+    const token = [...this.passwordResets.values()].find((reset) => reset.tokenHash === input.tokenHash);
+    if (!token || token.consumedAt || token.expiresAt <= input.now) return null;
+    const user = this.users.get(token.userId);
+    if (!user) return null;
+    token.consumedAt = input.now;
+    user.passwordHash = input.passwordHash;
+    for (const [key, session] of this.sessions) {
+      if (session.userId === user.id) this.sessions.delete(key);
+    }
+    return { id: user.id, email: user.email, displayName: user.displayName, ...(user.uiLanguage ? { uiLanguage: user.uiLanguage } : {}) };
+  }
 }
 
 class MemoryHotelRepository implements HotelRepository {
@@ -158,6 +189,7 @@ class MemoryHotelRepository implements HotelRepository {
       id: randomUUID(),
       publicKey: randomUUID(),
       allowedOrigins: [],
+      widgetCss: "",
       ...input,
       createdAt: now,
       updatedAt: now,
@@ -180,10 +212,10 @@ class MemoryHotelRepository implements HotelRepository {
     return updated;
   }
 
-  async updateIntakeSettingsForUser(userId: string, allowedOrigins: string[]): Promise<HotelProfile | null> {
+  async updateIntakeSettingsForUser(userId: string, settings: HotelIntakeUpdate): Promise<HotelProfile | null> {
     const current = await this.findForUser(userId);
     if (!current) return null;
-    const updated = { ...current, allowedOrigins, updatedAt: new Date() };
+    const updated = { ...current, ...settings, updatedAt: new Date() };
     this.hotels.set(current.id, updated);
     return updated;
   }
@@ -301,7 +333,7 @@ class MemoryAutomationRepository implements AutomationRepository {
     }
     this.offers.set(input.offer.id, { ...input.offer, version: Math.max(0, ...existing.map(({ version }) => version)) + 1, createdAt: input.now });
     for (const delivery of input.deliveries) this.deliveries.set(delivery.id, { ...delivery, createdAt: input.now, updatedAt: input.now });
-    this.inquiries.set(inquiry.id, { ...inquiry, currentOfferId: input.offer.id, attentionReason: null, updatedAt: input.now });
+    this.inquiries.set(inquiry.id, { ...inquiry, currentOfferId: input.offer.id, locale: input.locale, attentionReason: null, updatedAt: input.now });
     return { replayed: false };
   }
 

@@ -1,6 +1,9 @@
+import { monitoredAction } from "../monitoring/actions";
+import { scopedApiClient } from "../api/client";
 import { t, translateLabel, locale } from "../i18n";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { ActivityIndicator, AppState, Linking, Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, AppState, Linking, Modal, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Pressable } from "@/monitoring/Pressable";
 import * as Clipboard from "expo-clipboard";
 import { ArrowRight, ArrowUpRight, Baby, BedDouble, Check, ChevronDown, ChevronUp, CircleAlert, Clock, Copy, CreditCard, Inbox, Info, Languages, Mail, MessageCircle, Minus, UserRound, Users, X, type LucideIcon } from "lucide-react-native";
 import { theme, type StatusColors } from "@hotel/design";
@@ -43,6 +46,9 @@ export function RequestCard({ request, demo = false, onOpen, onOpenClient, varia
       {request.receivedVia ? <AdditionalDetail icon={Inbox}><Text selectable={selectable} style={styles.caption}>{t("Received via ·")}{" "}{t(requestSourceLabels[request.receivedVia])}</Text></AdditionalDetail> : null}
       {request.occupancy.childAges.length ? <AdditionalDetail icon={Baby}><Text selectable={selectable} style={styles.caption}>{t("Children’s ages:")}{" "}{request.occupancy.childAges.join(", ")}</Text></AdditionalDetail> : null}
       {request.note ? <AdditionalDetail icon={MessageCircle}><Text selectable={selectable} style={styles.text}>{t("Guest note:")}{" "}{request.note}</Text></AdditionalDetail> : null}
+      {request.details?.alternativeDates?.map((dates, index) => <AdditionalDetail key={`dates-${index}`} icon={Clock}><Text selectable={selectable} style={styles.caption}>{t("Alternative dates")}{" "}{index + 1}: {formatStay(dates.checkIn, dates.checkOut)}</Text></AdditionalDetail>)}
+      {request.details?.additionalRooms?.map((room, index) => <AdditionalDetail key={`room-${index}`} icon={BedDouble}><Text selectable={selectable} style={styles.caption}>{t("Room {{v0}}", { v0: index + 2 })}: {room.mealPlan} · {t("{{v0}} adults", { v0: room.occupancy.adults })}{room.occupancy.childAges.length ? ` · ${t("Children’s ages:")} ${room.occupancy.childAges.join(", ")}` : ""}</Text></AdditionalDetail>)}
+      {request.details?.consents ? <AdditionalDetail icon={Check}><Text selectable={selectable} style={styles.caption}>{t("Data processing consent")}: {request.details.consents.privacy ? t("Yes") : t("No")} · {t("Marketing consent")}: {request.details.consents.marketing ? t("Yes") : t("No")}</Text></AdditionalDetail> : null}
       {request.locale ? <AdditionalDetail icon={Languages}><Text selectable={selectable} style={styles.caption}>{t("Guest language:")}{" "}{request.locale}</Text></AdditionalDetail> : null}
       {request.offerExpiresAt ? <AdditionalDetail icon={Clock}><Text selectable={selectable} style={styles.caption}>{t("Offer expires:")}{" "}{formatTimestamp(request.offerExpiresAt)}</Text></AdditionalDetail> : null}
       {request.acceptedAt ? <AdditionalDetail icon={Check} tooltip={t("When the guest accepted the offer.")}><Text selectable={selectable} style={styles.caption}>{t("Accepted:")}{" "}{formatTimestamp(request.acceptedAt)}</Text></AdditionalDetail> : null}
@@ -96,7 +102,7 @@ export function RequestCard({ request, demo = false, onOpen, onOpenClient, varia
             {status === "present" && clientId ? <DetailLink kind="client" id={clientId} label={t("View client {{v0}}", { v0: request.guestName })} onOpen={() => onOpenClient(clientId)} style={styles.nameButton}><Text selectable={selectable} style={styles.nameLink}>{request.guestName}</Text></DetailLink> : <View pointerEvents={textPointerEvents}><Text selectable={selectable} style={styles.name}>{request.guestName}</Text></View>}
             {isPage || expanded ? <CopyValue value={request.guestName} label={t("Client name")} iconOnly /> : null}
             </View>
-            {!isPage ? <Pressable accessibilityRole="button" accessibilityLabel={expanded ? t("Hide contact details") : t("Show contact details")} accessibilityState={{ expanded }} onPress={(event) => { event.stopPropagation(); setExpanded((value) => !value); }} style={({ pressed }) => [styles.toggle, pressed && styles.pressed]}>
+            {!isPage ? <Pressable signalAction="ui.RequestCard.setExpanded.press" signalPlacement="RequestCard.setExpanded" accessibilityRole="button" accessibilityLabel={expanded ? t("Hide contact details") : t("Show contact details")} accessibilityState={{ expanded }} onPress={(event) => { event.stopPropagation(); setExpanded((value) => !value); }} style={({ pressed }) => [styles.toggle, pressed && styles.pressed]}>
               {expanded ? <ChevronUp size={theme.controls.actionIconSize} color={theme.colors.textMuted} /> : <ChevronDown size={theme.controls.actionIconSize} color={theme.colors.textMuted} />}
             </Pressable> : null}
           </View>
@@ -114,7 +120,7 @@ export function RequestCard({ request, demo = false, onOpen, onOpenClient, varia
 }
 
 function RequestStatusDot({ label, description, appearance }: { label: string; description: string; appearance: StatusColors }) {
-  return <Tooltip content={`${label}. ${description}`}>{({ triggerProps, visible, toggle }) => <Pressable
+  return <Tooltip content={`${label}. ${description}`}>{({ triggerProps, visible, toggle }) => <Pressable signalAction="ui.RequestStatusDot.toggle.press" signalPlacement="RequestStatusDot.toggle"
     {...triggerProps}
     accessibilityRole="button"
     accessibilityLabel={t("Status: {{v0}}", { v0: label })}
@@ -133,7 +139,7 @@ function AdditionalDetail({ icon: Icon, children, tooltip }: { icon: LucideIcon;
     <Icon size={theme.controls.actionIconSize} style={actionStyles.icon} color={theme.colors.textMuted} />
     {children}
   </>;
-  return tooltip ? <View style={styles.additionalHint}><Tooltip content={tooltip}>{({ triggerProps, visible, toggle }) => <Pressable
+  return tooltip ? <View style={styles.additionalHint}><Tooltip content={tooltip}>{({ triggerProps, visible, toggle }) => <Pressable signalAction="ui.AdditionalDetail.toggle.press" signalPlacement="AdditionalDetail.toggle"
     {...triggerProps}
     accessibilityRole="button"
     accessibilityState={{ expanded: visible }}
@@ -153,7 +159,7 @@ function WaitPill({ since, description, selectable }: { since: string; descripti
     return () => { clearInterval(timer); subscription.remove(); };
   }, [since]);
   const label = formatPaymentLinkWait(since, now);
-  return label ? <Tooltip content={translateLabel(description)}>{({ triggerProps, visible, toggle }) => <Pressable
+  return label ? <Tooltip content={translateLabel(description)}>{({ triggerProps, visible, toggle }) => <Pressable signalAction="ui.WaitPill.toggle.press" signalPlacement="WaitPill.toggle"
     {...triggerProps}
     accessibilityRole="button"
     accessibilityLabel={`${description}: ${label}`}
@@ -172,15 +178,16 @@ export function CopyValue({ value, label, display = value, iconOnly = false, sel
     const timer = setTimeout(() => setState("idle"), 3_000);
     return () => clearTimeout(timer);
   }, [state]);
-  const copy = async () => {
+  const copy = monitoredAction("action.CopyValue.copy", "CopyValue.copy", async (signalScope) => {
+    const apiClient = scopedApiClient(signalScope);
     try { setState(await Clipboard.setStringAsync(value) ? "copied" : "failed"); }
-    catch { setState("failed"); }
-  };
+    catch { signalScope.fail(undefined); setState("failed"); }
+  });
   const title = label.charAt(0).toUpperCase() + label.slice(1);
   return <View pointerEvents="box-none" style={styles.copyWrap}>
     <View pointerEvents="box-none" style={styles.copyRow}>
       {selectable && !iconOnly ? <Text selectable style={styles.text}>{display}</Text> : null}
-      <Pressable accessibilityRole="button" accessibilityLabel={state === "copied" ? t("{{v0}} copied", { v0: title }) : t("Copy {{v0}}: {{v1}}", { v0: label.toLowerCase(), v1: value })} hitSlop={theme.controls.helperHitSlop} onPress={(event) => { event.stopPropagation(); void copy(); }} style={({ pressed }) => [styles.copy, (iconOnly || selectable) && styles.copyIconOnly, pressed && styles.pressed]}>
+      <Pressable signalAction="ui.CopyValue.copy.press" signalPlacement="CopyValue.copy" accessibilityRole="button" accessibilityLabel={state === "copied" ? t("{{v0}} copied", { v0: title }) : t("Copy {{v0}}: {{v1}}", { v0: label.toLowerCase(), v1: value })} hitSlop={theme.controls.helperHitSlop} onPress={(event) => { event.stopPropagation(); void copy(); }} style={({ pressed }) => [styles.copy, (iconOnly || selectable) && styles.copyIconOnly, pressed && styles.pressed]}>
         {!selectable && !iconOnly ? <Text style={styles.text}>{display}</Text> : null}
         <View pointerEvents="none" style={actionStyles.helperIconButton}>{state === "copied" ? <Check size={theme.controls.helperIconSize} color={theme.colors.success} /> : <Copy size={theme.controls.helperIconSize} color={theme.colors.helperIcon} />}</View>
       </Pressable>
@@ -197,7 +204,8 @@ export function ContactDetail({ channel, detail, showDeliveryStatus = true, sele
   const label = channel === "email" ? t("Email") : "WhatsApp";
   const Icon = channel === "email" ? Mail : MessageCircle;
   const url = contactUrl(channel, detail.recipient);
-  const send = async () => {
+  const send = monitoredAction("action.ContactDetail.send", "ContactDetail.send", async (signalScope) => {
+    const apiClient = scopedApiClient(signalScope);
     if (!url) return;
     setError(null);
     if (offerContext) {
@@ -206,8 +214,8 @@ export function ContactDetail({ channel, detail, showDeliveryStatus = true, sele
     }
     try {
       await Linking.openURL(url);
-    } catch { setError(t("Could not open {{v0}}. Copy the contact and try again.", { v0: label })); }
-  };
+    } catch { signalScope.fail(undefined); setError(t("Could not open {{v0}}. Copy the contact and try again.", { v0: label })); }
+  });
   const delivery = {
     sent: { label: t("Sent"), Icon: Check, color: theme.colors.success },
     pending: { label: t("Pending"), Icon: Clock, color: theme.colors.warning },
@@ -232,10 +240,10 @@ export function ContactDetail({ channel, detail, showDeliveryStatus = true, sele
         <View pointerEvents="none" style={actionStyles.icon}><Icon size={theme.controls.actionIconSize} color={theme.colors.textMuted} /></View>
         {detail.recipient ? <CopyValue value={detail.recipient} label={translateLabel(label)} selectable={selectable} /> : <View pointerEvents={selectable ? "auto" : "none"}><Text selectable={selectable} style={styles.caption}>{t("No")}{" "}{label.toLowerCase()} {" "}{t("provided")}</Text></View>}
       </View>
-      {url ? <Pressable accessibilityRole="button" accessibilityLabel={offerContext ? t("Preview offer for {{v0}}", { v0: label }) : t("Open {{v0}} for {{v1}}", { v0: label, v1: detail.recipient ?? "" })} onPress={(event) => { event.stopPropagation(); void send(); }} style={({ pressed }) => [styles.send, pressed && styles.pressed]}><Text style={styles.link}>{offerContext ? t("Preview") : label}</Text><ArrowUpRight size={theme.controls.actionIconSize} style={actionStyles.icon} color={theme.colors.action} /></Pressable> : null}
+      {url ? <Pressable signalAction="ui.ContactDetail.send.press" signalPlacement="ContactDetail.send" accessibilityRole="button" accessibilityLabel={offerContext ? t("Preview offer for {{v0}}", { v0: label }) : t("Open {{v0}} for {{v1}}", { v0: label, v1: detail.recipient ?? "" })} onPress={(event) => { event.stopPropagation(); void send(); }} style={({ pressed }) => [styles.send, pressed && styles.pressed]}><Text style={styles.link}>{offerContext ? t("Preview") : label}</Text><ArrowUpRight size={theme.controls.actionIconSize} style={actionStyles.icon} color={theme.colors.action} /></Pressable> : null}
     </View>
     {showDeliveryStatus ? <View pointerEvents="box-none" style={styles.deliveryStatus}>
-      <Tooltip content={deliveryHelp}>{({ triggerProps, visible, toggle }) => <Pressable
+      <Tooltip content={deliveryHelp}>{({ triggerProps, visible, toggle }) => <Pressable signalAction="ui.ContactDetail.toggle.press" signalPlacement="ContactDetail.toggle"
         {...triggerProps}
         accessibilityRole="button"
         accessibilityLabel={t("{{v0}} offer: {{v1}}{{v2}}", { v0: label, v1: delivery.label, v2: processedAt ? `, ${processedAt}` : "" })}
@@ -271,7 +279,8 @@ function OfferSharePreview({ channel, recipient, context, onClose }: { channel: 
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [channel, context.demo, context.inquiryId, context.offerId, language]);
-  const open = async () => {
+  const open = monitoredAction("action.OfferSharePreview.open", "OfferSharePreview.open", async (signalScope) => {
+    const apiClient = scopedApiClient(signalScope);
     if (!message) return;
     setOpening(true); setError(null);
     try {
@@ -280,13 +289,14 @@ function OfferSharePreview({ channel, recipient, context, onClose }: { channel: 
       await Linking.openURL(destination);
       sentMessage.current = { key: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`, offerId: message.offerId, language };
       setConfirmOpen(true);
-    } catch { setError(t("Could not open {{v0}}. Copy the contact and try again.", { v0: channel === "email" ? t("Email") : "WhatsApp" })); }
+    } catch { signalScope.fail(undefined); setError(t("Could not open {{v0}}. Copy the contact and try again.", { v0: channel === "email" ? t("Email") : "WhatsApp" })); }
     finally { setOpening(false); }
-  };
+  });
   const firstOffer = message?.offers[0];
   const commonStay = firstOffer?.checkIn && firstOffer.checkOut && message?.offers.every((offer) => offer.checkIn === firstOffer.checkIn && offer.checkOut === firstOffer.checkOut)
     ? formatStay(firstOffer.checkIn, firstOffer.checkOut) : null;
-  const confirmSent = async () => {
+  const confirmSent = monitoredAction("action.OfferSharePreview.confirmSent", "OfferSharePreview.confirmSent", async (signalScope) => {
+    const apiClient = scopedApiClient(signalScope);
     const sent = sentMessage.current;
     if (!sent) return;
     setConfirming(true); setError(null);
@@ -294,33 +304,33 @@ function OfferSharePreview({ channel, recipient, context, onClose }: { channel: 
       const updated = await apiClient.markManualOfferSent(context.inquiryId, sent.offerId, channel, sent.language, sent.key, { demo: context.demo });
       context.onManualSent?.(updated);
       onClose();
-    } catch { setError(t("Could not mark sent. Try again.")); }
+    } catch { signalScope.fail(undefined); setError(t("Could not mark sent. Try again.")); }
     finally { setConfirming(false); }
-  };
+  });
   if (confirmOpen) return <Modal visible transparent animationType="fade" onRequestClose={() => setConfirmOpen(false)}>
     <View style={styles.previewBackdrop}><View style={styles.confirmSheet}>
       <Text accessibilityRole="header" style={styles.previewTitle}>{t("Sent?")}</Text>
       {error ? <InlinePreviewError>{error}</InlinePreviewError> : null}
       <View style={styles.confirmActions}>
-        <Pressable accessibilityRole="button" disabled={confirming} onPress={() => { setConfirmOpen(false); setError(null); }} style={({ pressed }) => [styles.confirmSecondary, pressed && styles.pressed, confirming && styles.disabled]}><Text style={styles.confirmSecondaryText}>{t("Not yet")}</Text></Pressable>
-        <Pressable accessibilityRole="button" disabled={confirming} onPress={() => void confirmSent()} style={({ pressed }) => [styles.confirmPrimary, pressed && styles.pressed, confirming && styles.disabled]}>{confirming ? <ActivityIndicator color={theme.colors.onAction} /> : <Text style={styles.previewSendText}>{t("Yes")}</Text>}</Pressable>
+        <Pressable signalAction="ui.OfferSharePreview.setConfirmOpen.press" signalPlacement="OfferSharePreview.setConfirmOpen" accessibilityRole="button" disabled={confirming} onPress={() => { setConfirmOpen(false); setError(null); }} style={({ pressed }) => [styles.confirmSecondary, pressed && styles.pressed, confirming && styles.disabled]}><Text style={styles.confirmSecondaryText}>{t("Not yet")}</Text></Pressable>
+        <Pressable signalAction="ui.OfferSharePreview.confirmSent.press" signalPlacement="OfferSharePreview.confirmSent" accessibilityRole="button" disabled={confirming} onPress={() => void confirmSent()} style={({ pressed }) => [styles.confirmPrimary, pressed && styles.pressed, confirming && styles.disabled]}>{confirming ? <ActivityIndicator color={theme.colors.onAction} /> : <Text style={styles.previewSendText}>{t("Yes")}</Text>}</Pressable>
       </View>
     </View></View>
   </Modal>;
   return <Modal visible transparent animationType="fade" onRequestClose={onClose}>
     <View style={styles.previewBackdrop}><View style={styles.previewSheet}>
-      <View style={styles.previewHeader}><Text accessibilityRole="header" style={styles.previewTitle}>{t("Send offer")}</Text><Pressable accessibilityRole="button" accessibilityLabel={t("Close")} onPress={onClose} style={actionStyles.iconButton}><X size={20} color={theme.colors.textMuted} /></Pressable></View>
+      <View style={styles.previewHeader}><Text accessibilityRole="header" style={styles.previewTitle}>{t("Send offer")}</Text><Pressable signalAction="ui.OfferSharePreview.onClose.press" signalPlacement="OfferSharePreview.onClose" accessibilityRole="button" accessibilityLabel={t("Close")} onPress={onClose} style={actionStyles.iconButton}><X size={20} color={theme.colors.textMuted} /></Pressable></View>
       <ScrollView contentContainerStyle={styles.previewContent}>
         <Text style={styles.previewLabel}>{t("Offer")}</Text>
         {commonStay ? <Text style={styles.caption}>{commonStay}</Text> : null}
         {message?.offers.map((offer) => <View key={offer.id} style={styles.previewOffer}><Text style={styles.previewOfferTitle}>{offer.roomName}</Text>{!commonStay && offer.checkIn && offer.checkOut ? <Text style={styles.caption}>{formatStay(offer.checkIn, offer.checkOut)}</Text> : null}<Text style={styles.caption}>{offer.mealPlan} · {new Intl.NumberFormat(locale(), { style: "currency", currency: offer.currency }).format(offer.totalCents / 100)}</Text></View>)}
         <Text style={styles.previewLabel}>{t("Language")}</Text>
-        <View style={styles.languageRow}>{([['it', 'Italiano'], ['en', 'English']] as const).map(([value, label]) => <Pressable key={value} accessibilityRole="radio" accessibilityState={{ checked: language === value }} onPress={() => setLanguage(value)} style={[styles.languageChoice, language === value && styles.languageChoiceActive]}><Text style={[styles.languageText, language === value && styles.languageTextActive]}>{label}</Text></Pressable>)}</View>
+        <View style={styles.languageRow}>{([['it', 'Italiano'], ['en', 'English']] as const).map(([value, label]) => <Pressable signalAction="ui.OfferSharePreview.setLanguage.press" signalPlacement="OfferSharePreview.setLanguage" key={value} accessibilityRole="radio" accessibilityState={{ checked: language === value }} onPress={() => setLanguage(value)} style={[styles.languageChoice, language === value && styles.languageChoiceActive]}><Text style={[styles.languageText, language === value && styles.languageTextActive]}>{label}</Text></Pressable>)}</View>
         <Text style={styles.previewLabel}>{t("Message")}</Text>
         {loading ? <ActivityIndicator color={theme.colors.action} /> : message ? <View style={styles.messagePreview}>{message.channel === "email" ? <Text style={styles.previewOfferTitle}>{message.subject}</Text> : null}<Text selectable style={styles.previewMessage}>{message.text}</Text></View> : null}
         {error ? <InlinePreviewError>{error}</InlinePreviewError> : null}
       </ScrollView>
-      <View style={styles.previewFooter}><Pressable accessibilityRole="button" disabled={!message || opening || loading} onPress={() => void open()} style={({ pressed }) => [styles.previewSend, pressed && styles.pressed, (!message || opening || loading) && styles.disabled]}>{opening ? <ActivityIndicator color={theme.colors.onAction} /> : <><Text style={styles.previewSendText}>{channel === "email" ? t("Email") : "WhatsApp"}</Text><ArrowUpRight size={18} color={theme.colors.onAction} /></>}</Pressable></View>
+      <View style={styles.previewFooter}><Pressable signalAction="ui.OfferSharePreview.open.press" signalPlacement="OfferSharePreview.open" accessibilityRole="button" disabled={!message || opening || loading} onPress={() => void open()} style={({ pressed }) => [styles.previewSend, pressed && styles.pressed, (!message || opening || loading) && styles.disabled]}>{opening ? <ActivityIndicator color={theme.colors.onAction} /> : <><Text style={styles.previewSendText}>{channel === "email" ? t("Email") : "WhatsApp"}</Text><ArrowUpRight size={18} color={theme.colors.onAction} /></>}</Pressable></View>
     </View></View>
   </Modal>;
 }

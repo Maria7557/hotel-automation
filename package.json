@@ -10,10 +10,12 @@
     "dev": "npm run dev --workspace @hotel/server",
     "dev:server": "npm run dev --workspace @hotel/server",
     "dev:mobile": "npm run start --workspace @hotel/mobile",
-    "check": "npm run typecheck --workspaces --if-present && npm run test --workspaces --if-present",
+    "check": "npm run monitoring:audit && npm run typecheck --workspaces --if-present && npm run test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
-    "dev:clients": "npm run dev:clients --workspace @hotel/server"
+    "dev:clients": "npm run dev:clients --workspace @hotel/server",
+    "monitoring:smoke": "npm run monitoring:smoke --workspace @hotel/server --",
+    "monitoring:audit": "npm run monitoring:audit --workspace @hotel/server"
   },
   "engines": {
     "node": ">=24"

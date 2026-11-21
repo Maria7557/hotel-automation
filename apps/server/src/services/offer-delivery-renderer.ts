@@ -16,7 +16,7 @@ import {
 } from "@hotel/templates";
 
 import type { MessageSettings } from "../repositories/types.js";
-import { DEFAULT_GUEST_LANGUAGE } from "@hotel/contracts";
+import { DEFAULT_GUEST_LANGUAGE, resolveMessageTemplates, templateLanguageFor } from "@hotel/contracts";
 
 export type RenderedOfferDelivery =
   | { channel: "email"; subject: string; text: string; html: string }
@@ -48,24 +48,22 @@ export function renderOfferDelivery(input: {
           text: renderWhatsAppText(snapshot, context),
         };
   if (!input.settings) return canonical;
-  const selected = input.settings.translations?.[languageFor(locale)]
-    ?? ((input.settings.templateLanguage ?? "it") === languageFor(locale) ? input.settings : null);
-  if (!selected) return canonical;
+  const { templates: selected, language } = resolveMessageTemplates(input.settings, locale);
 
-  const values = offerVariables(snapshot, publicOfferUrl, locale);
+  const values = offerVariables(snapshot, publicOfferUrl, language);
   if (input.channel === "whatsapp") {
     return {
       channel: "whatsapp",
-      text: ensureBoard(renderText(selected.whatsappBodyTemplate, values), snapshot, locale, publicOfferUrl),
+      text: ensureBoard(renderText(selected.whatsappBodyTemplate, values), snapshot, language, publicOfferUrl),
     };
   }
-  const subject = safeHeaderText(`${offerBoardLabel(snapshot, locale)} · ${renderText(selected.emailSubjectTemplate, values)}`);
-  const text = ensureBoard(renderText(selected.emailBodyTemplate, values), snapshot, locale, publicOfferUrl);
+  const subject = safeHeaderText(`${offerBoardLabel(snapshot, language)} · ${renderText(selected.emailSubjectTemplate, values)}`);
+  const text = ensureBoard(renderText(selected.emailBodyTemplate, values), snapshot, language, publicOfferUrl);
   return {
     channel: "email",
     subject,
     text,
-    html: safeEmailHtml(subject, text, renderOfferBoardBadge(snapshot, locale), locale),
+    html: safeEmailHtml(subject, text, renderOfferBoardBadge(snapshot, language), language),
   };
 }
 
@@ -130,6 +128,7 @@ function ensureBoard(text: string, snapshot: OfferSnapshot, locale: string, url:
 }
 
 function safeEmailHtml(subject: string, text: string, board: string, locale: string): string {
+  const language = templateLanguageFor(locale) ?? languageFor(locale);
   const safeBody = escapeHtml(text).replace(/\n/g, "<br>");
-  return `<!doctype html><html lang="${languageFor(locale)}"><head><meta charset="utf-8"><meta name="robots" content="noindex,nofollow"></head><body style="margin:0;background:#f1f1f1;color:#202020;font-family:Poppins,Inter,Arial,sans-serif"><main style="max-width:600px;margin:0 auto;padding:32px 20px"><section style="background:#fff;border-radius:20px;padding:24px">${board}<h1 style="font-size:22px;line-height:28px">${escapeHtml(subject)}</h1><p style="font-size:16px;line-height:24px">${safeBody}</p></section></main></body></html>`;
+  return `<!doctype html><html lang="${language}"><head><meta charset="utf-8"><meta name="robots" content="noindex,nofollow"></head><body style="margin:0;background:#f1f1f1;color:#202020;font-family:Poppins,Inter,Arial,sans-serif"><main style="max-width:600px;margin:0 auto;padding:32px 20px"><section style="background:#fff;border-radius:20px;padding:24px">${board}<h1 style="font-size:22px;line-height:28px">${escapeHtml(subject)}</h1><p style="font-size:16px;line-height:24px">${safeBody}</p></section></main></body></html>`;
 }

@@ -1,6 +1,9 @@
+import { monitoredAction } from "../monitoring/actions";
+import { scopedApiClient } from "../api/client";
 import { t, translateLabel } from "../i18n";
 import { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Pressable } from "@/monitoring/Pressable";
 import { Check, ChevronDown } from "lucide-react-native";
 import { theme } from "@hotel/design";
 import { apiClient } from "../api/client";
@@ -34,7 +37,8 @@ export function ExistingClientPicker({ demo, selected, disabled, onSelect, error
     return () => { clearTimeout(timer); sequence.current++; };
   }, [demo, open, search, retry]);
 
-  const loadMore = async () => {
+  const loadMore = monitoredAction("action.ExistingClientPicker.loadMore", "ExistingClientPicker.loadMore", async (signalScope) => {
+    const apiClient = scopedApiClient(signalScope);
     if (!page.nextCursor || loading || disabled) return;
     const current = sequence.current;
     const key = `${current}:${page.nextCursor}`;
@@ -44,27 +48,27 @@ export function ExistingClientPicker({ demo, selected, disabled, onSelect, error
     try {
       const next = await apiClient.listClients(search, page.nextCursor);
       if (current === sequence.current) setPage((old) => ({ clients: [...old.clients, ...next.clients.filter((client) => !old.clients.some(({ id }) => id === client.id))], nextCursor: next.nextCursor }));
-    } catch { if (current === sequence.current) setLoadError("Could not load more clients."); }
+    } catch { signalScope.fail(undefined); if (current === sequence.current) setLoadError("Could not load more clients."); }
     finally {
       if (moreRequest.current === key) moreRequest.current = null;
       if (current === sequence.current) setMoreLoading(false);
     }
-  };
+  });
 
   return <View style={styles.wrap}>
-    {selected ? <Pressable accessibilityRole="button" accessibilityLabel={t("Change client: {{v0}}", { v0: selected.name })} accessibilityState={{ expanded: open, disabled }} disabled={disabled} onPress={() => setOpen((value) => !value)} style={styles.selected}>
+    {selected ? <Pressable signalAction="ui.ExistingClientPicker.setOpen.press" signalPlacement="ExistingClientPicker.setOpen" accessibilityRole="button" accessibilityLabel={t("Change client: {{v0}}", { v0: selected.name })} accessibilityState={{ expanded: open, disabled }} disabled={disabled} onPress={() => setOpen((value) => !value)} style={styles.selected}>
       <View style={styles.copy}><Text style={styles.name}>{selected.name}</Text><Text style={styles.contact}>{[selected.email, selected.phone].filter(Boolean).join(" · ")}</Text></View><ChevronDown size={20} color={theme.colors.action} />
     </Pressable> : null}
     {open ? <View style={styles.wrap}>
       <Field label={t("Search clients")} value={search} onChangeText={(value) => { setSearch(value); setLoading(true); }} placeholder={t("Name, email or phone")} autoCapitalize="none" maxLength={160} editable={!disabled} />
       {loading ? <ActivityIndicator accessibilityLabel={t("Loading clients")} color={theme.colors.action} /> : <ScrollView nestedScrollEnabled style={styles.list} keyboardShouldPersistTaps="handled">
-        {page.clients.map((client) => <Pressable key={client.id} accessibilityRole="button" accessibilityLabel={t("Select client {{v0}}, {{v1}}, {{v2}}", { v0: client.name, v1: client.email ?? "no email", v2: client.phone ?? "no phone" })} disabled={disabled} onPress={() => { onSelect(client); setOpen(false); }} style={({ pressed }) => [styles.option, pressed && styles.pressed]}>
+        {page.clients.map((client) => <Pressable signalAction="ui.ExistingClientPicker.onSelect.press" signalPlacement="ExistingClientPicker.onSelect" key={client.id} accessibilityRole="button" accessibilityLabel={t("Select client {{v0}}, {{v1}}, {{v2}}", { v0: client.name, v1: client.email ?? "no email", v2: client.phone ?? "no phone" })} disabled={disabled} onPress={() => { onSelect(client); setOpen(false); }} style={({ pressed }) => [styles.option, pressed && styles.pressed]}>
           <View style={styles.copy}><Text style={styles.name}>{client.name}</Text><Text style={styles.contact}>{[client.email, client.phone].filter(Boolean).join(" · ")}</Text></View>{selected?.id === client.id ? <Check size={20} color={theme.colors.action} /> : null}
         </Pressable>)}
         {!page.clients.length && !loadError ? <Text style={styles.empty}>{search.trim() ? t("No matching clients.") : t("No saved clients yet.")}</Text> : null}
       </ScrollView>}
-      {page.nextCursor && !loading ? <Button variant="tertiary" loading={moreLoading} disabled={disabled} onPress={() => void loadMore()}>{t("Load more clients")}</Button> : null}
-      {loadError ? <><InlineState tone="danger">{loadError}</InlineState><Button variant="tertiary" disabled={disabled} onPress={() => setRetry((value) => value + 1)}>{t("Retry clients")}</Button></> : null}
+      {page.nextCursor && !loading ? <Button signalAction="ui.ExistingClientPicker.loadMore.press" signalPlacement="ExistingClientPicker.loadMore" variant="tertiary" loading={moreLoading} disabled={disabled} onPress={() => void loadMore()}>{t("Load more clients")}</Button> : null}
+      {loadError ? <><InlineState tone="danger">{loadError}</InlineState><Button signalAction="ui.ExistingClientPicker.setRetry.press" signalPlacement="ExistingClientPicker.setRetry" variant="tertiary" disabled={disabled} onPress={() => setRetry((value) => value + 1)}>{t("Retry clients")}</Button></> : null}
     </View> : null}
     {selected && (!selected.email || !selected.phone) ? <Text style={styles.contact}>{t("Add the missing contact details below.")}</Text> : null}
     {error ? <Text accessibilityRole="alert" style={styles.error}>{translateLabel(error)}</Text> : null}

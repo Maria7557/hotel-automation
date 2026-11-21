@@ -1,6 +1,7 @@
 import { translateLabel } from "../i18n";
 import { useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ScrollView, StyleSheet, Text, View } from "react-native";
+import { Pressable } from "@/monitoring/Pressable";
 import { Check, ChevronDown } from "lucide-react-native";
 import { theme } from "@hotel/design";
 
@@ -17,10 +18,10 @@ export function SelectField({ label, value, options, onChange, disabled = false,
   const [open, setOpen] = useState(false);
   return <View style={styles.wrap}>
     <Text style={styles.label}>{translateLabel(label)}</Text>
-    <Pressable accessibilityRole="button" accessibilityLabel={`${label}: ${(options.find((option) => option.value === value)?.label ?? value)}`} accessibilityState={{ disabled, expanded: open }} disabled={disabled} onPress={() => setOpen((current) => !current)} style={[styles.select, error && styles.invalid]}>
+    <Pressable signalAction="ui.SelectField.setOpen.press" signalPlacement="SelectField.setOpen" accessibilityRole="button" accessibilityLabel={`${label}: ${(options.find((option) => option.value === value)?.label ?? value)}`} accessibilityState={{ disabled, expanded: open }} disabled={disabled} onPress={() => setOpen((current) => !current)} style={[styles.select, error && styles.invalid]}>
       <Text style={styles.value}>{(options.find((option) => option.value === value)?.label ?? value)}</Text><ChevronDown size={20} color={theme.colors.textMuted} />
     </Pressable>
-    {open && !disabled ? <ScrollView nestedScrollEnabled style={styles.options} keyboardShouldPersistTaps="handled">{options.map((option) => <Pressable key={option.value} accessibilityRole="radio" accessibilityLabel={`${label}: ${option.label}`} accessibilityState={{ checked: value === option.value }} onPress={() => { onChange(option.value); setOpen(false); }} style={[styles.option, value === option.value && styles.selected]}>
+    {open && !disabled ? <ScrollView nestedScrollEnabled style={styles.options} keyboardShouldPersistTaps="handled">{options.map((option) => <Pressable signalAction="ui.SelectField.onChange.press" signalPlacement="SelectField.onChange" key={option.value} accessibilityRole="radio" accessibilityLabel={`${label}: ${option.label}`} accessibilityState={{ checked: value === option.value }} onPress={() => { onChange(option.value); setOpen(false); }} style={[styles.option, value === option.value && styles.selected]}>
       <Text style={styles.value}>{option.label}</Text>{value === option.value ? <Check size={20} color={theme.colors.action} /> : null}
     </Pressable>)}</ScrollView> : null}
     {error ? <Text accessibilityRole="alert" style={styles.error}>{translateLabel(error)}</Text> : null}

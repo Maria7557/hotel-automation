@@ -74,7 +74,7 @@ export async function registerAutomationRoutes(
       .header("Cache-Control", "private, no-store")
       .header("X-Robots-Tag", "noindex, nofollow, noarchive, nosnippet")
       .type("text/html; charset=utf-8")
-      .send(renderDemoOfferPage(query.accepted === "1", query.option, query.lang));
+      .send(renderDemoOfferPage(query.accepted === "1", query.option, query.lang, app.signalPageContext));
   });
 
   app.post(`${DEMO_OFFER_PATH}/accept`, async (request, reply) => {
@@ -88,6 +88,7 @@ export async function registerAutomationRoutes(
     const { option } = z.object({ option: previewOptionSchema(snapshot.options.length).optional() }).parse(request.query);
     const accepted = (request.query as { accepted?: unknown }).accepted === "1";
     const html = renderPublicOfferPage(snapshot as unknown as OfferSnapshot, {
+      ...(app.signalPageContext ? { monitoring: app.signalPageContext } : {}),
       state: accepted ? "accepted" : "active",
       acceptActionPath: `/proposal/test/${token}/accept`,
       testMode: true,
@@ -112,6 +113,7 @@ export async function registerAutomationRoutes(
     const { token } = publicOfferParamsSchema.parse(request.params);
     const { offer, state, websiteUrl } = await automationService.proposalPage(token);
     const html = renderPublicOfferPage(offer.snapshot as unknown as OfferSnapshot, {
+      ...(app.signalPageContext ? { monitoring: app.signalPageContext } : {}),
       state,
       websiteUrl,
       ...(supportedLanguage((request.query as { lang?: string }).lang) ? { locale: supportedLanguage((request.query as { lang?: string }).lang)! } : {}),

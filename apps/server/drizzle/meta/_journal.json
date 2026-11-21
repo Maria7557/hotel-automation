@@ -113,6 +113,20 @@
       "when": 1794238872357,
       "tag": "0015_app_languages",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1794436214142,
+      "tag": "0016_password_reset_tokens",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1794516852401,
+      "tag": "0017_widget_css",
+      "breakpoints": true
     }
   ]
 }

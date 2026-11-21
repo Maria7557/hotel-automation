@@ -7,6 +7,7 @@ import type { HotelService } from "../../services/hotels.js";
 import { requireAuthentication } from "../authenticate.js";
 import { intakeSettingsSchema } from "../public-schemas.js";
 import { createHotelSchema, deleteHotelSchema, updateHotelSchema } from "../schemas.js";
+import { authenticatedHotelContext } from "../../monitoring/index.js";
 
 export async function registerHotelRoutes(
   app: FastifyInstance,
@@ -19,13 +20,16 @@ export async function registerHotelRoutes(
     const user = request.currentUser;
     if (!user) throw errors.unauthorized();
     const hotel = await hotelService.create(user.id, createHotelSchema.parse(request.body));
+    authenticatedHotelContext(request, hotel);
     return reply.code(201).send({ data: { hotel } });
   });
 
   app.get("/v1/hotel", { preHandler: authenticate }, async (request) => {
     const user = request.currentUser;
     if (!user) throw errors.unauthorized();
-    return { data: { hotel: await hotelService.get(user.id) } };
+    const hotel = await hotelService.get(user.id);
+    authenticatedHotelContext(request, hotel);
+    return { data: { hotel } };
   });
 
   app.patch("/v1/hotel", { preHandler: authenticate }, async (request) => {
@@ -35,15 +39,18 @@ export async function registerHotelRoutes(
     const update = Object.fromEntries(
       Object.entries(parsed).filter((entry) => entry[1] !== undefined),
     ) as HotelUpdate;
-    return { data: { hotel: await hotelService.update(user.id, update) } };
+    const hotel = await hotelService.update(user.id, update);
+    authenticatedHotelContext(request, hotel);
+    return { data: { hotel } };
   });
 
   app.put("/v1/hotel/intake-settings", { preHandler: authenticate }, async (request) => {
     const user = request.currentUser;
     if (!user) throw errors.unauthorized();
-    const { allowedOrigins } = intakeSettingsSchema.parse(request.body);
-    const hotel = await hotelService.updateIntakeSettings(user.id, allowedOrigins);
-    return { data: { publicKey: hotel.publicKey, allowedOrigins: hotel.allowedOrigins } };
+    const parsed = intakeSettingsSchema.parse(request.body);
+    const settings = Object.fromEntries(Object.entries(parsed).filter(([, value]) => value !== undefined));
+    const hotel = await hotelService.updateIntakeSettings(user.id, settings);
+    return { data: { publicKey: hotel.publicKey, allowedOrigins: hotel.allowedOrigins, widgetCss: hotel.widgetCss } };
   });
 
   app.delete("/v1/hotel", { preHandler: authenticate }, async (request, reply) => {
@@ -55,6 +62,7 @@ export async function registerHotelRoutes(
       throw new AppError(409, "HOTEL_NAME_MISMATCH", "Hotel name confirmation does not match.");
     }
     await hotelService.remove(user.id);
+    authenticatedHotelContext(request, null);
     return reply.code(204).send();
   });
 }

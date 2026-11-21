@@ -156,13 +156,14 @@ describe.skipIf(!databaseUrl)("reservation offers PostgreSQL concurrency", () =>
     expect(stored!.settings).toEqual(settings);
     const rate = await app.inject({ method: "POST", url: `/v1/rooms/${context.roomId}/rates`, headers: context.headers, payload: { planCode: "standard", planName: "Standard", mealPlan: "HB", start: "2027-01-01", endInclusive: "2027-12-31", nightlyBaseCents: 15000 } });
     expect(rate.statusCode, rate.body).toBe(201);
-    const sent = await app.inject({ method: "POST", url: `/v1/inquiries/${context.inquiryId}/offers`, headers: { ...context.headers, "idempotency-key": randomUUID() }, payload: { baseOfferId: null, offers: [{ roomId: context.roomId, planCode: "standard", pricingMode: "automatic", mealPlan: "HB", checkIn: "2027-02-01", checkOut: "2027-02-04", quotedTotalCents: 49200 }] } });
+    const sent = await app.inject({ method: "POST", url: `/v1/inquiries/${context.inquiryId}/offers`, headers: { ...context.headers, "idempotency-key": randomUUID() }, payload: { baseOfferId: null, language: "en-GB", offers: [{ roomId: context.roomId, planCode: "standard", pricingMode: "automatic", mealPlan: "HB", checkIn: "2027-02-01", checkOut: "2027-02-04", quotedTotalCents: 49200 }] } });
     expect(sent.statusCode, sent.body).toBe(201);
+    expect(sent.json().data.inquiry.locale).toBe("en-GB");
     expect(sent.json().data.inquiry.offers[0]).toMatchObject({ totalCents: 49200, depositCents: 14760, extras: [{ quantity: 3, totalCents: 4200 }] });
     const token = await context.tokenFor(sent.json().data.inquiry.currentOfferId);
     expect((await app.inject({ method: "POST", url: `/v1/public/offers/${token}/accept` })).statusCode).toBe(200);
-    const [stay] = await core.client`select reservation_number::text, check_in::text, check_out::text, meal_plan, occupancies from inquiries where id = ${context.inquiryId}`;
-    expect(stay).toMatchObject({ reservation_number: context.reservationNumber, check_in: "2027-02-01", check_out: "2027-02-04", meal_plan: "HB", occupancies: [{ adults: 2, childrenAges: [] }] });
+    const [stay] = await core.client`select reservation_number::text, locale, check_in::text, check_out::text, meal_plan, occupancies from inquiries where id = ${context.inquiryId}`;
+    expect(stay).toMatchObject({ reservation_number: context.reservationNumber, locale: "en-GB", check_in: "2027-02-01", check_out: "2027-02-04", meal_plan: "HB", occupancies: [{ adults: 2, childrenAges: [] }] });
   });
 
   it("retries sending concurrently without creating another reservation, offer set, or delivery", async () => {

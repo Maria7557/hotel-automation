@@ -2,6 +2,7 @@ import { z } from "zod";
 import { isoDateSchema } from "./common.js";
 import { DEFAULT_GUEST_LANGUAGE } from "./languages.js";
 import { mealPlanSchema, occupancySchema } from "./entities.js";
+import { enquiryDetailsSchema } from "./enquiry-details.js";
 
 export const inquiryFormInputSchema = z.object({
   guest: z.object({
@@ -12,14 +13,18 @@ export const inquiryFormInputSchema = z.object({
   }),
   checkIn: isoDateSchema,
   checkOut: isoDateSchema,
-  occupancy: occupancySchema,
+  occupancy: occupancySchema.extend({ adults: z.number().int().min(1).max(50), childAges: z.array(z.number().int().min(0).max(17)).max(20).default([]) }),
   mealPlan: mealPlanSchema,
   note: z.string().trim().max(2_000).default(""),
+  details: enquiryDetailsSchema.optional(),
 }).strict().refine(({ checkIn, checkOut }) => checkIn < checkOut, {
   message: "Check-out must be after check-in.", path: ["checkOut"],
 }).refine(({ guest }) => guest.email !== null || guest.phone !== null, {
   message: "Add an email or WhatsApp number.", path: ["guest", "email"],
-});
+}).refine(({ details }) => !details?.consents || details.consents.privacy, { message: "Confirm consent to data processing.", path: ["details", "consents", "privacy"] })
+  .refine(({ guest, details }) => !details || !!guest.email, { message: "Enter a valid email address.", path: ["guest", "email"] })
+  .refine(({ guest, details }) => !details || !!guest.phone, { message: "Enter the guest’s phone number.", path: ["guest", "phone"] })
+  .refine(({ guest, details }) => !details || !guest.phone || /^\+[1-9]\d{6,14}$/.test(guest.phone.replace(/[\s().-]/g, "").replace(/^00/, "+")), { message: "Include the country code, e.g. +39 333 1234567.", path: ["guest", "phone"] });
 
 export type InquiryFormInput = z.infer<typeof inquiryFormInputSchema>;
 

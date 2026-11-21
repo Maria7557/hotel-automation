@@ -1,22 +1,24 @@
+import { monitoredAction } from "../monitoring/actions";
+import { scopedApiClient } from "../api/client";
 import { t, translateLabel, getLanguage } from "../i18n";
-import { BoardSelector } from "@/components/BoardBadge";
 import { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from "react-native";
+import { Pressable } from "@/monitoring/Pressable";
 import * as Clipboard from "expo-clipboard";
 import { ArrowLeft, Check, ClipboardCheck, Code2, Copy, Globe2, Monitor, Smartphone } from "lucide-react-native";
 import { theme } from "@hotel/design";
 import { apiClient, authErrorMessage } from "@/api/client";
 import type { HotelIntakeSettings, HotelProfile } from "@/api/types";
 import { Button, Field, InlineState, SectionTitle, uiStyles } from "@/components/ui";
+import { WidgetPreview } from "@/components/WidgetPreview";
 
 export function SiteIntegrationScreen({
   initialProfile,
@@ -32,8 +34,9 @@ export function SiteIntegrationScreen({
   const [settings, setSettings] = useState<HotelIntakeSettings | null>(null);
   const [originsText, setOriginsText] = useState("");
   const [savedOriginsText, setSavedOriginsText] = useState("");
+  const [widgetCss, setWidgetCss] = useState("");
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
+  const [saving, setSaving] = useState<"origins" | "css" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -45,22 +48,24 @@ export function SiteIntegrationScreen({
     setSettings(next);
     setOriginsText(value);
     setSavedOriginsText(value);
+    setWidgetCss(next.widgetCss);
   };
 
-  const load = async () => {
+  const load = monitoredAction("action.SiteIntegrationScreen.load", "SiteIntegrationScreen.load", async (signalScope) => {
+    const apiClient = scopedApiClient(signalScope);
     setLoading(true);
     setError(null);
     try {
       const profile = demo ? initialProfile : await apiClient.getHotel();
-      applySettings({ publicKey: profile.publicKey, allowedOrigins: profile.allowedOrigins });
-    } catch (nextError) {
+      applySettings({ publicKey: profile.publicKey, allowedOrigins: profile.allowedOrigins, widgetCss: profile.widgetCss });
+    } catch (nextError) { signalScope.fail(nextError);
       setError(authErrorMessage(nextError));
     } finally {
       setLoading(false);
     }
-  };
+  });
 
-  useEffect(() => { void load(); }, [demo, initialProfile]);
+  useEffect(() => { void load(); }, [demo, initialProfile.id, initialProfile.publicKey]);
   useEffect(() => {
     if (!copied) return;
     const timeout = setTimeout(() => setCopied(false), 2200);
@@ -70,6 +75,8 @@ export function SiteIntegrationScreen({
   const origins = useMemo(() => parseOrigins(originsText), [originsText, getLanguage()]);
   const validationError = validateOrigins(origins);
   const dirty = originsText !== savedOriginsText;
+  const cssDirty = widgetCss !== (settings?.widgetCss ?? "");
+  const cssError = widgetCss.length > 60_000 ? t("Custom CSS must be 60,000 characters or fewer.") : null;
   const apiOrigin = demo ? "https://api.example.com" : getApiOrigin();
   const widgetSnippet = settings?.publicKey && apiOrigin
     ? `<script async src="${apiOrigin}/embed.js" data-public-key="${settings.publicKey}"></script>`
@@ -83,6 +90,8 @@ export function SiteIntegrationScreen({
   data-check-in="[name='checkin']"
   data-check-out="[name='checkout']"
   data-name="[name='name']"
+  data-first-name="[name='firstName']"
+  data-last-name="[name='lastName']"
   data-email="[name='email']"
   data-phone="[name='phone']"
   data-adults="[name='adults']"
@@ -92,29 +101,52 @@ export function SiteIntegrationScreen({
     : "";
   const snippet = integrationMode === "adapter" ? adapterSnippet : widgetSnippet;
 
-  const save = async () => {
+  const save = monitoredAction("action.SiteIntegrationScreen.save", "SiteIntegrationScreen.save", async (signalScope) => {
+    const apiClient = scopedApiClient(signalScope);
     setError(null);
     setNotice(null);
     if (validationError) {
       setError(validationError);
       return;
     }
-    setSaving(true);
+    setSaving("origins");
     try {
       const next = demo
-        ? { publicKey: settings?.publicKey ?? initialProfile.publicKey, allowedOrigins: origins }
-        : await apiClient.updateIntakeSettings(origins);
-      applySettings(next);
+        ? { publicKey: settings?.publicKey ?? initialProfile.publicKey, allowedOrigins: origins, widgetCss: settings?.widgetCss ?? initialProfile.widgetCss }
+        : await apiClient.updateIntakeSettings({ allowedOrigins: origins });
+      setSettings(next);
+      setOriginsText(next.allowedOrigins.join("\n"));
+      setSavedOriginsText(next.allowedOrigins.join("\n"));
       onSaved(next);
       setNotice(demo ? t("Demo settings were updated locally. Nothing was sent to the server.") : t("Allowed websites saved."));
-    } catch (nextError) {
+    } catch (nextError) { signalScope.fail(nextError);
       setError(authErrorMessage(nextError));
     } finally {
-      setSaving(false);
+      setSaving(null);
     }
-  };
+  });
 
-  const copySnippet = async () => {
+  const saveCss = monitoredAction("action.SiteIntegrationScreen.saveCss", "SiteIntegrationScreen.saveCss", async (signalScope) => {
+    const apiClient = scopedApiClient(signalScope);
+    setError(null);
+    setNotice(null);
+    if (!settings || cssError) return;
+    setSaving("css");
+    try {
+      const next = demo ? { ...settings, widgetCss } : await apiClient.updateIntakeSettings({ widgetCss });
+      setSettings(next);
+      setWidgetCss(next.widgetCss);
+      onSaved(next);
+      setNotice(demo ? t("Demo settings were updated locally. Nothing was sent to the server.") : t("Custom CSS saved. Your website form will use it when the page is reloaded."));
+    } catch (nextError) { signalScope.fail(nextError);
+      setError(authErrorMessage(nextError));
+    } finally {
+      setSaving(null);
+    }
+  });
+
+  const copySnippet = monitoredAction("action.SiteIntegrationScreen.copySnippet", "SiteIntegrationScreen.copySnippet", async (signalScope) => {
+    const apiClient = scopedApiClient(signalScope);
     setError(null);
     if (!snippet) {
       setError("Embed code is unavailable: check the public key and EXPO_PUBLIC_API_URL.");
@@ -123,10 +155,10 @@ export function SiteIntegrationScreen({
     try {
       await Clipboard.setStringAsync(snippet);
       setCopied(true);
-    } catch {
+    } catch { signalScope.fail(undefined);
       setError("Could not copy the code. Select it manually.");
     }
-  };
+  });
 
   return (
     <KeyboardAvoidingView style={uiStyles.screen} behavior={Platform.OS === "ios" ? "padding" : undefined}>
@@ -147,13 +179,13 @@ export function SiteIntegrationScreen({
             <Globe2 size={28} color={theme.colors.textMuted} />
             <Text style={styles.loadFailureTitle}>{t("Settings were not loaded")}</Text>
             <Text style={styles.loadFailureText}>{t("Real errors are never replaced with demo data.")}</Text>
-            <Button variant="secondary" onPress={() => void load()}>{t("Try again")}</Button>
+            <Button signalAction="ui.SiteIntegrationScreen.load.press" signalPlacement="SiteIntegrationScreen.load" variant="secondary" onPress={() => void load()}>{t("Try again")}</Button>
           </View>
         ) : (
           <>
             <View style={styles.section}>
-              <SectionTitle>{t("Websites allowed to send requests")}</SectionTitle>
-              <Text style={styles.helper}>{t("Add the address guests see in their browser. Use one website per line and include https://.")}</Text>
+              <SectionTitle>{t("Allowed websites")}</SectionTitle>
+              <Text style={styles.helper}>{t("Add the website address where your form will appear, for example https://www.hotel.it. Use one address per line, up to 20.")}</Text>
               <Field
                 label={t("Website addresses")}
                 placeholder={"https://hotel.it\nhttps://www.hotel.it"}
@@ -173,7 +205,7 @@ export function SiteIntegrationScreen({
                 <Text style={styles.exampleGood}>https://hotel.it</Text>
                 <Text style={styles.exampleBad}>{t("not")} https://hotel.it/booking</Text>
               </View>
-              <Button icon={Check} loading={saving} disabled={!dirty} onPress={() => void save()}>
+              <Button signalAction="ui.SiteIntegrationScreen.save.press" signalPlacement="SiteIntegrationScreen.save" icon={Check} loading={saving === "origins"} disabled={!dirty || !!saving} onPress={() => void save()}>
                 {dirty ? t("Save websites") : t("Websites saved")}
               </Button>
             </View>
@@ -181,7 +213,7 @@ export function SiteIntegrationScreen({
             <View style={styles.section}>
               <SectionTitle>{t("Integration method")}</SectionTitle>
               <View style={styles.modeRow} accessibilityRole="tablist">
-                <Pressable
+                <Pressable signalAction="ui.SiteIntegrationScreen.setIntegrationMode.press" signalPlacement="SiteIntegrationScreen.setIntegrationMode"
                   accessibilityRole="tab"
                   accessibilityState={{ selected: integrationMode === "widget" }}
                   onPress={() => { setIntegrationMode("widget"); setCopied(false); }}
@@ -191,7 +223,7 @@ export function SiteIntegrationScreen({
                   <Text style={[styles.modeTitle, integrationMode === "widget" && styles.modeTitleActive]}>{t("Ready-made form")}</Text>
                   <Text style={styles.modeText}>{t("Preview and insert our complete form")}</Text>
                 </Pressable>
-                <Pressable
+                <Pressable signalAction="ui.SiteIntegrationScreen.setIntegrationMode.press" signalPlacement="SiteIntegrationScreen.setIntegrationMode"
                   accessibilityRole="tab"
                   accessibilityState={{ selected: integrationMode === "adapter" }}
                   onPress={() => { setIntegrationMode("adapter"); setCopied(false); }}
@@ -213,6 +245,30 @@ export function SiteIntegrationScreen({
                 </>
               ) : (
                 <View style={styles.previewSection}>
+                  <View style={styles.cssCard}>
+                    <Text style={styles.previewTitle}>{t("Custom CSS")}</Text>
+                    <Text style={styles.helper}>{t("Ask Codex to create CSS from your website design, then paste it here. Preview your changes below and save to apply them to your website form.")}</Text>
+                    <Field
+                      label={t("Form CSS")}
+                      value={widgetCss}
+                      onChangeText={(value) => { setWidgetCss(value); setError(null); setNotice(null); }}
+                      placeholder={".box {\n  font-family: 'Your brand font', sans-serif;\n  background: #faf8f3;\n  border-radius: 0;\n}\nbutton { background: #314d43; }"}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      spellCheck={false}
+                      multiline
+                      numberOfLines={12}
+                      editable={!saving}
+                      error={cssError ?? undefined}
+                      helper={t("Paste CSS only, without <style> tags. Use full URLs for fonts and images. Leave empty and save to restore the default design.")}
+                      style={styles.cssField}
+                    />
+                    <Text selectable style={styles.helper}>{t("For Codex: use :host for the widget container, .box for the form, .grid, .two and .three for layout, .room-fields for each room, .child-fields and .ages for children, .consent for checkboxes, and label, input, select, textarea and button for controls. Styles apply only inside this form.")}</Text>
+                    <Button signalAction="ui.SiteIntegrationScreen.saveCss.press" signalPlacement="SiteIntegrationScreen.saveCss" icon={Check} loading={saving === "css"} disabled={!cssDirty || !!cssError || !!saving} onPress={() => void saveCss()}>
+                      {cssDirty ? t("Save custom CSS") : t("CSS saved")}
+                    </Button>
+                    {cssDirty ? <Text style={styles.helper}>{t("The preview shows your unsaved CSS. Save to update your website form.")}</Text> : null}
+                  </View>
                   <View style={styles.previewHeader}>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.previewTitle}>{t("Live form preview")}</Text>
@@ -223,7 +279,7 @@ export function SiteIntegrationScreen({
                       <DeviceButton device="mobile" label={t("Mobile")} active={previewDevice === "mobile"} onPress={() => setPreviewDevice("mobile")} />
                     </View>
                   </View>
-                  <WidgetPreview device={previewDevice} />
+                  <WidgetPreview device={previewDevice} apiOrigin={getApiOrigin()} publicKey={settings.publicKey} css={widgetCss} language={getLanguage()} demo={demo} />
                 </View>
               )}
               {!apiOrigin ? <InlineState tone="danger">{t("EXPO_PUBLIC_API_URL is missing or invalid, so the embed code cannot be created.")}</InlineState> : null}
@@ -231,10 +287,10 @@ export function SiteIntegrationScreen({
               <View style={styles.codeCard}>
                 <View style={styles.codeHeading}>
                   <View style={styles.codeIcon}><Code2 size={20} color={theme.colors.action} /></View>
-                  <Text style={styles.codeTitle}>{integrationMode === "adapter" ? t("Existing form adapter") : t("Form widget")}</Text>
+                  <Text style={styles.codeTitle}>{integrationMode === "adapter" ? t("Copy Existing form adapter") : t("Copy script for Form widget")}</Text>
                 </View>
                 <Text selectable accessibilityLabel={t("Website integration code")} style={styles.codeText}>{snippet || t("Code is not available yet")}</Text>
-                <Button
+                <Button signalAction="ui.SiteIntegrationScreen.copySnippet.press" signalPlacement="SiteIntegrationScreen.copySnippet"
                   variant="secondary"
                   icon={copied ? ClipboardCheck : Copy}
                   disabled={!snippet}
@@ -252,7 +308,7 @@ export function SiteIntegrationScreen({
                 <Text style={styles.installTitle}>{integrationMode === "adapter" ? t("Match your form and fields") : t("Paste it before the closing tag")}</Text>
                 <Text style={styles.installText}>
                   {integrationMode === "adapter"
-                    ? t("Replace #booking-form and each [name='…'] selector in the code with the selectors already used by your website form. Map the required mealPlan field to BB, HB or FB. Optional child ages and message fields can be added with data-child-ages and data-note.")
+                    ? t("Replace #booking-form and each [name='…'] selector with your website’s field selectors. Map mealPlan to BB, HB or FB. Use one age dropdown per child (under 1 to 17 years), and point data-child-ages at all of those dropdowns. Map the optional message with data-note.")
                     : <>{t("Open your website HTML template and add the copied script immediately before")}{" "}<Text style={styles.inlineCode}>{"</body>"}</Text>.</>}
                 </Text>
               </View>
@@ -260,14 +316,34 @@ export function SiteIntegrationScreen({
             <View style={styles.installCard}>
               <View style={styles.stepNumber}><Text style={styles.stepNumberText}>2</Text></View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.installTitle}>{integrationMode === "adapter" ? t("Add an optional status message") : t("Check the exact origin")}</Text>
+                <Text style={styles.installTitle}>{t("Check and allow your website address")}</Text>
                 <Text style={styles.installText}>
+                  {t("Open the published page containing your form and check your browser’s address bar. For https://www.hotel.it/booking, use https://www.hotel.it — leave out /booking and any trailing slash.")}
+                </Text>
+                <Text style={styles.installText}>
+                  {t("In Settings → Website form → Allowed websites, add this address to Allowed origins and select Save websites. Include https:// or http:// and any port shown. Addresses with and without www are separate entries.")}
+                </Text>
+                <Text style={styles.installText}>
+                  {t("“Address not allowed” means the form page’s website address does not match a saved allowed website. Save the matching address, reload the form page and try again.")}
+
+                </Text><Text style={styles.installText}>
                   {integrationMode === "adapter"
                     ? <>{t("Add")}{" "}<Text style={styles.inlineCode}>data-hotel-inquiry-status</Text> {" "}{t("to an empty element inside the form to show sending, success and error messages. The page must also match an allowed website above.")}</>
                     : t("Address not allowed.")}
                 </Text>
               </View>
             </View>
+            {integrationMode === "adapter" ? (
+              <View style={styles.installCard}>
+                <View style={styles.stepNumber}><Text style={styles.stepNumberText}>3</Text></View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.installTitle}>{t("Add an optional status message")}</Text>
+                  <Text style={styles.installText}>
+                    {t("Add")}{" "}<Text style={styles.inlineCode}>data-hotel-inquiry-status</Text>{" "}{t("to an empty element inside the form to show sending, success and error messages.")}
+                  </Text>
+                </View>
+              </View>
+            ) : null}
           </>
         )}
       </ScrollView>
@@ -278,7 +354,7 @@ export function SiteIntegrationScreen({
 function ScreenHeader({ title, onBack }: { title: string; onBack: () => void }) {
   return (
     <View style={styles.header}>
-      <Pressable accessibilityRole="button" accessibilityLabel={t("Back")} onPress={onBack} style={({ pressed }) => [styles.back, pressed && styles.pressed]}>
+      <Pressable signalAction="ui.ScreenHeader.onBack.press" signalPlacement="ScreenHeader.onBack" accessibilityRole="button" accessibilityLabel={t("Back")} onPress={onBack} style={({ pressed }) => [styles.back, pressed && styles.pressed]}>
         <ArrowLeft size={22} color={theme.colors.text} />
       </Pressable>
       <Text style={styles.headerTitle}>{translateLabel(title)}</Text>
@@ -311,7 +387,7 @@ function DeviceButton({
   onPress: () => void;
 }) {
   return (
-    <Pressable
+    <Pressable signalAction="ui.DeviceButton.onPress.press" signalPlacement="DeviceButton.onPress"
       accessibilityRole="button"
       accessibilityState={{ selected: active }}
       onPress={onPress}
@@ -322,45 +398,6 @@ function DeviceButton({
         : <Smartphone size={15} color={active ? theme.colors.action : theme.colors.textMuted} />}
       <Text style={[styles.deviceLabel, active && styles.deviceLabelActive]}>{translateLabel(label)}</Text>
     </Pressable>
-  );
-}
-
-function WidgetPreview({ device }: { device: "desktop" | "mobile" }) {
-  const [mealPlan, setMealPlan] = useState<"BB" | "HB" | "FB">("BB");
-  const mobile = device === "mobile";
-  return (
-    <View style={styles.previewStage}>
-      <View style={[styles.previewFrame, mobile && styles.previewFrameMobile]}>
-        <Text style={styles.installTitle}>{t("Board basis")}</Text>
-        <BoardSelector value={mealPlan} onChange={setMealPlan} />
-        <View style={[styles.previewPair, mobile && styles.previewPairMobile]}>
-          <PreviewField label={t("Check-in")} placeholder={t("dd/mm/yyyy")} />
-          <PreviewField label={t("Check-out")} placeholder={t("dd/mm/yyyy")} />
-        </View>
-        <View style={[styles.previewPair, mobile && styles.previewPairMobile]}>
-          <PreviewField label={t("Full name")} placeholder="Mario Rossi" />
-          <PreviewField label={t("Email")} placeholder="mario@example.com" />
-        </View>
-        <View style={[styles.previewPair, mobile && styles.previewPairMobile]}>
-          <PreviewField label={t("Phone / WhatsApp")} placeholder="+39 …" />
-          <PreviewField label={t("Adults")} placeholder="2" />
-        </View>
-        <PreviewField label={t("Child ages, separated by commas")} placeholder={t("e.g. 4, 9")} />
-        <PreviewField label={t("Message")} placeholder={t("Optional message")} tall />
-        <View style={styles.previewButton}><Text style={styles.previewButtonText}>{t("Request availability")}</Text></View>
-      </View>
-    </View>
-  );
-}
-
-function PreviewField({ label, placeholder, tall = false }: { label: string; placeholder: string; tall?: boolean }) {
-  return (
-    <View style={styles.previewField}>
-      <Text style={styles.previewFieldLabel}>{translateLabel(label)}</Text>
-      <View style={[styles.previewInput, tall && styles.previewInputTall]}>
-        <Text style={styles.previewPlaceholder}>{placeholder}</Text>
-      </View>
-    </View>
   );
 }
 
@@ -424,6 +461,8 @@ const styles = StyleSheet.create({
   flowTitle: { ...theme.typography.bodySmallMedium, color: theme.colors.text },
   flowDetail: { ...theme.typography.caption, color: theme.colors.textSecondary, marginTop: theme.spacing[1] },
   previewSection: { gap: theme.spacing[3] },
+  cssCard: { gap: theme.spacing[3], padding: theme.spacing[4], borderRadius: theme.radii.lg, backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border },
+  cssField: { minHeight: 240, maxHeight: 480, paddingTop: theme.spacing[3], textAlignVertical: "top", fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace", fontSize: 13, lineHeight: 20 },
   previewHeader: { gap: theme.spacing[3] },
   previewTitle: { ...theme.typography.bodySmallMedium, color: theme.colors.text },
   previewHelp: { ...theme.typography.caption, color: theme.colors.textSecondary, marginTop: theme.spacing[1] },
@@ -432,18 +471,6 @@ const styles = StyleSheet.create({
   deviceButtonActive: { backgroundColor: theme.colors.surface },
   deviceLabel: { ...theme.typography.captionMedium, color: theme.colors.textMuted },
   deviceLabelActive: { color: theme.colors.action },
-  previewStage: { alignItems: "center", padding: theme.spacing[3], borderRadius: theme.radii.lg, backgroundColor: theme.colors.surfaceMuted, overflow: "hidden" },
-  previewFrame: { width: "100%", gap: 10, padding: 14, borderRadius: 12, backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border },
-  previewFrameMobile: { maxWidth: 300 },
-  previewPair: { flexDirection: "row", gap: 10 },
-  previewPairMobile: { flexDirection: "column" },
-  previewField: { flex: 1, gap: 4 },
-  previewFieldLabel: { fontSize: 9, lineHeight: 12, fontWeight: "600", color: theme.colors.text },
-  previewInput: { minHeight: 30, justifyContent: "center", paddingHorizontal: 8, borderRadius: 7, borderWidth: 1, borderColor: theme.colors.border },
-  previewInputTall: { minHeight: 48, alignItems: "flex-start", justifyContent: "flex-start", paddingTop: 7 },
-  previewPlaceholder: { fontSize: 9, lineHeight: 12, color: theme.colors.textMuted },
-  previewButton: { minHeight: 38, alignItems: "center", justifyContent: "center", borderRadius: 8, backgroundColor: theme.colors.action },
-  previewButtonText: { fontSize: 10, lineHeight: 14, fontWeight: "600", color: theme.colors.onAction },
   helper: { ...theme.typography.caption, color: theme.colors.textMuted },
   originsField: { minHeight: 138, paddingTop: theme.spacing[3], textAlignVertical: "top" },
   exampleRow: { minHeight: 44, flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: theme.spacing[2] },
@@ -452,7 +479,7 @@ const styles = StyleSheet.create({
   codeCard: { gap: theme.spacing[4], padding: theme.spacing[4], borderRadius: theme.radii.lg, backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border },
   codeHeading: { flexDirection: "row", alignItems: "center", gap: theme.spacing[3] },
   codeIcon: { width: 44, height: 44, borderRadius: theme.radii.md, alignItems: "center", justifyContent: "center", backgroundColor: theme.colors.actionTint },
-  codeTitle: { ...theme.typography.bodySmallMedium, color: theme.colors.text },
+  codeTitle: { ...theme.typography.bodySmallMedium, color: theme.colors.text, flex: 1 },
   codeText: { ...theme.typography.bodySmall, color: theme.colors.text, backgroundColor: theme.colors.surfaceMuted, borderRadius: theme.radii.md, padding: theme.spacing[4] },
   installCard: { minHeight: 96, flexDirection: "row", alignItems: "flex-start", gap: theme.spacing[3], padding: theme.spacing[4], borderRadius: theme.radii.lg, backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border },
   stepNumber: { width: 44, height: 44, borderRadius: theme.radii.pill, alignItems: "center", justifyContent: "center", backgroundColor: theme.colors.action },

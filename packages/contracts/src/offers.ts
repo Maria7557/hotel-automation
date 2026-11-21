@@ -74,6 +74,7 @@ export type OfferEditorData = {
 export const sendReservationOffersSchema = z.object({
   // Prevent an editor from replacing a newer offer sent by another staff member.
   baseOfferId: z.uuid().nullable(),
+  language: z.string().trim().min(2).max(16).optional(),
   offers: z.array(reservationOfferInputSchema).min(1).max(MAX_RESERVATION_OFFERS),
 }).strict();
 export type SendReservationOffersInput = z.infer<typeof sendReservationOffersSchema>;

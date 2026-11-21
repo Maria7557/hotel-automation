@@ -1,6 +1,7 @@
 import { t, getLanguage } from "../i18n";
 import { createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ComponentRef, type ReactNode } from "react";
-import { Platform, Pressable, StyleSheet, Text, View, type PressableProps } from "react-native";
+import { Platform, StyleSheet, Text, View, type PressableProps } from "react-native";
+import { Pressable } from "@/monitoring/Pressable";
 import { theme } from "@hotel/design";
 
 type ViewRef = ComponentRef<typeof View>;
@@ -79,7 +80,7 @@ export function TooltipProvider({ children }: { children: ReactNode }) {
     <View ref={host} style={styles.host} onLayout={() => dismiss()}>
       {children}
       {active ? <View pointerEvents="box-none" style={styles.layer}>
-        {Platform.OS !== "web" ? <Pressable accessibilityRole="button" accessibilityLabel={t("Dismiss tooltip")} onPress={() => dismiss()} style={StyleSheet.absoluteFill} /> : null}
+        {Platform.OS !== "web" ? <Pressable signalAction="ui.TooltipProvider.dismiss.press" signalPlacement="TooltipProvider.dismiss" accessibilityRole="button" accessibilityLabel={t("Dismiss tooltip")} onPress={() => dismiss()} style={StyleSheet.absoluteFill} /> : null}
         <View
           key={active.id}
           pointerEvents={height ? "auto" : "none"}

@@ -3,6 +3,7 @@ import type { FastifyInstance } from "fastify";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "../src/app.js";
 import { unsealPrivateValue } from "../src/lib/public-token.js";
+import { renderOfferDelivery } from "../src/services/offer-delivery-renderer.js";
 import { createMemoryRepositories, type MemoryRepositories } from "./helpers/memory-repositories.js";
 
 const env = { AUTH_SECRET: "offer-composer-tests-secret-longer-than-32-characters", SESSION_TTL_DAYS: 30, PUBLIC_BASE_URL: "https://offers.example", corsOrigins: [] };
@@ -63,6 +64,71 @@ describe("automatic offer composer and extras", () => {
     const held = await app.inject({ method: "POST", url: "/v1/inquiries/form", headers: { ...owner.headers, "idempotency-key": randomUUID() }, payload });
     expect(held.json().data).toMatchObject({ automated: false, deliveriesScheduled: 0, attentionReason: "manual_review" });
     expect((await owner.intake("   ")).json().data).toMatchObject({ automated: true, deliveriesScheduled: 2 });
+  });
+
+  it.each([
+    ["it", "Gentile Anna,", "it"],
+    ["en-US", "Hello Anna,", "en"],
+  ])("saves the selected %s language for manual offers, messages and the proposal page", async (language, greeting, pageLanguage) => {
+    const owner = await setup();
+    const { inquiryId } = (await owner.intake("Please review my request")).json().data;
+    const payload = { baseOfferId: null, language: ` ${language} `, offers: [{ roomId: owner.roomId, planCode: "flexible", pricingMode: "automatic" }] };
+    const send = (key: string, body = payload) => app.inject({ method: "POST", url: `/v1/inquiries/${inquiryId}/offers`, headers: { ...owner.headers, "idempotency-key": key }, payload: body });
+    const sent = await send("selected-language");
+    expect(sent.statusCode, sent.body).toBe(201);
+    expect(sent.json().data.inquiry.locale).toBe(language);
+    const offer = repositories.automation.offers.get(sent.json().data.inquiry.currentOfferId)!;
+    expect(offer.snapshot.guestSnapshot).toMatchObject({ language });
+    for (const channel of ["email", "whatsapp"] as const) {
+      const delivery = [...repositories.automation.deliveries.values()].find((item) => item.offerVersionId === offer.id && item.channel === channel)!;
+      const proposalUrl = unsealPrivateValue(String(delivery.payload.proposalUrlCiphertext), env.AUTH_SECRET);
+      const message = renderOfferDelivery({ snapshot: offer.snapshot, proposalUrl, channel, settings: null });
+      expect(message.text).toContain(greeting);
+      const page = await app.inject({ method: "GET", url: `/proposal/${proposalUrl.split("/").at(-1)}` });
+      expect(page.statusCode, page.body).toBe(200);
+      expect(page.body).toContain(`<html lang="${pageLanguage}">`);
+    }
+    const replay = await send("selected-language", { ...payload, language: "de" });
+    expect(replay.statusCode, replay.body).toBe(200);
+    expect(replay.json().data.inquiry.locale).toBe(language);
+    const stale = await send("stale-language", { ...payload, language: "fr" });
+    expect(stale.statusCode, stale.body).toBe(409);
+    const refreshed = await app.inject({ method: "GET", url: `/v1/inquiries/${inquiryId}`, headers: owner.headers });
+    expect(refreshed.json().data.inquiry.locale).toBe(language);
+  });
+
+  it("changes language when editing offers, keeps earlier snapshots and preserves it when omitted", async () => {
+    const owner = await setup();
+    const { inquiryId } = (await owner.intake("Please review my request")).json().data;
+    const offers = [{ roomId: owner.roomId, planCode: "flexible", pricingMode: "automatic" }];
+    const send = (payload: object) => app.inject({ method: "POST", url: `/v1/inquiries/${inquiryId}/offers`, headers: { ...owner.headers, "idempotency-key": randomUUID() }, payload });
+    const first = await send({ baseOfferId: null, offers });
+    expect(first.statusCode, first.body).toBe(201);
+    expect(first.json().data.inquiry.locale).toBe("en-GB");
+    const firstOfferId = first.json().data.inquiry.currentOfferId;
+    const edited = await send({ baseOfferId: firstOfferId, language: "fr-FR", offers });
+    expect(edited.statusCode, edited.body).toBe(201);
+    expect(edited.json().data.inquiry.locale).toBe("fr-FR");
+    const snapshot = repositories.automation.offers.get(edited.json().data.inquiry.currentOfferId)!.snapshot;
+    expect(snapshot.guestSnapshot).toMatchObject({ language: "fr-FR" });
+    expect(repositories.automation.offers.get(firstOfferId)!.snapshot.guestSnapshot).toMatchObject({ language: "en-GB" });
+    const french = { emailSubjectTemplate: "Offre pour {{guest_name}}", emailBodyTemplate: "Bonjour {{guest_name}} {{offer_url}}", whatsappBodyTemplate: "Bonjour {{guest_name}} {{offer_url}}" };
+    for (const channel of ["email", "whatsapp"] as const) {
+      const message = renderOfferDelivery({ snapshot, proposalUrl: "https://offers.example/proposal/token", channel, settings: {
+        ...french, templateLanguage: "it", translations: { fr: french }, hotelId: owner.hotelId, createdAt: new Date(), updatedAt: new Date(),
+      } });
+      expect(message.text).toContain("Bonjour Anna");
+    }
+    const resent = await send({ baseOfferId: edited.json().data.inquiry.currentOfferId, offers });
+    expect(resent.statusCode, resent.body).toBe(201);
+    expect(resent.json().data.inquiry.locale).toBe("fr-FR");
+    expect(repositories.automation.offers.get(resent.json().data.inquiry.currentOfferId)!.snapshot.guestSnapshot).toMatchObject({ language: "fr-FR" });
+    for (const language of ["", " ", "x", "a".repeat(17), 42, null]) {
+      const invalid = await send({ baseOfferId: resent.json().data.inquiry.currentOfferId, language, offers });
+      expect(invalid.statusCode, invalid.body).toBe(400);
+    }
+    expect(repositories.automation.inquiries.get(inquiryId)!.locale).toBe("fr-FR");
+    expect(repositories.automation.offers.size).toBe(3);
   });
 
   it("previews extras, discounts and deposits and freezes all settings and prices when sent", async () => {

@@ -1,14 +1,18 @@
 import {
   createHotelInputSchema,
   deleteHotelInputSchema,
+  forgotPasswordInputSchema,
   loginInputSchema,
   registerInputSchema,
+  resetPasswordInputSchema,
   updateHotelInputSchema,
 } from "@hotel/contracts";
 import { z } from "zod";
 
 export const registerSchema = registerInputSchema;
 export const loginSchema = loginInputSchema;
+export const forgotPasswordSchema = forgotPasswordInputSchema;
+export const resetPasswordSchema = resetPasswordInputSchema;
 export const socialLoginSchema = z.object({
   provider: z.enum(["google", "apple"]),
   idToken: z.string().min(20).max(20_000),

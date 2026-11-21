@@ -60,12 +60,12 @@ describe("full app language behavior", () => {
     expect(messages[0]?.body).toContain("Anna è in attesa");
     expect(hotel.locale).toBe("en-GB");
   });
-  it("selects custom templates by guest language and falls back to a matching built-in message", () => {
+  it("selects custom templates by guest language and falls back to the Legacy template", () => {
     const snapshot = { ...demoOfferSnapshot, guestSnapshot: { ...demoOfferSnapshot.guestSnapshot, language: "en" } };
     const settings = { hotelId: "hotel", templateLanguage: "it" as const, emailSubjectTemplate: "Oggetto italiano", emailBodyTemplate: "Corpo italiano", whatsappBodyTemplate: "Messaggio italiano", createdAt: new Date(), updatedAt: new Date() };
     const fallback = renderOfferDelivery({ snapshot, proposalUrl: "https://offers.example/proposal/token", channel: "email", settings });
-    expect(fallback.channel === "email" && fallback.text).toContain("Hello Mario Rossi");
-    expect(fallback.channel === "email" && fallback.html).toContain('<html lang="en">');
+    expect(fallback.channel === "email" && fallback.text).toContain("Corpo italiano");
+    expect(fallback.channel === "email" && fallback.html).toContain('<html lang="it">');
     const custom = renderOfferDelivery({ snapshot, proposalUrl: "https://offers.example/proposal/token", channel: "email", settings: { ...settings, translations: { en: { emailSubjectTemplate: "Welcome {{guest_name}}", emailBodyTemplate: "Your stay", whatsappBodyTemplate: "English WhatsApp" } } } });
     expect(custom.channel === "email" && custom.subject).toContain("Welcome Mario Rossi");
     expect(custom.channel === "email" && custom.text).not.toContain("Corpo italiano");
@@ -92,8 +92,8 @@ describe("full app language behavior", () => {
     try {
       const script = await app.inject({ method: "GET", url: "/embed.js" });
       let html = "";
-      const form = { addEventListener() {} };
-      const root = { set innerHTML(value: string) { html = value; }, querySelector: (selector: string) => selector === "form" ? form : {} };
+      const form = { addEventListener() {}, querySelector: () => ({ addEventListener() {} }) };
+      const root = { set innerHTML(value: string) { html = value; }, appendChild() {}, querySelector: (selector: string) => selector === "form" ? form : {} };
       const host = { lang: "", setAttribute() {}, attachShadow: () => root };
       runInNewContext(script.body, { URL, document: { currentScript: { src: "https://api.example/embed.js", dataset: { publicKey: "11111111-1111-4111-8111-111111111111", lang: language }, insertAdjacentElement() {} }, documentElement: { lang: language === "it" ? "en" : "it" }, createElement: () => host } });
       expect(host.lang).toBe(language);

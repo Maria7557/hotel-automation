@@ -1,0 +1,1 @@
+ALTER TABLE "hotels" ADD COLUMN "widget_css" text DEFAULT '' NOT NULL;

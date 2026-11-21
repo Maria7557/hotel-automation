@@ -21,6 +21,7 @@ export const mockProfile: HotelProfile = {
   termsText: "Availability is confirmed by the hotel after the offer is accepted.",
   publicKey: "11111111-1111-4111-8111-111111111111",
   allowedOrigins: ["https://hotel.example.com"],
+  widgetCss: "",
 };
 
 const primaryRequests: HotelRequest[] = [

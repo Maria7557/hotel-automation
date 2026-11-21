@@ -11,6 +11,15 @@ export const loginInputSchema = z.object({
   password: z.string().min(1).max(128),
 });
 
+export const forgotPasswordInputSchema = z.object({
+  email: z.email().max(320),
+});
+
+export const resetPasswordInputSchema = z.object({
+  token: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+  password: registerInputSchema.shape.password,
+});
+
 export const publicUserSchema = z.object({
   id: z.uuid(),
   email: z.email(),

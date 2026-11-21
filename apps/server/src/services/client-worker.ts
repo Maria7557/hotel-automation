@@ -1,4 +1,6 @@
 import { AppError } from "../lib/errors.js";
+import { jobContext } from "../monitoring/scope.js";
+import { monitoredJob, jobOutcome, type Monitor } from "../monitoring/workflows.js";
 
 export interface ClientWorkerRepository {
   nextHotel(now: Date): Promise<string | null>;
@@ -9,7 +11,7 @@ export interface ClientWorkerRepository {
 export type ClientWorkerLogger = { error(fields: Record<string, unknown>, message: string): void; info(fields: Record<string, unknown>, message: string): void };
 
 export class ClientWorker {
-  constructor(private readonly repository: ClientWorkerRepository, private readonly logger: ClientWorkerLogger, private readonly batchSize = 25) {}
+  constructor(private readonly repository: ClientWorkerRepository, private readonly logger: ClientWorkerLogger, private readonly batchSize = 25, private readonly monitor?: Monitor | null) {}
 
   async processBatch(now = new Date()): Promise<number> {
     const hotelId = await this.repository.nextHotel(now);
@@ -17,15 +19,19 @@ export class ClientWorker {
     const ids = await this.repository.pending(hotelId, now, this.batchSize);
     let processed = 0;
     for (const inquiryId of ids) {
-      try {
-        await this.repository.syncInquiry(hotelId, inquiryId);
-        processed++;
-      } catch (error) {
-        const code = error instanceof AppError ? error.code : "CLIENT_SYNC_FAILED";
-        // No guest names or contact information in logs.
-        this.logger.error({ hotelId, inquiryId, code }, "Contact processing deferred");
-        await this.repository.recordFailure(hotelId, inquiryId, now, code).catch(() => undefined);
-      }
+      await monitoredJob(this.monitor, "contact.sync", { ...jobContext(null), companyId: hotelId, placement: "clientWorker.syncInquiry", attributes: { jobId: inquiryId } }, async () => {
+        try {
+          await this.repository.syncInquiry(hotelId, inquiryId);
+          processed++;
+          jobOutcome(this.monitor, "contact.sync", "completed");
+        } catch (error) {
+          const code = error instanceof AppError ? error.code : "CLIENT_SYNC_FAILED";
+          // No guest names or contact information in logs.
+          this.logger.error({ hotelId, inquiryId, code }, "Contact processing deferred");
+          await this.repository.recordFailure(hotelId, inquiryId, now, code).catch(() => undefined);
+          jobOutcome(this.monitor, "contact.sync", "retry", { failureCode: code, failedStep: "clientWorker.syncInquiry" });
+        }
+      });
     }
     this.logger.info({ hotelId, processed, attempted: ids.length }, "Contact batch completed");
     return processed;

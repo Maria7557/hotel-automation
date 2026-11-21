@@ -1,3 +1,6 @@
+import { RefreshControl, TextInput } from "../monitoring/controls";
+import { monitoredAction } from "../monitoring/actions";
+import { scopedApiClient } from "../api/client";
 import { t, translateLabel, getLanguage } from "../i18n";
 import { requestStatusDescriptions, requestStatusLabels } from "../requests/status";
 import { DASHBOARD_PAGE_SIZE, type DashboardQuery } from "@hotel/contracts";
@@ -6,7 +9,8 @@ import { actionStyles } from "@/components/actionStyles";
 import { PaymentLinkSentAction } from "@/components/PaymentLinkSentAction";
 import { Tooltip } from "@/components/Tooltip";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, FlatList, Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, FlatList, StyleSheet, Text, View } from "react-native";
+import { Pressable } from "@/monitoring/Pressable";
 import { AlertTriangle, ArrowDown, ArrowUp, BedDouble, Building2, Check, CheckCircle2, ChevronRight, Code2, Inbox, Mail, MessageCircle, Plus, Search, X } from "lucide-react-native";
 import { requestStatusAppearance, theme, type StatusColors } from "@hotel/design";
 import { apiClient } from "@/api/client";
@@ -66,7 +70,8 @@ export function RequestsScreen({ profile, demo, reloadVersion, onOpenProfile, on
   const scope: DashboardQuery["scope"] = viewMode === "actions" ? "actions" : "today";
   const status = viewMode === "actions" ? actionFilter : allFilter;
   const search = viewMode === "all" ? debouncedSearch : "";
-  const load = useCallback(async (refresh = false) => {
+  const load = useCallback(monitoredAction("action.RequestsScreen.load", "RequestsScreen.load", async (signalScope, refresh: boolean = false) => {
+    const apiClient = scopedApiClient(signalScope);
     const sequence = ++requestSequence.current;
     setListLoading(!refresh);
     setRefreshing(refresh);
@@ -74,7 +79,7 @@ export function RequestsScreen({ profile, demo, reloadVersion, onOpenProfile, on
     try {
       const nextDashboard = await apiClient.getDashboard({ demo, scope, status, search, sort, page, limit: DASHBOARD_PAGE_SIZE });
       if (sequence === requestSequence.current) setDashboard(nextDashboard);
-    } catch {
+    } catch { signalScope.fail(undefined);
       if (sequence === requestSequence.current) setError("Could not load requests. Check your connection and try again.");
     } finally {
       if (sequence === requestSequence.current) {
@@ -83,7 +88,7 @@ export function RequestsScreen({ profile, demo, reloadVersion, onOpenProfile, on
         setRefreshing(false);
       }
     }
-  }, [demo, scope, status, search, sort, page]);
+  }), [demo, scope, status, search, sort, page]);
   const latestLoad = useRef(load);
   latestLoad.current = load;
 
@@ -133,18 +138,19 @@ export function RequestsScreen({ profile, demo, reloadVersion, onOpenProfile, on
   const actionableCount = (dashboard?.newCount ?? 0) + (dashboard?.paymentPendingCount ?? 0) + (dashboard?.attentionCount ?? 0);
   const visibleRequests = listLoading || error ? [] : dashboard?.requests ?? [];
 
-  const markPaymentLinkSent = async (request: HotelRequest) => {
+  const markPaymentLinkSent = monitoredAction("action.RequestsScreen.markPaymentLinkSent", "RequestsScreen.markPaymentLinkSent", async (signalScope, request: HotelRequest) => {
+    const apiClient = scopedApiClient(signalScope);
     setBusyRequestId(request.id);
     setActionError(null);
     try {
       await apiClient.markPaymentLinkSent(request.id, { demo });
       await latestLoad.current(true);
-    } catch {
+    } catch { signalScope.fail(undefined);
       setActionError("Could not mark the payment link as sent. Try again.");
     } finally {
       setBusyRequestId(null);
     }
-  };
+  });
 
   const createForm = creating ? <ManualRequestModal demo={demo} onClose={() => setCreating(false)} onCreated={(result) => {
     setCreating(false);
@@ -159,7 +165,7 @@ export function RequestsScreen({ profile, demo, reloadVersion, onOpenProfile, on
   }} /> : null;
 
   if (loading) return <View style={[uiStyles.screen, styles.loading]} accessibilityLabel={t("Loading requests")}><ActivityIndicator color={theme.colors.action} size="large" /><Text style={styles.loadingText}>{t("Loading requests…")}</Text></View>;
-  if (!dashboard) return <View style={[uiStyles.screen, styles.errorState]}><EmptyState title={t("Requests unavailable")} description={error ?? t("Try loading again.")} /><Button onPress={() => void load()}>{t("Try again")}</Button></View>;
+  if (!dashboard) return <View style={[uiStyles.screen, styles.errorState]}><EmptyState title={t("Requests unavailable")} description={error ?? t("Try loading again.")} /><Button signalAction="ui.RequestsScreen.load.press" signalPlacement="RequestsScreen.load" onPress={() => void load()}>{t("Try again")}</Button></View>;
 
   const setupComplete = Boolean(profile.name && profile.city && profile.countryCode)
     && roomCount > 0
@@ -216,10 +222,10 @@ export function RequestsScreen({ profile, demo, reloadVersion, onOpenProfile, on
       {actionError ? <View style={styles.requestAlert}><InlineState tone="danger">{actionError}</InlineState></View> : null}
     </>}
     ListEmptyComponent={listLoading ? <View style={styles.listState}><ActivityIndicator accessibilityLabel={t("Loading requests")} color={theme.colors.action} /></View>
-      : error ? <View style={styles.listState}><InlineState tone="danger">{translateLabel(error)}</InlineState><Button variant="secondary" onPress={() => void load()}>{t("Try again")}</Button></View>
+      : error ? <View style={styles.listState}><InlineState tone="danger">{translateLabel(error)}</InlineState><Button signalAction="ui.RequestsScreen.load.press" signalPlacement="RequestsScreen.load" variant="secondary" onPress={() => void load()}>{t("Try again")}</Button></View>
       : viewMode === "actions" ? <ActionEmptyState filter={actionFilter} /> : <EmptyState title={t("No matching requests")} description={t("Try another filter or search.")} />}
     ListFooterComponent={!error ? <RequestPagination shownCount={visibleRequests.length} total={dashboard.pagination.total} page={dashboard.pagination.page} limit={dashboard.pagination.limit} loading={listLoading} onPage={setPage} /> : undefined}
-    refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void load(true)} tintColor={theme.colors.action} />}
+    refreshControl={<RefreshControl signalPlacement="RequestsScreen" refreshing={refreshing} onRefresh={() => void load(true)} tintColor={theme.colors.action} />}
     initialNumToRender={14}
     maxToRenderPerBatch={20}
     windowSize={8}
@@ -259,7 +265,7 @@ function SetupPath(props: {
     contentContainerStyle={styles.setupContent}
     data={steps}
     keyExtractor={(item) => item.title}
-    refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.colors.action} />}
+    refreshControl={<RefreshControl signalPlacement="RequestsScreen" refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.colors.action} />}
     ListHeaderComponent={<>
       <View style={styles.header}>
         <View style={styles.hotelAvatar}><Text style={styles.hotelAvatarText}>{profile.name.slice(0, 1).toUpperCase()}</Text></View>
@@ -281,7 +287,7 @@ function SetupPath(props: {
 }
 
 function SetupStep({ index, title, detail, complete, icon: Icon, onPress }: { index: number; title: string; detail: string; complete: boolean; icon: typeof Building2; onPress: () => void }) {
-  return <Pressable accessibilityRole="button" accessibilityLabel={`${index}. ${title}. ${complete ? t("Completed") : t(detail)}`} onPress={onPress} style={({ pressed }) => [styles.setupStep, pressed && styles.pressed]}>
+  return <Pressable signalAction="ui.SetupStep.onPress.press" signalPlacement="SetupStep.onPress" accessibilityRole="button" accessibilityLabel={`${index}. ${title}. ${complete ? t("Completed") : t(detail)}`} onPress={onPress} style={({ pressed }) => [styles.setupStep, pressed && styles.pressed]}>
     <View style={[styles.setupStepNumber, complete && styles.setupStepNumberComplete]}>{complete ? <Check size={18} color={theme.colors.onAction} strokeWidth={3} /> : <Text style={styles.setupStepNumberText}>{index}</Text>}</View>
     <View style={styles.setupStepIcon}><Icon size={20} color={complete ? theme.colors.success : theme.colors.action} /></View>
     <View style={styles.setupStepCopy}><Text style={styles.setupStepTitle}>{translateLabel(title)}</Text><Text style={styles.setupStepDetail}>{complete ? t("Completed") : t(detail)}</Text></View>
@@ -331,8 +337,8 @@ function DashboardHeader(props: {
       {searchQuery.trim() ? <Text style={styles.pageSubtitle}>{t("Searching requests from all dates.")}</Text> : null}
       <View style={styles.searchField}>
         <Search size={20} color={theme.colors.textMuted} />
-        <TextInput accessibilityLabel={t("Search requests by request number, guest, room or board")} value={searchQuery} onChangeText={setSearchQuery} maxLength={160} placeholder={t("Search #number, guest, room or board")} placeholderTextColor={theme.colors.textMuted} style={styles.searchInput} returnKeyType="search" />
-        {searchQuery ? <Pressable accessibilityRole="button" accessibilityLabel={t("Clear search")} onPress={() => setSearchQuery("")} style={styles.clearSearch}><X size={theme.controls.actionIconSize} color={theme.colors.textMuted} /></Pressable> : null}
+        <TextInput signalPlacement="RequestsScreen" accessibilityLabel={t("Search requests by request number, guest, room or board")} value={searchQuery} onChangeText={setSearchQuery} maxLength={160} placeholder={t("Search #number, guest, room or board")} placeholderTextColor={theme.colors.textMuted} style={styles.searchInput} returnKeyType="search" />
+        {searchQuery ? <Pressable signalAction="ui.DashboardHeader.setSearchQuery.press" signalPlacement="DashboardHeader.setSearchQuery" accessibilityRole="button" accessibilityLabel={t("Clear search")} onPress={() => setSearchQuery("")} style={styles.clearSearch}><X size={theme.controls.actionIconSize} color={theme.colors.textMuted} /></Pressable> : null}
       </View>
       <View style={styles.filters}>
         <FilterChip selected={allFilter === "all"} label={t("All")} description={t("All requests, regardless of their status.")} onPress={() => setAllFilter("all")} />
@@ -349,7 +355,7 @@ function DashboardHeader(props: {
         {(["asc", "desc"] as const).map((value) => {
           const Icon = value === "asc" ? ArrowUp : ArrowDown;
           const label = value === "asc" ? t("Oldest first") : t("Newest first");
-          return <Pressable key={value} accessibilityRole="button" accessibilityLabel={t("Time received: {{v0}}", { v0: label.toLowerCase() })} accessibilityState={{ selected: sort === value }} onPress={() => setSort(value)} style={({ pressed }) => [styles.sortButton, sort === value && styles.sortSelected, pressed && styles.pressed]}>
+          return <Pressable signalAction="ui.DashboardHeader.setSort.press" signalPlacement="DashboardHeader.setSort" key={value} accessibilityRole="button" accessibilityLabel={t("Time received: {{v0}}", { v0: label.toLowerCase() })} accessibilityState={{ selected: sort === value }} onPress={() => setSort(value)} style={({ pressed }) => [styles.sortButton, sort === value && styles.sortSelected, pressed && styles.pressed]}>
             <Icon size={theme.controls.helperIconSize} color={sort === value ? theme.colors.action : theme.colors.textMuted} />
             <Text style={[styles.shownCount, sort === value && styles.sortSelectedText]}>{translateLabel(label)}</Text>
           </Pressable>;
@@ -364,15 +370,15 @@ function RequestPagination({ shownCount, total, page, limit, loading, onPage }: 
   return <View style={styles.pagination}>
     <Text accessibilityLiveRegion="polite" style={styles.shownCount}>{loading ? t("Loading…") : t("{{v0}} out of {{v1}}", { v0: shownCount, v1: total })}</Text>
     <View style={styles.paginationControls}>
-      <View style={styles.paginationButton}><Button variant="secondary" disabled={loading || page <= 1} onPress={() => onPage(page - 1)}>{t("Previous")}</Button></View>
+      <View style={styles.paginationButton}><Button signalAction="ui.RequestPagination.onPage.press" signalPlacement="RequestPagination.onPage" variant="secondary" disabled={loading || page <= 1} onPress={() => onPage(page - 1)}>{t("Previous")}</Button></View>
       <Text style={styles.shownCount}>{t("Page")}{" "}{page} {" "}{t("of")}{" "}{pages}</Text>
-      <View style={styles.paginationButton}><Button variant="secondary" disabled={loading || page >= pages} onPress={() => onPage(page + 1)}>{t("Next")}</Button></View>
+      <View style={styles.paginationButton}><Button signalAction="ui.RequestPagination.onPage.press" signalPlacement="RequestPagination.onPage" variant="secondary" disabled={loading || page >= pages} onPress={() => onPage(page + 1)}>{t("Next")}</Button></View>
     </View>
   </View>;
 }
 
 function ModeButton({ selected, label, count, onPress }: { selected: boolean; label: string; count: number; onPress: () => void }) {
-  return <Pressable accessibilityRole="tab" accessibilityState={{ selected }} onPress={onPress} style={({ pressed }) => [styles.modeButton, selected && styles.modeButtonSelected, pressed && styles.pressed]}>
+  return <Pressable signalAction="ui.ModeButton.onPress.press" signalPlacement="ModeButton.onPress" accessibilityRole="tab" accessibilityState={{ selected }} onPress={onPress} style={({ pressed }) => [styles.modeButton, selected && styles.modeButtonSelected, pressed && styles.pressed]}>
     <Text style={[styles.modeLabel, selected && styles.modeLabelSelected]}>{translateLabel(label)}</Text>
     <View style={[styles.modeCount, selected && styles.modeCountSelected]}><Text style={[styles.modeCountText, selected && styles.modeCountTextSelected]}>{count}</Text></View>
   </Pressable>;
@@ -380,14 +386,14 @@ function ModeButton({ selected, label, count, onPress }: { selected: boolean; la
 
 function ActionMetric({ selected, appearance, icon: Icon, count, label, onPress }: { selected: boolean; appearance: StatusColors; icon: typeof CheckCircle2; count: number; label: string; onPress: () => void }) {
   const { color, backgroundColor: tint } = appearance;
-  return <Pressable accessibilityRole="button" accessibilityLabel={`${t(label)}: ${count}`} accessibilityState={{ selected }} onPress={onPress} style={({ pressed }) => [styles.actionMetric, selected && { borderColor: color, backgroundColor: tint }, pressed && styles.pressed]}>
+  return <Pressable signalAction="ui.ActionMetric.onPress.press" signalPlacement="ActionMetric.onPress" accessibilityRole="button" accessibilityLabel={`${t(label)}: ${count}`} accessibilityState={{ selected }} onPress={onPress} style={({ pressed }) => [styles.actionMetric, selected && { borderColor: color, backgroundColor: tint }, pressed && styles.pressed]}>
     <View style={styles.metricTop}><Icon size={20} color={color} /><Text style={[styles.metricCount, { color }]}>{count}</Text></View>
     <Text style={styles.metricLabel}>{translateLabel(label)}</Text>
   </Pressable>;
 }
 
 function NewRequestButton({ onPress }: { onPress: () => void }) {
-  return <Pressable accessibilityRole="button" accessibilityLabel={t("New request")} onPress={onPress} style={({ pressed }) => [styles.create, pressed && styles.pressed]}>
+  return <Pressable signalAction="ui.NewRequestButton.onPress.press" signalPlacement="NewRequestButton.onPress" accessibilityRole="button" accessibilityLabel={t("New request")} onPress={onPress} style={({ pressed }) => [styles.create, pressed && styles.pressed]}>
     <Plus size={theme.controls.actionIconSize} color={theme.colors.onAction} />
     <Text style={styles.createText}>{t("New request")}</Text>
   </Pressable>;
@@ -398,7 +404,7 @@ function ActionEmptyState({ filter }: { filter: ActionFilter }) {
 }
 
 function FilterChip({ selected, label, description, onPress, appearance = filterAppearance.all }: { selected: boolean; label: string; description: string; onPress: () => void; appearance?: FilterColors }) {
-  return <Tooltip content={translateLabel(description)}>{({ triggerProps, toggle }) => <Pressable
+  return <Tooltip content={translateLabel(description)}>{({ triggerProps, toggle }) => <Pressable signalAction="ui.FilterChip.onPress.press" signalPlacement="FilterChip.onPress"
     {...triggerProps}
     accessibilityRole="button"
     accessibilityState={{ selected }}

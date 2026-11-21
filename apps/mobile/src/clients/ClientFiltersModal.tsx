@@ -3,7 +3,8 @@ import { validationMessage } from "@hotel/i18n";
 
 
 import { useState } from "react";
-import { ActivityIndicator, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, KeyboardAvoidingView, Modal, Platform, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Pressable } from "@/monitoring/Pressable";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { BedDouble, CalendarDays, Check, ChevronDown, SlidersHorizontal, Users, X } from "lucide-react-native";
 import { clientFiltersSchema } from "@hotel/contracts/clients";
@@ -49,7 +50,7 @@ export function ClientFiltersModal({ filters, options, optionsLoading, optionsEr
       <KeyboardAvoidingView style={styles.keyboard} behavior={Platform.OS === "ios" ? "padding" : undefined}>
         <View style={styles.header}>
           <View style={styles.headerCopy}><SlidersHorizontal size={20} color={theme.colors.action} /><Text accessibilityRole="header" style={styles.title}>{t("Filter clients")}</Text></View>
-          <Pressable accessibilityRole="button" accessibilityLabel={t("Close filters")} onPress={onClose} style={actionStyles.iconButton}><X size={20} color={theme.colors.textMuted} /></Pressable>
+          <Pressable signalAction="ui.ClientFiltersModal.onClose.press" signalPlacement="ClientFiltersModal.onClose" accessibilityRole="button" accessibilityLabel={t("Close filters")} onPress={onClose} style={actionStyles.iconButton}><X size={20} color={theme.colors.textMuted} /></Pressable>
         </View>
         <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
           <Text style={styles.intro}>{t("Find contacts by their stay or contact details. Leave any field empty to include all.")}</Text>
@@ -60,7 +61,7 @@ export function ClientFiltersModal({ filters, options, optionsLoading, optionsEr
             {choice("status", t("Request status"), statusOptions)}
             <View style={styles.sectionTitle}><BedDouble size={18} color={theme.colors.textMuted} /><Text style={styles.label}>{t("Room & board")}</Text></View>
             {optionsLoading ? <View style={styles.loading}><ActivityIndicator color={theme.colors.action} /><Text style={styles.hint}>{t("Loading rooms and languages…")}</Text></View> : null}
-            {optionsError ? <><InlineState tone="danger">{t("Could not load rooms and languages.")}</InlineState><Button variant="tertiary" onPress={onRetryOptions}>{t("Retry filter options")}</Button></> : null}
+            {optionsError ? <><InlineState tone="danger">{t("Could not load rooms and languages.")}</InlineState><Button signalAction="ui.ClientFiltersModal.onRetryOptions.press" signalPlacement="ClientFiltersModal.onRetryOptions" variant="tertiary" onPress={onRetryOptions}>{t("Retry filter options")}</Button></> : null}
             {choice("roomId", t("Room category"), options.rooms.map((room) => ({ value: room.id, label: `${room.name}${room.archived ? t(" (archived)") : ""}` })))}
             {choice("mealPlan", t("Board basis"), boardOptions)}
             {countRange(t("Nights"), "minNights", "maxNights")}
@@ -84,7 +85,7 @@ export function ClientFiltersModal({ filters, options, optionsLoading, optionsEr
         </ScrollView>
         <View style={styles.footer}>
           {Object.keys(errors).length ? <Text accessibilityRole="alert" style={styles.error}>{t("Check the highlighted fields before applying.")}</Text> : null}
-          <View style={styles.row}><View style={styles.column}><Button variant="tertiary" onPress={() => { setDraft({}); setErrors({}); }}>{t("Reset filters")}</Button></View><View style={styles.column}><Button onPress={apply}>{t("Apply filters")}</Button></View></View>
+          <View style={styles.row}><View style={styles.column}><Button signalAction="ui.ClientFiltersModal.setDraft.press" signalPlacement="ClientFiltersModal.setDraft" variant="tertiary" onPress={() => { setDraft({}); setErrors({}); }}>{t("Reset filters")}</Button></View><View style={styles.column}><Button signalAction="ui.ClientFiltersModal.apply.press" signalPlacement="ClientFiltersModal.apply" onPress={apply}>{t("Apply filters")}</Button></View></View>
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView></View>
@@ -100,10 +101,10 @@ function ChoiceField({ label, value, options, onChange }: { label: string; value
   const items = [{ value: "", label: t("Any") }, ...options];
   return <View style={styles.choice}>
     <Text style={styles.label}>{translateLabel(label)}</Text>
-    <Pressable accessibilityRole="button" accessibilityLabel={`${label}: ${t(items.find((item) => item.value === value)?.label ?? value)}`} accessibilityState={{ expanded: open }} onPress={() => setOpen((current) => !current)} style={styles.select}>
+    <Pressable signalAction="ui.ChoiceField.setOpen.press" signalPlacement="ChoiceField.setOpen" accessibilityRole="button" accessibilityLabel={`${label}: ${t(items.find((item) => item.value === value)?.label ?? value)}`} accessibilityState={{ expanded: open }} onPress={() => setOpen((current) => !current)} style={styles.select}>
       <Text style={[styles.selectText, !value && styles.hint]}>{t(items.find((item) => item.value === value)?.label ?? value)}</Text><ChevronDown size={18} color={theme.colors.textMuted} />
     </Pressable>
-    {open ? <ScrollView nestedScrollEnabled style={styles.options} keyboardShouldPersistTaps="handled">{items.map((item) => <Pressable key={item.value} accessibilityRole="button" accessibilityState={{ selected: item.value === value }} accessibilityLabel={`${t(label)}: ${t(item.label)}`} onPress={() => { onChange(item.value); setOpen(false); }} style={[styles.option, item.value === value && styles.optionSelected]}>
+    {open ? <ScrollView nestedScrollEnabled style={styles.options} keyboardShouldPersistTaps="handled">{items.map((item) => <Pressable signalAction="ui.ChoiceField.onChange.press" signalPlacement="ChoiceField.onChange" key={item.value} accessibilityRole="button" accessibilityState={{ selected: item.value === value }} accessibilityLabel={`${t(label)}: ${t(item.label)}`} onPress={() => { onChange(item.value); setOpen(false); }} style={[styles.option, item.value === value && styles.optionSelected]}>
       <Text style={styles.selectText}>{translateLabel(item.label)}</Text>{item.value === value ? <Check size={18} color={theme.colors.action} /> : null}
     </Pressable>)}</ScrollView> : null}
   </View>;

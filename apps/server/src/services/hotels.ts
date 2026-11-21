@@ -1,5 +1,5 @@
 import { errors } from "../lib/errors.js";
-import type { HotelCreate, HotelRepository, HotelUpdate } from "../repositories/types.js";
+import type { HotelCreate, HotelIntakeUpdate, HotelRepository, HotelUpdate } from "../repositories/types.js";
 
 export class HotelService {
   constructor(private readonly repository: HotelRepository) {}
@@ -26,8 +26,8 @@ export class HotelService {
     return hotel;
   }
 
-  async updateIntakeSettings(userId: string, allowedOrigins: string[]) {
-    const hotel = await this.repository.updateIntakeSettingsForUser(userId, allowedOrigins);
+  async updateIntakeSettings(userId: string, settings: HotelIntakeUpdate) {
+    const hotel = await this.repository.updateIntakeSettingsForUser(userId, settings);
     if (!hotel) throw errors.hotelNotFound();
     return hotel;
   }

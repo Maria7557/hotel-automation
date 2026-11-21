@@ -15,7 +15,7 @@ import {
   varchar,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
-import type { OfferSettings } from "@hotel/contracts";
+import type { MessageTemplates, OfferSettings, TemplateLanguage } from "@hotel/contracts";
 
 const timestamps = {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -80,10 +80,19 @@ export const authSessions = pgTable(
   ],
 );
 
+export const passwordResetTokens = pgTable("password_reset_tokens", {
+  userId: uuid("user_id").primaryKey().references(() => users.id, { onDelete: "cascade" }),
+  tokenHash: varchar("token_hash", { length: 64 }).notNull().unique(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  requestedAt: timestamp("requested_at", { withTimezone: true }).notNull(),
+  consumedAt: timestamp("consumed_at", { withTimezone: true }),
+});
+
 export const hotels = pgTable("hotels", {
   id: uuid("id").primaryKey().defaultRandom(),
   publicKey: uuid("public_key").notNull().defaultRandom().unique(),
   allowedOrigins: jsonb("allowed_origins").$type<string[]>().notNull().default([]),
+  widgetCss: text("widget_css").notNull().default(""),
   name: varchar("name", { length: 120 }).notNull(),
   city: varchar("city", { length: 120 }).notNull(),
   countryCode: varchar("country_code", { length: 2 }).notNull().default("IT"),
@@ -105,8 +114,8 @@ export const hotelMessageSettings = pgTable("hotel_message_settings", {
   hotelId: uuid("hotel_id")
     .primaryKey()
     .references(() => hotels.id, { onDelete: "cascade" }),
-  templateLanguage: varchar("template_language", { length: 2 }).$type<"en" | "it">().notNull().default("it"),
-  translations: jsonb("translations").$type<Partial<Record<"en" | "it", { emailSubjectTemplate: string; emailBodyTemplate: string; whatsappBodyTemplate: string }>>>().notNull().default({}),
+  templateLanguage: varchar("template_language", { length: 2 }).$type<TemplateLanguage>().notNull().default("it"),
+  translations: jsonb("translations").$type<Partial<Record<TemplateLanguage, MessageTemplates>>>().notNull().default({}),
   emailSubjectTemplate: varchar("email_subject_template", { length: 160 }).notNull(),
   emailBodyTemplate: text("email_body_template").notNull(),
   whatsappBodyTemplate: text("whatsapp_body_template").notNull(),

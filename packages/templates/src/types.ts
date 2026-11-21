@@ -85,4 +85,5 @@ export type PageRenderContext = Readonly<{
   selectedOptionIndex?: number;
   testMode?: boolean;
   websiteUrl?: string | null;
+  monitoring?: { collectorOrigin: string };
 }>;

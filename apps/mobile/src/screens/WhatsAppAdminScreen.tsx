@@ -1,16 +1,11 @@
+import { RefreshControl, TextInput } from "../monitoring/controls";
+import { monitoredAction } from "../monitoring/actions";
+import { scopedApiClient } from "../api/client";
 import { locale as uiLocale, t, translateLabel, getLanguage } from "../i18n";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  ActivityIndicator,
-  Alert,
-  FlatList,
-  Pressable,
-  RefreshControl,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import { ActivityIndicator, FlatList, StyleSheet, Text, View } from "react-native";
+import { Alert } from "../monitoring/dialogs";
+import { Pressable } from "@/monitoring/Pressable";
 import {
   AlertTriangle,
   ChevronDown,
@@ -40,18 +35,19 @@ export function WhatsAppAdminScreen({ onBack }: { onBack?: () => void }) {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [restarting, setRestarting] = useState<string | null>(null);
 
-  const load = useCallback(async (refresh = false) => {
+  const load = useCallback(monitoredAction("action.WhatsAppAdminScreen.load", "WhatsAppAdminScreen.load", async (signalScope, refresh: boolean = false) => {
+    const apiClient = scopedApiClient(signalScope);
     refresh ? setRefreshing(true) : setLoading(true);
     setError(null);
     try {
       setSnapshot(await apiClient.getPlatformWhatsAppSessions());
-    } catch {
+    } catch { signalScope.fail(undefined);
       setError("Could not load WhatsApp diagnostics. Check the API and try again.");
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }), []);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -73,7 +69,8 @@ export function WhatsAppAdminScreen({ onBack }: { onBack?: () => void }) {
         { text: t("Cancel"), style: "cancel" },
         {
           text: t("Restart"),
-          onPress: () => void (async () => {
+          onPress: monitoredAction("action.WhatsAppAdminScreen.restart", "WhatsAppAdminScreen.restart", async (signalScope) => {
+            const apiClient = scopedApiClient(signalScope);
             setRestarting(session.hotelId);
             setError(null);
             try {
@@ -82,12 +79,12 @@ export function WhatsAppAdminScreen({ onBack }: { onBack?: () => void }) {
                 ...current,
                 sessions: current.sessions.map((item) => item.hotelId === updated.hotelId ? updated : item),
               } : current);
-            } catch {
+            } catch (error) { signalScope.fail(error);
               setError(t("Could not restart {{v0}}. The incident was recorded on the connection.", { v0: session.hotelName }));
             } finally {
               setRestarting(null);
             }
-          })(),
+          }),
         },
       ],
     );
@@ -97,7 +94,7 @@ export function WhatsAppAdminScreen({ onBack }: { onBack?: () => void }) {
     <View style={uiStyles.screen}>
       <View style={styles.topBar}>
         {onBack ? (
-          <Pressable accessibilityRole="button" accessibilityLabel={t("Back")} onPress={onBack} style={styles.backButton}>
+          <Pressable signalAction="ui.WhatsAppAdminScreen.onBack.press" signalPlacement="WhatsAppAdminScreen.onBack" accessibilityRole="button" accessibilityLabel={t("Back")} onPress={onBack} style={styles.backButton}>
             <ChevronLeft size={24} color={theme.colors.text} />
           </Pressable>
         ) : (
@@ -107,7 +104,7 @@ export function WhatsAppAdminScreen({ onBack }: { onBack?: () => void }) {
           <Text style={uiStyles.h2}>{t("WhatsApp support")}</Text>
           <Text style={uiStyles.caption}>{t("All hotel phones · live WAHA status")}</Text>
         </View>
-        <Pressable accessibilityRole="button" accessibilityLabel={t("Refresh")} onPress={() => void load(true)} style={styles.backButton}>
+        <Pressable signalAction="ui.WhatsAppAdminScreen.load.press" signalPlacement="WhatsAppAdminScreen.load" accessibilityRole="button" accessibilityLabel={t("Refresh")} onPress={() => void load(true)} style={styles.backButton}>
           <RefreshCw size={20} color={theme.colors.action} />
         </Pressable>
       </View>
@@ -118,7 +115,7 @@ export function WhatsAppAdminScreen({ onBack }: { onBack?: () => void }) {
         <FlatList
           data={sessions}
           keyExtractor={({ hotelId }) => hotelId}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void load(true)} tintColor={theme.colors.action} />}
+          refreshControl={<RefreshControl signalPlacement="WhatsAppAdminScreen" refreshing={refreshing} onRefresh={() => void load(true)} tintColor={theme.colors.action} />}
           contentContainerStyle={styles.content}
           ListHeaderComponent={
             <View style={styles.headerContent}>
@@ -128,7 +125,7 @@ export function WhatsAppAdminScreen({ onBack }: { onBack?: () => void }) {
               {snapshot ? <Summary snapshot={snapshot} /> : null}
               <View style={styles.searchWrap}>
                 <Search size={18} color={theme.colors.textMuted} />
-                <TextInput
+                <TextInput signalPlacement="WhatsAppAdminScreen"
                   value={query}
                   onChangeText={setQuery}
                   placeholder={t("Hotel, phone, email…")}
@@ -139,7 +136,7 @@ export function WhatsAppAdminScreen({ onBack }: { onBack?: () => void }) {
               </View>
               <View style={styles.filters}>
                 {(["all", "connected", "attention", "connecting", "disconnected"] as Filter[]).map((value) => (
-                  <Pressable key={value} onPress={() => setFilter(value)} style={[styles.filter, filter === value && styles.filterActive]}>
+                  <Pressable signalAction="ui.WhatsAppAdminScreen.setFilter.press" signalPlacement="WhatsAppAdminScreen.setFilter" key={value} onPress={() => setFilter(value)} style={[styles.filter, filter === value && styles.filterActive]}>
                     <Text style={[styles.filterText, filter === value && styles.filterTextActive]}>{filterLabel(value)}</Text>
                   </Pressable>
                 ))}
@@ -184,7 +181,7 @@ function SessionRow({ session, expanded, restarting, onToggle, onRestart }: {
   const StatusIcon = session.health === "connected" ? CircleCheck : session.health === "attention" ? AlertTriangle : Smartphone;
   return (
     <View style={styles.sessionCard}>
-      <Pressable onPress={onToggle} accessibilityRole="button" accessibilityState={{ expanded }} style={styles.sessionMain}>
+      <Pressable signalAction="ui.SessionRow.onToggle.press" signalPlacement="SessionRow.onToggle" onPress={onToggle} accessibilityRole="button" accessibilityState={{ expanded }} style={styles.sessionMain}>
         <View style={[styles.statusIcon, { backgroundColor: status.background }]}><StatusIcon size={20} color={status.color} /></View>
         <View style={{ flex: 1, minWidth: 0 }}>
           <View style={styles.hotelLine}><Text numberOfLines={1} style={styles.hotelName}>{session.hotelName}</Text><View style={[styles.statusPill, { backgroundColor: status.background }]}><Text style={[styles.statusText, { color: status.color }]}>{translateLabel(status.label)}</Text></View></View>
@@ -202,7 +199,7 @@ function SessionRow({ session, expanded, restarting, onToggle, onRestart }: {
           <Detail label={t("Last check")} value={formatWhen(session.lastCheckedAt)} />
           <Detail label={t("Last failed send")} value={formatWhen(session.lastFailedMessageAt)} />
           <Detail label={t("Last error")} value={session.lastErrorCode ?? t("None")} danger={Boolean(session.lastErrorCode)} />
-          {session.configured ? <Button variant="secondary" icon={RefreshCw} loading={restarting} onPress={onRestart}>{t("Restart session")}</Button> : <InlineState tone="warning">{t("The hotel must open Connections and scan its QR code")}</InlineState>}
+          {session.configured ? <Button signalAction="ui.SessionRow.onRestart.press" signalPlacement="SessionRow.onRestart" variant="secondary" icon={RefreshCw} loading={restarting} onPress={onRestart}>{t("Restart session")}</Button> : <InlineState tone="warning">{t("The hotel must open Connections and scan its QR code")}</InlineState>}
         </View>
       ) : null}
     </View>

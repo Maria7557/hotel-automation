@@ -1,3 +1,5 @@
+import { monitoredAction } from "../monitoring/actions";
+import { scopedApiClient } from "../api/client";
 import { t, translateLabel, getLanguage, locale } from "../i18n";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
@@ -7,12 +9,12 @@ import {
   KeyboardAvoidingView,
   Modal,
   Platform,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from "react-native";
+import { Pressable } from "@/monitoring/Pressable";
 import { ArrowLeft, Building2, Check, ChevronDown, Globe2, ImageIcon, MapPin, X } from "lucide-react-native";
 import { theme } from "@hotel/design";
 import { apiClient, authErrorMessage } from "@/api/client";
@@ -64,13 +66,14 @@ export function HotelProfileScreen({
     setTermsText(next.termsText);
   };
 
-  const load = async () => {
+  const load = monitoredAction("action.HotelProfileScreen.load", "HotelProfileScreen.load", async (signalScope) => {
+    const apiClient = scopedApiClient(signalScope);
     setLoading(true);
     setError(null);
     try { applyProfile(await apiClient.getHotel()); }
-    catch (nextError) { setError(authErrorMessage(nextError)); }
+    catch (nextError) { signalScope.fail(nextError); setError(authErrorMessage(nextError)); }
     finally { setLoading(false); }
-  };
+  });
 
   useEffect(() => {
     if (demo) {
@@ -93,7 +96,8 @@ export function HotelProfileScreen({
     locale.trim().length >= 2 && (!email.trim() || email.includes("@")) && !invalidLogo && !invalidWebsite &&
     !invalidPhoto && photoUrls.length <= 20;
 
-  const save = async () => {
+  const save = monitoredAction("action.HotelProfileScreen.save", "HotelProfileScreen.save", async (signalScope) => {
+    const apiClient = scopedApiClient(signalScope);
     setSubmitted(true);
     setError(null);
     if (!valid) return;
@@ -115,18 +119,18 @@ export function HotelProfileScreen({
       const next = demo ? { ...initialProfile, ...input } : await apiClient.updateHotel(input);
       applyProfile(next);
       onSaved(next);
-    } catch (nextError) {
+    } catch (nextError) { signalScope.fail(nextError);
       setError(authErrorMessage(nextError));
     } finally {
       setSaving(false);
     }
-  };
+  });
 
   return (
     <KeyboardAvoidingView style={uiStyles.screen} behavior={Platform.OS === "ios" ? "padding" : undefined}>
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
         <View style={styles.header}>
-          <Pressable accessibilityRole="button" accessibilityLabel={t("Back")} onPress={onBack} style={({ pressed }) => [styles.back, pressed && styles.pressed]}>
+          <Pressable signalAction="ui.HotelProfileScreen.onBack.press" signalPlacement="HotelProfileScreen.onBack" accessibilityRole="button" accessibilityLabel={t("Back")} onPress={onBack} style={({ pressed }) => [styles.back, pressed && styles.pressed]}>
             <ArrowLeft size={22} color={theme.colors.text} />
           </Pressable>
           <Text style={styles.headerTitle}>{t("Hotel profile")}</Text>
@@ -139,7 +143,7 @@ export function HotelProfileScreen({
           <View style={styles.loading} accessibilityLabel={t("Loading hotel profile")}>
             <ActivityIndicator size="large" color={theme.colors.action} />
             <Text style={styles.loadingText}>{t("Loading profile…")}</Text>
-            {error ? <Button variant="secondary" onPress={() => void load()}>{t("Try again")}</Button> : null}
+            {error ? <Button signalAction="ui.HotelProfileScreen.load.press" signalPlacement="HotelProfileScreen.load" variant="secondary" onPress={() => void load()}>{t("Try again")}</Button> : null}
           </View>
         ) : (
           <>
@@ -215,7 +219,7 @@ export function HotelProfileScreen({
               <Field label={t("Guest terms")} value={termsText} onChangeText={setTermsText} multiline numberOfLines={6} editable={!saving} style={styles.textArea} placeholder={t("Availability is confirmed by the hotel…")} />
             </View>
 
-            <Button onPress={() => void save()} loading={saving} icon={Check}>{t("Save profile")}</Button>
+            <Button signalAction="ui.HotelProfileScreen.save.press" signalPlacement="HotelProfileScreen.save" onPress={() => void save()} loading={saving} icon={Check}>{t("Save profile")}</Button>
           </>
         )}
       </ScrollView>
@@ -273,7 +277,7 @@ function SelectField({
   return (
     <View style={styles.selectWrap}>
       <Text style={styles.selectLabel}>{translateLabel(label)}</Text>
-      <Pressable
+      <Pressable signalAction="ui.SelectField.onPress.press" signalPlacement="SelectField.onPress"
         accessibilityRole="button"
         accessibilityLabel={`${label}: ${value}`}
         accessibilityState={{ disabled, expanded: false }}
@@ -310,14 +314,14 @@ function OptionModal({
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose} statusBarTranslucent>
       <View style={styles.modalRoot}>
-        <Pressable accessibilityRole="button" accessibilityLabel={t("Close selector")} onPress={onClose} style={StyleSheet.absoluteFill} />
+        <Pressable signalAction="ui.OptionModal.onClose.press" signalPlacement="OptionModal.onClose" accessibilityRole="button" accessibilityLabel={t("Close selector")} onPress={onClose} style={StyleSheet.absoluteFill} />
         <View style={styles.sheet}>
           <View style={styles.sheetHeader}>
             <View style={{ flex: 1 }}>
               <Text style={styles.sheetTitle}>{translateLabel(title)}</Text>
               <Text style={styles.sheetSubtitle}>{translateLabel(subtitle)}</Text>
             </View>
-            <Pressable accessibilityRole="button" accessibilityLabel={t("Close")} onPress={onClose} style={({ pressed }) => [styles.closeButton, pressed && styles.pressed]}>
+            <Pressable signalAction="ui.OptionModal.onClose.press" signalPlacement="OptionModal.onClose" accessibilityRole="button" accessibilityLabel={t("Close")} onPress={onClose} style={({ pressed }) => [styles.closeButton, pressed && styles.pressed]}>
               <X size={22} color={theme.colors.text} />
             </Pressable>
           </View>
@@ -325,7 +329,7 @@ function OptionModal({
             {options.map((option) => {
               const isSelected = option.value === selected;
               return (
-                <Pressable
+                <Pressable signalAction="ui.OptionModal.onSelect.press" signalPlacement="OptionModal.onSelect"
                   key={option.value}
                   accessibilityRole="button"
                   accessibilityState={{ selected: isSelected }}

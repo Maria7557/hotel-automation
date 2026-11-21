@@ -1,23 +1,26 @@
-import { t, translateLabel, getLanguage } from "../i18n";
+import { monitoredAction } from "../monitoring/actions";
+import { scopedApiClient } from "../api/client";
+import { t, translateLabel } from "../i18n";
 import { SelectField } from "../components/SelectField";
-import type { Language } from "@hotel/i18n";
+import { resolveMessageTemplates, type TemplateLanguage } from "@hotel/contracts";
+import { templateLanguageOptions } from "../i18n/template-languages";
 import type { MessageTemplates } from "../api/types";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Linking,
   Platform,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from "react-native";
+import { Pressable } from "@/monitoring/Pressable";
 import { ArrowLeft, Building2, Check, ExternalLink, Eye, Mail, MessageCircle, Send, Variable } from "lucide-react-native";
 import { theme } from "@hotel/design";
-import { apiClient, authErrorMessage } from "@/api/client";
+import { ApiError, apiClient, authErrorMessage } from "@/api/client";
 import { renderDemoMessagePreview } from "@/api/demo-message-preview";
 import type {
   MessageChannel,
@@ -38,13 +41,10 @@ const demoSettings: MessageSettings = {
 type ActiveTemplate = "subject" | "email" | "whatsapp";
 
 export function MessageSettingsScreen({ onBack, demo }: { onBack: () => void; demo: boolean }) {
-  const [templateLanguage, setTemplateLanguage] = useState<Language>("it");
-  const [variants, setVariants] = useState<Partial<Record<Language, MessageTemplates>>>({});
+  const [templateLanguage, setTemplateLanguage] = useState<TemplateLanguage>("it");
+  const [draft, setDraft] = useState<MessageSettingsInput | null>(null);
   const [settings, setSettings] = useState<MessageSettings | null>(null);
   const [saved, setSaved] = useState<MessageSettingsInput | null>(null);
-  const [subject, setSubject] = useState("");
-  const [emailBody, setEmailBody] = useState("");
-  const [whatsappBody, setWhatsappBody] = useState("");
   const [activeTemplate, setActiveTemplate] = useState<ActiveTemplate>("email");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -58,55 +58,71 @@ export function MessageSettingsScreen({ onBack, demo }: { onBack: () => void; de
   const [testResult, setTestResult] = useState<TestSendResult | null>(null);
   const [connectedWhatsappNumber, setConnectedWhatsappNumber] = useState<string | null>(null);
 
-  const applySettings = (next: MessageSettings) => {
+  const applySettings = (next: MessageSettings, resetLanguage = false) => {
     setSettings(next);
-    const all = { [next.templateLanguage ?? "it"]: messageTemplates(next), ...next.translations };
-    setVariants(all);
-    const selected = all[templateLanguage] ?? defaultTemplates(templateLanguage);
-    setSubject(selected.emailSubjectTemplate);
-    setEmailBody(selected.emailBodyTemplate);
-    setWhatsappBody(selected.whatsappBodyTemplate);
-    setSaved({ ...messageTemplates(selected), templateLanguage, translations: { ...all, [templateLanguage]: selected } });
+    const input = toInput(next);
+    setDraft(input);
+    setSaved(input);
+    if (resetLanguage) setTemplateLanguage(next.templateLanguage ?? "it");
   };
 
-  const load = async () => {
+  const load = monitoredAction("action.MessageSettingsScreen.load", "MessageSettingsScreen.load", async (signalScope) => {
+    const apiClient = scopedApiClient(signalScope);
     setLoading(true);
     setError(null);
     try {
       if (demo) {
-        applySettings(demoSettings);
+        applySettings(demoSettings, true);
         setConnectedWhatsappNumber(null);
       } else {
         const [nextSettings, connections] = await Promise.all([
           apiClient.getMessageSettings(),
           apiClient.getConnections().catch(() => []),
         ]);
-        applySettings(nextSettings);
+        applySettings(nextSettings, true);
         const whatsapp = connections.find((connection) => connection.kind === "waha");
         setConnectedWhatsappNumber(whatsapp?.phoneNumber ?? null);
       }
     }
-    catch (nextError) { setError(authErrorMessage(nextError)); }
+    catch (nextError) { signalScope.fail(nextError); setError(authErrorMessage(nextError)); }
     finally { setLoading(false); }
-  };
+  });
 
   useEffect(() => { void load(); }, [demo]);
-  useEffect(() => { setPreview(null); }, [subject, emailBody, whatsappBody, templateLanguage]);
 
-  const current = useMemo<MessageSettingsInput>(() => ({
-    emailSubjectTemplate: subject,
-    emailBodyTemplate: emailBody,
-    whatsappBodyTemplate: whatsappBody,
-    templateLanguage,
-    translations: { ...variants, [templateLanguage]: { emailSubjectTemplate: subject, emailBodyTemplate: emailBody, whatsappBodyTemplate: whatsappBody } },
-  }), [subject, emailBody, whatsappBody, variants, templateLanguage, getLanguage()]);
+  const current = draft ?? toInput(demoSettings);
+  const selected = resolveMessageTemplates(current, templateLanguage).templates;
+  const subject = selected.emailSubjectTemplate;
+  const emailBody = selected.emailBodyTemplate;
+  const whatsappBody = selected.whatsappBodyTemplate;
+  useEffect(() => { setPreview(null); }, [subject, emailBody, whatsappBody, templateLanguage]);
+  const languageOptions = templateLanguageOptions();
+  const updateTemplates = (changes: Partial<MessageTemplates>) => {
+    setDraft((previous) => {
+      if (!previous) return previous;
+      const next = { ...messageTemplates(resolveMessageTemplates(previous, templateLanguage).templates), ...changes };
+      return {
+        ...previous,
+        ...(templateLanguage === (previous.templateLanguage ?? "it") ? next : {}),
+        translations: { ...previous.translations, [templateLanguage]: next },
+      };
+    });
+    setPreview(null);
+    setTestResult(null);
+  };
+  const setSubject = (value: string) => updateTemplates({ emailSubjectTemplate: value });
+  const setEmailBody = (value: string) => updateTemplates({ emailBodyTemplate: value });
+  const setWhatsappBody = (value: string) => updateTemplates({ whatsappBodyTemplate: value });
   const dirty = saved ? JSON.stringify(current) !== JSON.stringify(saved) : false;
-  const valid = subject.trim().length > 0 && !/[\r\n]/.test(subject) && emailBody.trim().length > 0 && whatsappBody.trim().length > 0;
+  const valid = [current, ...Object.values(current.translations ?? {})].every((templates) =>
+    templates.emailSubjectTemplate.trim().length > 0 && !/[\r\n]/.test(templates.emailSubjectTemplate)
+    && templates.emailBodyTemplate.trim().length > 0 && templates.whatsappBodyTemplate.trim().length > 0);
   const recipientIsConnectedWhatsapp = testChannel === "whatsapp"
     && connectedWhatsappNumber !== null
     && phoneDigits(recipient) === phoneDigits(connectedWhatsappNumber);
 
-  const save = async () => {
+  const save = monitoredAction("action.MessageSettingsScreen.save", "MessageSettingsScreen.save", async (signalScope) => {
+    const apiClient = scopedApiClient(signalScope);
     setError(null);
     setNotice(null);
     if (!valid) { setError("Complete all three templates. The email subject must be a single line."); return; }
@@ -122,21 +138,23 @@ export function MessageSettingsScreen({ onBack, demo }: { onBack: () => void; de
       }
       setPreview(null);
       setTestResult(null);
-    } catch (nextError) { setError(authErrorMessage(nextError)); }
+    } catch (nextError) { signalScope.fail(nextError); setError(authErrorMessage(nextError)); }
     finally { setSaving(false); }
-  };
+  });
 
-  const showPreview = async (channel: MessageChannel) => {
+  const showPreview = monitoredAction("action.MessageSettingsScreen.showPreview", "MessageSettingsScreen.showPreview", async (signalScope, channel: MessageChannel) => {
+    const apiClient = scopedApiClient(signalScope);
     setError(null);
     setNotice(null);
     setPreviewing(channel);
     try {
-      setPreview(demo || dirty ? renderDemoPreview(channel, current) : await apiClient.previewMessage(channel, templateLanguage));
-    } catch (nextError) { setError(authErrorMessage(nextError)); }
+      setPreview(demo || dirty ? renderDemoPreview(channel, current, templateLanguage) : await apiClient.previewMessage(channel, templateLanguage));
+    } catch (nextError) { signalScope.fail(nextError); setError(authErrorMessage(nextError)); }
     finally { setPreviewing(null); }
-  };
+  });
 
-  const sendTest = async () => {
+  const sendTest = monitoredAction("action.MessageSettingsScreen.sendTest", "MessageSettingsScreen.sendTest", async (signalScope) => {
+    const apiClient = scopedApiClient(signalScope);
     setError(null);
     setNotice(null);
     setTestResult(null);
@@ -152,19 +170,20 @@ export function MessageSettingsScreen({ onBack, demo }: { onBack: () => void; de
     setTesting(true);
     try {
       if (demo) {
-        setTestResult(fakeDemoResult(testChannel, recipient, current));
+        setTestResult(fakeDemoResult(testChannel, recipient, current, templateLanguage));
       } else {
         setTestResult(await apiClient.testMessage(testChannel, recipient.trim(), templateLanguage));
       }
-    } catch (nextError) { setError(authErrorMessage(nextError)); }
+    } catch (nextError) { signalScope.fail(nextError); setError(authErrorMessage(nextError)); }
     finally { setTesting(false); }
-  };
+  });
 
   const insertVariable = (variable: string) => {
     const token = `{{${variable}}}`;
-    if (activeTemplate === "subject") setSubject((value) => `${value}${value.endsWith(" ") || !value ? "" : " "}${token}`);
-    if (activeTemplate === "email") setEmailBody((value) => `${value}${value.endsWith(" ") || value.endsWith("\n") || !value ? "" : " "}${token}`);
-    if (activeTemplate === "whatsapp") setWhatsappBody((value) => `${value}${value.endsWith(" ") || !value ? "" : " "}${token}`);
+    const append = (value: string) => `${value}${/\s$/.test(value) || !value ? "" : " "}${token}`;
+    if (activeTemplate === "subject") setSubject(append(subject));
+    if (activeTemplate === "email") setEmailBody(append(emailBody));
+    if (activeTemplate === "whatsapp") setWhatsappBody(append(whatsappBody));
   };
 
   return (
@@ -172,22 +191,29 @@ export function MessageSettingsScreen({ onBack, demo }: { onBack: () => void; de
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
         <ScreenHeader title={t("Message templates")} onBack={onBack} />
         <Text style={styles.lead}>{t("Customise the text guests receive with their offer link.")}</Text>
-        {settings && !Object.keys(settings.translations ?? {}).length ? <View style={{ gap: 8 }}>
-          <Text style={uiStyles.body}>{t("Existing templates are preserved. Choose their language; the other language uses built-in messages until you save a translation.")}</Text>
-          <SelectField label={t("Legacy template language")} value={settings.templateLanguage ?? "it"} options={[{ value: "it", label: t("Italian") }, { value: "en", label: t("English") }]} onChange={(value) => {
-            const language = value as Language;
-            const original = messageTemplates(settings);
-            setSettings({ ...settings, templateLanguage: language, translations: { [language]: original } });
-            setVariants({ [language]: original }); setTemplateLanguage(language);
-            setSubject(original.emailSubjectTemplate); setEmailBody(original.emailBodyTemplate); setWhatsappBody(original.whatsappBodyTemplate);
+        {settings ? <View style={{ gap: 8 }}>
+          <Text style={uiStyles.body}>{t("Missing translations use the Legacy template language.")}</Text>
+          <SelectField label={t("Legacy template language")} value={current.templateLanguage ?? "it"} options={languageOptions} onChange={(value) => {
+            const language = value as TemplateLanguage;
+            setDraft((previous) => {
+              if (!previous || language === (previous.templateLanguage ?? "it")) return previous;
+              const previousLanguage = previous.templateLanguage ?? "it";
+              return {
+                ...previous,
+                ...messageTemplates(resolveMessageTemplates(previous, language).templates),
+                templateLanguage: language,
+                translations: {
+                  ...previous.translations,
+                  [previousLanguage]: messageTemplates(resolveMessageTemplates(previous, previousLanguage).templates),
+                },
+              };
+            });
+            setTemplateLanguage(language);
             setPreview(null); setTestResult(null);
           }} disabled={loading || saving || testing} />
         </View> : null}
-        <SelectField label={t("Template language")} value={templateLanguage} options={[{ value: "en", label: t("English templates") }, { value: "it", label: t("Italian templates") }]} onChange={(value) => {
-          const language = value as Language;
-          setVariants((previous) => ({ ...previous, [templateLanguage]: { emailSubjectTemplate: subject, emailBodyTemplate: emailBody, whatsappBodyTemplate: whatsappBody } }));
-          const next = variants[language] ?? defaultTemplates(language);
-          setTemplateLanguage(language); setSubject(next.emailSubjectTemplate); setEmailBody(next.emailBodyTemplate); setWhatsappBody(next.whatsappBodyTemplate);
+        <SelectField label={t("Template language")} value={templateLanguage} options={languageOptions} onChange={(value) => {
+          setTemplateLanguage(value as TemplateLanguage);
           setPreview(null); setTestResult(null);
         }} disabled={loading || saving || testing} />
         <Text style={uiStyles.body}>{t("Edit each language separately. Guest language determines which version is sent.")}</Text>
@@ -198,7 +224,7 @@ export function MessageSettingsScreen({ onBack, demo }: { onBack: () => void; de
         {loading ? (
           <View style={styles.loading}><ActivityIndicator size="large" color={theme.colors.action} /><Text style={styles.loadingText}>{t("Loading templates…")}</Text></View>
         ) : !settings ? (
-          <View style={styles.loadFailure}><Mail size={28} color={theme.colors.textMuted} /><Text style={styles.loadFailureTitle}>{t("Templates were not loaded")}</Text><Text style={styles.loadFailureText}>{t("Try again. Real errors are not replaced with demo data.")}</Text><Button variant="secondary" onPress={() => void load()}>{t("Try again")}</Button></View>
+          <View style={styles.loadFailure}><Mail size={28} color={theme.colors.textMuted} /><Text style={styles.loadFailureTitle}>{t("Templates were not loaded")}</Text><Text style={styles.loadFailureText}>{t("Try again. Real errors are not replaced with demo data.")}</Text><Button signalAction="ui.MessageSettingsScreen.load.press" signalPlacement="MessageSettingsScreen.load" variant="secondary" onPress={() => void load()}>{t("Try again")}</Button></View>
         ) : (
           <>
             <View style={styles.section}>
@@ -206,7 +232,7 @@ export function MessageSettingsScreen({ onBack, demo }: { onBack: () => void; de
               <Text style={styles.helper}>{t("Tap a variable to add it to the last selected field.")}</Text>
               <View style={styles.variables}>
                 {settings.allowedVariables.map((variable) => (
-                  <Pressable key={variable} accessibilityRole="button" onPress={() => insertVariable(variable)} style={({ pressed }) => [styles.variable, pressed && styles.pressed]}>
+                  <Pressable signalAction="ui.MessageSettingsScreen.insertVariable.press" signalPlacement="MessageSettingsScreen.insertVariable" key={variable} accessibilityRole="button" onPress={() => insertVariable(variable)} style={({ pressed }) => [styles.variable, pressed && styles.pressed]}>
                     <Variable size={14} color={theme.colors.action} /><Text style={styles.variableText}>{`{{${variable}}}`}</Text>
                   </Pressable>
                 ))}
@@ -224,14 +250,14 @@ export function MessageSettingsScreen({ onBack, demo }: { onBack: () => void; de
               <Field label={t("WhatsApp message")} value={whatsappBody} onChangeText={setWhatsappBody} onFocus={() => setActiveTemplate("whatsapp")} editable={!saving} multiline numberOfLines={6} maxLength={2000} style={styles.textArea} />
             </View>
 
-            <Button onPress={() => void save()} loading={saving} disabled={!dirty} icon={Check}>{dirty ? t("Save templates") : t("Templates saved")}</Button>
+            <Button signalAction="ui.MessageSettingsScreen.save.press" signalPlacement="MessageSettingsScreen.save" onPress={() => void save()} loading={saving} disabled={!dirty} icon={Check}>{dirty ? t("Save templates") : t("Templates saved")}</Button>
 
             <View style={styles.section}>
               <SectionTitle>{t("Preview")}</SectionTitle>
               {dirty && !demo ? <InlineState tone="warning">{t("This is a draft preview with sample guest data. Save when you are ready.")}</InlineState> : null}
               <View style={styles.actionRow}>
-                <View style={styles.actionHalf}><Button variant="secondary" icon={Mail} loading={previewing === "email"} onPress={() => void showPreview("email")}>{t("Preview email")}</Button></View>
-                <View style={styles.actionHalf}><Button variant="secondary" icon={MessageCircle} loading={previewing === "whatsapp"} onPress={() => void showPreview("whatsapp")}>{t("Preview WhatsApp")}</Button></View>
+                <View style={styles.actionHalf}><Button signalAction="ui.MessageSettingsScreen.showPreview.press" signalPlacement="MessageSettingsScreen.showPreview" variant="secondary" icon={Mail} loading={previewing === "email"} onPress={() => void showPreview("email")}>{t("Preview email")}</Button></View>
+                <View style={styles.actionHalf}><Button signalAction="ui.MessageSettingsScreen.showPreview.press" signalPlacement="MessageSettingsScreen.showPreview" variant="secondary" icon={MessageCircle} loading={previewing === "whatsapp"} onPress={() => void showPreview("whatsapp")}>{t("Preview WhatsApp")}</Button></View>
               </View>
               {preview ? <PreviewCard preview={preview} /> : null}
             </View>
@@ -249,7 +275,7 @@ export function MessageSettingsScreen({ onBack, demo }: { onBack: () => void; de
                 editable={!testing}
                 error={recipientIsConnectedWhatsapp ? t("This is the connected hotel WhatsApp number. Enter a different recipient.") : undefined}
               />
-              <Button variant="secondary" icon={Send} onPress={() => void sendTest()} loading={testing} disabled={(dirty && !demo) || recipientIsConnectedWhatsapp}>{t("Send test")}</Button>
+              <Button signalAction="ui.MessageSettingsScreen.sendTest.press" signalPlacement="MessageSettingsScreen.sendTest" variant="secondary" icon={Send} onPress={() => void sendTest()} loading={testing} disabled={(dirty && !demo) || recipientIsConnectedWhatsapp}>{t("Send test")}</Button>
               <Text style={styles.helper}>{t("With a verified connection, the test is sent through Gmail or WAHA. Without one, a clearly labelled fake record is created and nothing is sent externally.")}</Text>
               {testResult ? <TestResultCard result={testResult} /> : null}
             </View>
@@ -293,27 +319,28 @@ function TestResultCard({ result }: { result: TestSendResult }) {
 
 function OfferLinkCard({ offer }: { offer: MessagePreview["offer"] }) {
   const [linkError, setLinkError] = useState<string | null>(null);
-  const openOffer = async () => {
+  const openOffer = monitoredAction("action.OfferLinkCard.openOffer", "OfferLinkCard.openOffer", async (signalScope) => {
+    const apiClient = scopedApiClient(signalScope);
     setLinkError(null);
     try { await Linking.openURL(offer.url); }
-    catch { setLinkError("Could not open the offer. Please try again."); }
-  };
+    catch { signalScope.fail(undefined); setLinkError("Could not open the offer. Please try again."); }
+  });
   return <View style={styles.offerContext}>
     <Text style={styles.offerContextEyebrow}>{t("Guest offer page preview")}</Text>
     <View style={styles.offerContextHeading}><Building2 size={17} color={theme.colors.action} /><Text style={styles.offerContextTitle}>{offer.hotelName}</Text></View>
     <Text style={styles.offerContextMeta}>{offer.checkIn} → {offer.checkOut}</Text>
     <Text style={styles.offerContextMeta}>{offer.roomNames.length > 0 ? offer.roomNames.join(" · ") : t("No priced rooms are available for this test period")}</Text>
-    <Button variant="secondary" icon={ExternalLink} onPress={() => void openOffer()}>{t("Preview the page guests open")}</Button>
+    <Button signalAction="ui.OfferLinkCard.openOffer.press" signalPlacement="OfferLinkCard.openOffer" variant="secondary" icon={ExternalLink} onPress={() => void openOffer()}>{t("Preview the page guests open")}</Button>
     {linkError ? <InlineState tone="danger">{linkError}</InlineState> : null}
   </View>;
 }
 
 function ChannelChoice({ selected, onSelect }: { selected: MessageChannel; onSelect: (channel: MessageChannel) => void }) {
-  return <View style={styles.channelChoice}>{(["email", "whatsapp"] as const).map((channel) => <Pressable key={channel} accessibilityRole="button" accessibilityState={{ selected: selected === channel }} onPress={() => onSelect(channel)} style={[styles.channelButton, selected === channel && styles.channelButtonSelected]}><Text style={[styles.channelButtonText, selected === channel && styles.channelButtonTextSelected]}>{channel === "email" ? t("Email") : "WhatsApp"}</Text></Pressable>)}</View>;
+  return <View style={styles.channelChoice}>{(["email", "whatsapp"] as const).map((channel) => <Pressable signalAction="ui.ChannelChoice.onSelect.press" signalPlacement="ChannelChoice.onSelect" key={channel} accessibilityRole="button" accessibilityState={{ selected: selected === channel }} onPress={() => onSelect(channel)} style={[styles.channelButton, selected === channel && styles.channelButtonSelected]}><Text style={[styles.channelButtonText, selected === channel && styles.channelButtonTextSelected]}>{channel === "email" ? t("Email") : "WhatsApp"}</Text></Pressable>)}</View>;
 }
 
 function ScreenHeader({ title, onBack }: { title: string; onBack: () => void }) {
-  return <View style={styles.header}><Pressable accessibilityRole="button" accessibilityLabel={t("Back")} onPress={onBack} style={({ pressed }) => [styles.back, pressed && styles.pressed]}><ArrowLeft size={22} color={theme.colors.text} /></Pressable><Text style={styles.headerTitle}>{translateLabel(title)}</Text><View style={{ width: 44 }} /></View>;
+  return <View style={styles.header}><Pressable signalAction="ui.ScreenHeader.onBack.press" signalPlacement="ScreenHeader.onBack" accessibilityRole="button" accessibilityLabel={t("Back")} onPress={onBack} style={({ pressed }) => [styles.back, pressed && styles.pressed]}><ArrowLeft size={22} color={theme.colors.text} /></Pressable><Text style={styles.headerTitle}>{translateLabel(title)}</Text><View style={{ width: 44 }} /></View>;
 }
 
 function toInput(settings: MessageSettings): MessageSettingsInput {
@@ -324,13 +351,14 @@ function phoneDigits(value: string): string {
   return value.replace(/\D/g, "");
 }
 
-function renderDemoPreview(channel: MessageChannel, settings: MessageSettingsInput): MessagePreview {
-  const origin = Platform.OS === "web" && typeof window !== "undefined" ? window.location.origin : process.env.EXPO_PUBLIC_API_URL ?? "https://ospio.online";
-  return renderDemoMessagePreview(channel, settings, origin);
+function renderDemoPreview(channel: MessageChannel, settings: MessageSettingsInput, language: TemplateLanguage): MessagePreview {
+  const origin = Platform.OS === "web" ? window.location.origin : process.env.EXPO_PUBLIC_API_URL;
+  if (!origin) throw new ApiError("API_NOT_CONFIGURED", t("Set EXPO_PUBLIC_API_URL to open the demo offer preview."));
+  return renderDemoMessagePreview(channel, settings, origin, language);
 }
 
-function fakeDemoResult(channel: MessageChannel, recipient: string, settings: MessageSettingsInput): TestSendResult {
-  return { provider: "fake", accepted: false, delivery: { id: "demo", channel, state: "unknown", recipient, lastErrorCode: "FAKE_PROVIDER", createdAt: new Date().toISOString() }, rendered: renderDemoPreview(channel, settings) };
+function fakeDemoResult(channel: MessageChannel, recipient: string, settings: MessageSettingsInput, language: TemplateLanguage): TestSendResult {
+  return { provider: "fake", accepted: false, delivery: { id: "demo", channel, state: "unknown", recipient, lastErrorCode: "FAKE_PROVIDER", createdAt: new Date().toISOString() }, rendered: renderDemoPreview(channel, settings, language) };
 }
 
 const styles = StyleSheet.create({
@@ -377,10 +405,3 @@ const styles = StyleSheet.create({
 });
 
 function messageTemplates(settings: MessageTemplates): MessageTemplates { return { emailSubjectTemplate: settings.emailSubjectTemplate, emailBodyTemplate: settings.emailBodyTemplate, whatsappBodyTemplate: settings.whatsappBodyTemplate }; }
-function defaultTemplates(language: Language): MessageTemplates {
-  return language === "it" ? messageTemplates(demoSettings) : {
-    emailSubjectTemplate: "Your offer from {{hotel_name}}",
-    emailBodyTemplate: "Hello {{guest_name}},\n\nYour offer for {{check_in}} to {{check_out}} is ready.\nTotal: {{total}}\n\n{{offer_url}}",
-    whatsappBodyTemplate: "Hello {{guest_name}}, your offer from {{hotel_name}} is ready: {{offer_url}}",
-  };
-}

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { mealPlanSchema } from "@hotel/contracts";
+import { mealPlanSchema, templateLanguages } from "@hotel/contracts";
 
 export const allowedMessageVariables = [
   "guest_name",
@@ -44,12 +44,12 @@ const templatesSchema = z.object({
 });
 
 export const messageSettingsInputSchema = templatesSchema.extend({
-  templateLanguage: z.enum(["en", "it"]).optional(),
-  translations: z.partialRecord(z.enum(["en", "it"]), templatesSchema).optional(),
+  templateLanguage: z.enum(templateLanguages).optional(),
+  translations: z.partialRecord(z.enum(templateLanguages), templatesSchema).optional(),
 });
 
 export const previewSampleSchema = z.object({
-  language: z.enum(["en", "it"]).optional(),
+  language: z.enum(templateLanguages).optional(),
   guestName: z.string().trim().min(1).max(160).default("Mario Rossi"),
   checkIn: z.iso.date().default("2027-06-10"),
   checkOut: z.iso.date().default("2027-06-12"),

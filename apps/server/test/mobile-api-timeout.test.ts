@@ -3,6 +3,7 @@ import { requestJson, RequestTimeoutError } from "../../mobile/src/api/request-j
 
 vi.mock("react-native", () => ({ Platform: { OS: "web" } }));
 vi.mock("expo-secure-store", () => ({}));
+vi.mock("../../mobile/src/monitoring", () => ({ monitor: null }));
 
 const pending = () => new Promise<never>(() => {});
 let fetchMock: ReturnType<typeof vi.fn<typeof fetch>>;

@@ -40,11 +40,12 @@ export const demoOfferSnapshot: OfferSnapshot = {
   ],
 };
 
-export function renderDemoOfferPage(accepted = false, selectedOptionIndex = 0, language: "en" | "it" = "it"): string {
+export function renderDemoOfferPage(accepted = false, selectedOptionIndex = 0, language: "en" | "it" = "it", monitoring?: { collectorOrigin: string }): string {
   const snapshot: OfferSnapshot = language === "it" ? demoOfferSnapshot : { ...demoOfferSnapshot, guestSnapshot: { ...demoOfferSnapshot.guestSnapshot, language }, options: demoOfferSnapshot.options.map((option, index) => ({ ...option, planName: "Flexible rate", roomSnapshot: { ...option.roomSnapshot, description: index === 0 ? "Bright room with a double bed and seating area." : "Spacious suite with a living area and balcony.", amenities: index === 0 ? ["Wi-Fi", "Air conditioning"] : ["Wi-Fi", "Minibar", "Balcony"] } })) };
   return renderPublicOfferPage(snapshot, {
     locale: language,
     state: accepted ? "accepted" : "active", selectedOptionIndex,
     acceptActionPath: `${DEMO_OFFER_PATH}/accept`, testMode: true,
+    ...(monitoring ? { monitoring } : {}),
   });
 }

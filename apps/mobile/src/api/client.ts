@@ -1,6 +1,13 @@
+import type { ActionScope } from "@hotel/monitoring/actions";
+import { refreshActionContext } from "@hotel/monitoring/actions";
+import { actions } from "../monitoring/actions";
+import { observe } from "@hotel/monitoring";
+import { traceRequest } from "@hotel/monitoring/request";
+import { monitor } from "../monitoring";
+import { identifyMonitoringUser, identifyMonitoringHotel, clearMonitoringUser, monitoringIdentity as captureMonitoringIdentity } from "../monitoring/identity";
 import { locale as uiLocale, getLanguage, t } from "../i18n";
 import { requestLabel } from "../requests/status";
-import { AUTOMATIC_SENDING_TIMEOUT_MS, AUTOMATIC_SENDING_TIMEOUT_REASON } from "@hotel/contracts";
+import { AUTOMATIC_SENDING_TIMEOUT_MS, AUTOMATIC_SENDING_TIMEOUT_REASON, type TemplateLanguage } from "@hotel/contracts";
 import { DASHBOARD_PAGE_SIZE, OFFER_VALIDITY_MS, dashboardQuerySchema, dashboardIncludesRequest, type DashboardQuery, type InquiryFormInput, type OfferEditorData, type OfferQuote, type OfferSettings, type ReservationOffer, type SendReservationOffersInput } from "@hotel/contracts";
 import { demoOfferEditor, getDemoOfferSettings, prefillDemoOffers, quoteDemoOffer, saveDemoOfferSettings } from "./demo-offers";
 import { demoOfferSnapshot } from "@hotel/templates";
@@ -66,6 +73,7 @@ type ApiHotel = {
   termsText?: string | null;
   publicKey?: string;
   allowedOrigins?: string[];
+  widgetCss?: string;
 };
 
 type ApiDeliveryState = NonNullable<DeliverySummary["state"]>;
@@ -92,6 +100,7 @@ type ApiDashboard = {
     checkIn: string;
     checkOut: string;
     occupancy: { adults: number; childAges: number[] };
+    details?: import("@hotel/contracts").EnquiryDetails | null;
     offerSummary: { roomName: string; totalCents: number; currency: string } | null;
     currentOfferId?: string | null;
     offers?: ReservationOffer[];
@@ -153,55 +162,61 @@ async function clearToken(): Promise<void> {
   await SecureStore.deleteItemAsync(sessionTokenKey);
 }
 
-async function apiRequest<T>(
+async function performApiRequest<T>(
   path: string,
   options: RequestInit & { timeoutMs?: number } = {},
   token?: string | null,
   clearUnauthorized = true,
+  signalScope?: ActionScope,
 ): Promise<T> {
   const baseUrl = requireApiUrl();
-  const headers = new Headers(options.headers);
-  headers.set("Accept", "application/json");
-  headers.set("Accept-Language", getLanguage());
-  if (options.body) headers.set("Content-Type", "application/json");
-  if (token && token !== webCookieSession) headers.set("Authorization", `Bearer ${token}`);
+  const monitoringIdentity = captureMonitoringIdentity();
+  return traceRequest(monitor, path, (options.method ?? "GET").toUpperCase(), Platform.OS === "web" && typeof window !== "undefined" ? window.location.origin : "", async (signalHeaders, received) => {
+    const headers = new Headers(options.headers);
+    for (const [name, value] of Object.entries(signalHeaders)) headers.set(name, value);
+    headers.set("Accept", "application/json");
+    headers.set("Accept-Language", getLanguage());
+    if (options.body) headers.set("Content-Type", "application/json");
+    if (token && token !== webCookieSession) headers.set("Authorization", `Bearer ${token}`);
 
-  let response: Response;
-  let payload: unknown;
-  const { timeoutMs, ...requestOptions } = options;
-  try {
-    const result = await requestJson(`${baseUrl}${path}`, {
-      ...requestOptions,
-      headers,
-      ...(Platform.OS === "web" ? { credentials: "include" as const } : {}),
-    }, timeoutMs);
-    response = result.response;
-    payload = result.body;
-  } catch (error) {
-    if (error instanceof RequestTimeoutError) {
-      const readOnly = ["GET", "HEAD", "OPTIONS"].includes((options.method ?? "GET").toUpperCase());
-      throw new ApiError("REQUEST_TIMEOUT", readOnly ? error.message
-        : "The server took too long to respond. The action may still complete. Refresh before trying again.");
+    let response: Response;
+    let payload: unknown;
+    const { timeoutMs, ...requestOptions } = options;
+    try {
+      const result = await requestJson(`${baseUrl}${path}`, {
+        ...requestOptions,
+        headers,
+        ...(Platform.OS === "web" ? { credentials: "include" as const } : {}),
+      }, timeoutMs);
+      response = result.response;
+      received(response.status);
+      payload = result.body;
+    } catch (error) {
+      if (error instanceof RequestTimeoutError) {
+        const readOnly = ["GET", "HEAD", "OPTIONS"].includes((options.method ?? "GET").toUpperCase());
+        throw new ApiError("REQUEST_TIMEOUT", readOnly ? error.message
+          : "The server took too long to respond. The action may still complete. Refresh before trying again.");
+      }
+      throw new ApiError("NETWORK_ERROR", "Could not reach the server. Check your connection and try again.");
     }
-    throw new ApiError("NETWORK_ERROR", "Could not reach the server. Check your connection and try again.");
-  }
 
-  if (response.status === 204) return undefined as T;
+    if (response.status === 204) return undefined as T;
 
-  const body = payload as (ApiErrorPayload & T) | null;
-  if (!response.ok) {
-    if (response.status === 401 && token && clearUnauthorized) await clearToken();
-    const serverError = body?.error;
-    throw new ApiError(
-      serverError?.code ?? "REQUEST_FAILED",
-      serverError?.message ?? "The server could not complete the request.",
-      response.status,
-      serverError?.details,
-    );
-  }
+    const body = payload as (ApiErrorPayload & T) | null;
+    if (!response.ok) {
+      if (response.status === 401 && token && clearUnauthorized) { await clearToken(); clearMonitoringUser(monitoringIdentity); }
+      const serverError = body?.error;
+      throw new ApiError(
+        serverError?.code ?? "REQUEST_FAILED",
+        serverError?.message ?? "The server could not complete the request.",
+        response.status,
+        serverError?.details,
+      );
+    }
 
-  if (!body) throw new ApiError("INVALID_RESPONSE", "The server returned an empty response.", response.status);
-  return body;
+    if (!body) throw new ApiError("INVALID_RESPONSE", "The server returned an empty response.", response.status);
+    return body;
+  }, signalScope);
 }
 
 function mapHotel(hotel: ApiHotel): HotelProfile {
@@ -222,20 +237,10 @@ function mapHotel(hotel: ApiHotel): HotelProfile {
     termsText: hotel.termsText ?? "",
     publicKey: hotel.publicKey ?? "",
     allowedOrigins: hotel.allowedOrigins ?? [],
+    widgetCss: hotel.widgetCss ?? "",
   };
 }
 
-async function authenticate(
-  path: "/v1/auth/register" | "/v1/auth/login" | "/v1/auth/social",
-  payload: Record<string, unknown>,
-): Promise<AuthSession> {
-  const response = await apiRequest<{ data: AuthSession }>(path, {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
-  await saveToken(response.data.accessToken);
-  return response.data;
-}
 
 async function requireToken(): Promise<string> {
   const token = await readToken();
@@ -244,12 +249,30 @@ async function requireToken(): Promise<string> {
 }
 
 // Contacts have their own short timeout and never participate in dashboard loading.
+
+function createApiClient(signalScope?: ActionScope) {
+  const apiRequest = <T>(path: string, options: RequestInit & { timeoutMs?: number } = {}, token?: string | null, clearUnauthorized = true) => performApiRequest<T>(path, options, token, clearUnauthorized, signalScope);
+async function authenticate(
+  path: "/v1/auth/register" | "/v1/auth/login" | "/v1/auth/social",
+  payload: Record<string, unknown>,
+): Promise<AuthSession> {
+  const monitoringIdentity = captureMonitoringIdentity();
+  const response = await apiRequest<{ data: AuthSession }>(path, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  await saveToken(response.data.accessToken);
+  if (identifyMonitoringUser(response.data.user, monitoringIdentity)) refreshActionContext(monitor, signalScope, true);
+  observe(() => monitor?.info("session.login.completed", { ...signalScope?.correlation, placement: "auth.authenticate" }));
+  return response.data;
+}
+
 async function clientRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
   const token = await requireToken();
   return apiRequest<T>(path, { ...options, timeoutMs: 4000 }, token, false);
 }
 
-export const apiClient = {
+return {
   async listClients(search = "", cursor?: string, filters: ClientFilters = {}): Promise<ClientPage> {
     const query = new URLSearchParams({ search, ...(cursor ? { cursor } : {}) });
     for (const [key, value] of Object.entries(filters)) {
@@ -288,12 +311,24 @@ export const apiClient = {
   login: (input: { email: string; password: string }) =>
     authenticate("/v1/auth/login", input),
 
+  async forgotPassword(email: string): Promise<void> {
+    await apiRequest("/v1/auth/forgot-password", { method: "POST", body: JSON.stringify({ email }) });
+  },
+
+  async resetPassword(input: { token: string; password: string }): Promise<void> {
+    const monitoringIdentity = captureMonitoringIdentity();
+    await apiRequest<void>("/v1/auth/reset-password", { method: "POST", body: JSON.stringify(input) });
+    await clearToken();
+    clearMonitoringUser(monitoringIdentity);
+  },
+
   socialLogin: (input: { provider: "google" | "apple"; idToken: string }) =>
     authenticate("/v1/auth/social", input),
 
   async getSession(): Promise<SessionUser | null> {
+    const monitoringIdentity = captureMonitoringIdentity();
     const token = await readToken();
-    if (!token && Platform.OS !== "web") return null;
+    if (!token && Platform.OS !== "web") { clearMonitoringUser(); return null; }
     try {
       const response = await apiRequest<{ data: { user: SessionUser } }>(
         "/v1/auth/session",
@@ -301,10 +336,12 @@ export const apiClient = {
         token,
       );
       if (Platform.OS === "web") volatileWebToken = webCookieSession;
+      if (identifyMonitoringUser(response.data.user, monitoringIdentity)) refreshActionContext(monitor, signalScope);
       return response.data.user;
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {
         await clearToken();
+        clearMonitoringUser(monitoringIdentity);
         if (Platform.OS === "web") return null;
       }
       throw error;
@@ -317,10 +354,16 @@ export const apiClient = {
   },
 
   async logout(): Promise<void> {
+    const monitoringIdentity = captureMonitoringIdentity();
     const token = await readToken();
     try {
       if (token) await apiRequest<void>("/v1/auth/logout", { method: "POST" }, token);
     } finally {
+      // Capture the old identity before rotating; uploads never hold up logout.
+      observe(() => {
+        monitor?.action("session.logout", { ...signalScope?.correlation, placement: "auth.logout" });
+        clearMonitoringUser(monitoringIdentity);
+      });
       await clearToken();
     }
   },
@@ -333,6 +376,7 @@ export const apiClient = {
     email: string;
     logoUrl?: string;
   }): Promise<HotelProfile> {
+    const monitoringIdentity = captureMonitoringIdentity();
     const token = await requireToken();
     const response = await apiRequest<{ data: { hotel: ApiHotel } }>(
       "/v1/hotel",
@@ -342,16 +386,20 @@ export const apiClient = {
       },
       token,
     );
+    if (identifyMonitoringHotel(response.data.hotel, monitoringIdentity)) refreshActionContext(monitor, signalScope);
     return mapHotel(response.data.hotel);
   },
 
   async getHotel(): Promise<HotelProfile> {
+    const monitoringIdentity = captureMonitoringIdentity();
     const token = await requireToken();
     const response = await apiRequest<{ data: { hotel: ApiHotel } }>("/v1/hotel", { timeoutMs: SESSION_REQUEST_TIMEOUT_MS }, token);
+    if (identifyMonitoringHotel(response.data.hotel, monitoringIdentity)) refreshActionContext(monitor, signalScope);
     return mapHotel(response.data.hotel);
   },
 
   async updateHotel(input: HotelProfileInput): Promise<HotelProfile> {
+    const monitoringIdentity = captureMonitoringIdentity();
     const token = await requireToken();
     const response = await apiRequest<{ data: { hotel: ApiHotel } }>(
       "/v1/hotel",
@@ -369,14 +417,15 @@ export const apiClient = {
       },
       token,
     );
+    if (identifyMonitoringHotel(response.data.hotel, monitoringIdentity)) refreshActionContext(monitor, signalScope);
     return mapHotel(response.data.hotel);
   },
 
-  async updateIntakeSettings(allowedOrigins: string[]): Promise<HotelIntakeSettings> {
+  async updateIntakeSettings(settings: Partial<Omit<HotelIntakeSettings, "publicKey">>): Promise<HotelIntakeSettings> {
     const token = await requireToken();
     const response = await apiRequest<{ data: HotelIntakeSettings }>(
       "/v1/hotel/intake-settings",
-      { method: "PUT", body: JSON.stringify({ allowedOrigins }) },
+      { method: "PUT", body: JSON.stringify(settings) },
       token,
     );
     return response.data;
@@ -490,7 +539,7 @@ export const apiClient = {
     return response.data.settings;
   },
 
-  async previewMessage(channel: MessageChannel, language?: "en" | "it"): Promise<MessagePreview> {
+  async previewMessage(channel: MessageChannel, language?: TemplateLanguage): Promise<MessagePreview> {
     const token = await requireToken();
     const response = await apiRequest<{ data: { preview: MessagePreview } }>(
       "/v1/hotel/message-settings/preview",
@@ -500,7 +549,7 @@ export const apiClient = {
     return response.data.preview;
   },
 
-  async testMessage(channel: MessageChannel, recipient: string, language?: "en" | "it"): Promise<TestSendResult> {
+  async testMessage(channel: MessageChannel, recipient: string, language?: TemplateLanguage): Promise<TestSendResult> {
     const token = await requireToken();
     const response = await apiRequest<{ data: TestSendResult }>(
       "/v1/hotel/message-settings/test-send",
@@ -653,7 +702,8 @@ export const apiClient = {
       const reservationNumber = String(Math.max(0, ...mockDashboard.requests.map((request) => Number(request.reservationNumber))) + 1);
       const nights = nightsBetween(input.checkIn, input.checkOut);
       const offerContext = { id, guestName: input.guest.name, checkIn: input.checkIn, checkOut: input.checkOut, occupancy: input.occupancy, mealPlan: input.mealPlan };
-      const choices = input.offers ?? (input.sendOffer ? demoOfferEditor(offerContext).suggestions.map(({ roomId, planCode }) => ({ roomId, planCode, note: "" })) : []);
+      const needsReview = !!(input.details?.additionalRooms?.length || input.details?.alternativeDates?.length);
+      const choices = needsReview ? [] : input.offers ?? (input.sendOffer ? demoOfferEditor(offerContext).suggestions.map(({ roomId, planCode }) => ({ roomId, planCode, note: "" })) : []);
       const currentOfferId = choices.length ? `00000000-0000-4000-8000-${reservationNumber.padStart(12, "0")}` : null;
       const expiresAt = new Date(Date.now() + OFFER_VALIDITY_MS).toISOString();
       const offers: ReservationOffer[] = choices.map((offer, index) => ({
@@ -663,6 +713,7 @@ export const apiClient = {
       mockDashboard.requests.unshift({
         id, reservationNumber, guestName: input.guest.name, mealPlan: input.mealPlan,
         checkIn: input.checkIn, checkOut: input.checkOut, occupancy: input.occupancy,
+        details: input.details ?? null,
         stayLabel: `${input.checkIn} — ${input.checkOut} · ${countLabel(nights, "night", "nights")}`,
         guestLabel: `${countLabel(input.occupancy.adults, "adult", "adults")}${input.occupancy.childAges.length ? ` · ${countLabel(input.occupancy.childAges.length, "child", "children")}` : ""}`,
         roomLabel: first?.roomName ?? "No offer created",
@@ -741,7 +792,7 @@ export const apiClient = {
           occupancy: request.occupancy, mealPlan: request.mealPlan ?? "BB" as const },
         options: offers.map((offer) => ({ ...offer, planCode: offer.planCode ?? "personal", mealPlan: offer.mealPlan ?? request.mealPlan ?? "BB" as const, nights: [] })),
       };
-      const preview = renderDemoMessagePreview(channel, { ...demoMessageSettings, templateLanguage: options.language ?? "it" }, apiUrl ?? "https://ospio.online", snapshot);
+      const preview = renderDemoMessagePreview(channel, { ...demoMessageSettings, templateLanguage: options.language ?? "it" }, apiUrl ?? "https://ospio.online", options.language ?? "it", snapshot);
       const summary = { offerId: request.currentOfferId ?? request.id, offers, proposalUrl: preview.offer.url };
       return preview.channel === "email"
         ? { ...summary, channel: "email", subject: preview.subject, text: preview.text }
@@ -792,7 +843,7 @@ export const apiClient = {
         const recipient = request[channel].recipient;
         request[channel] = recipient ? { status: "pending", state: "scheduled", attemptCount: 0, recipient, lastErrorCode: null, processedAt: null } : { status: "unused" };
       }
-      Object.assign(request, { currentOfferId, offers, offerExpiresAt: expiresAt, roomLabel: first.roomName,
+      Object.assign(request, { currentOfferId, offers, locale: input.language ?? request.locale, offerExpiresAt: expiresAt, roomLabel: first.roomName,
         totalCents: first.totalCents, totalLabel: new Intl.NumberFormat(uiLocale(), { style: "currency", currency: first.currency }).format(first.totalCents / 100),
         status: "new", statusLabel: requestLabel("new"), attentionReason: null, nextAction: undefined,
         processingDeadlineAt: new Date(Date.now() + AUTOMATIC_SENDING_TIMEOUT_MS).toISOString() });
@@ -837,6 +888,25 @@ export const apiClient = {
     await apiRequest(`/v1/inquiries/${encodeURIComponent(inquiryId)}/payment-link-sent`, { method: "POST" }, token);
   },
 };
+
+}
+
+const unscopedClient = createApiClient();
+const scopedMethods = new Map<PropertyKey, unknown>();
+// Effects, retries and pagination also get one scope per API operation. Explicit
+// UI workflows use scopedApiClient so multiple operations retain one action ID.
+export const apiClient = new Proxy(unscopedClient, {
+  get(client, property, receiver) {
+    const value: unknown = Reflect.get(client, property, receiver);
+    if (typeof property !== "string" || !Object.hasOwn(client, property) || typeof value !== "function") return value;
+    if (!scopedMethods.has(property)) scopedMethods.set(property, (...args: unknown[]) => actions.run(`operation.api.${property}`, `apiClient.${property}`, (scope) => {
+      const scoped = createApiClient(scope);
+      return Reflect.apply(Reflect.get(scoped, property) as (...args: unknown[]) => unknown, scoped, args);
+    }));
+    return scopedMethods.get(property);
+  },
+});
+export function scopedApiClient(scope: ActionScope) { return createApiClient(scope); }
 
 function mapDeliveryState(state: ApiDeliveryState | null): "sent" | "pending" | "failed" | "unused" {
   if (state === null || state === "cancelled") return "unused";
@@ -897,6 +967,7 @@ function mapRequest(inquiry: ApiDashboard["inquiries"][number]): HotelRequest {
     checkIn: inquiry.checkIn,
     checkOut: inquiry.checkOut,
     occupancy: inquiry.occupancy,
+    details: inquiry.details ?? null,
     locale: inquiry.locale,
     note: inquiry.note,
     receivedVia: inquiry.receivedVia ?? null,
@@ -947,6 +1018,9 @@ export function authErrorMessage(error: unknown): string {
     REQUEST_TIMEOUT: error.message,
     EMAIL_IN_USE: "An account with this email already exists. Try signing in.",
     INVALID_CREDENTIALS: "Incorrect email or password.",
+    PASSWORD_RESET_INVALID: "This reset link is invalid or expired. Request a new one.",
+    PASSWORD_RESET_UNAVAILABLE: "Password reset is temporarily unavailable. Please try again later.",
+    RATE_LIMITED: "Too many attempts. Try again shortly.",
     VALIDATION_ERROR: "Check the fields and try again.",
     HOTEL_EXISTS: "A hotel profile already exists for this account.",
     HOTEL_NOT_FOUND: "Create your hotel profile first.",

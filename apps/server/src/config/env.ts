@@ -15,6 +15,14 @@ const booleanFromString = z
 
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
+  SIGNAL_ENDPOINT: optionalString,
+  SIGNAL_WRITE_KEY_DEVELOPMENT: optionalString,
+  SIGNAL_WRITE_KEY_PRODUCTION: optionalString,
+  SIGNAL_PUBLIC_WRITE_KEY_DEVELOPMENT: optionalString,
+  SIGNAL_PUBLIC_WRITE_KEY_PRODUCTION: optionalString,
+  SIGNAL_RELEASE: optionalString,
+  SIGNAL_API_RELEASE: optionalString,
+  SIGNAL_WORKER_RELEASE: optionalString,
   HOST: z.string().min(1).default("0.0.0.0"),
   PORT: z.coerce.number().int().min(1).max(65_535).default(4_000),
   DATABASE_URL: z.string().min(1),
@@ -22,6 +30,8 @@ const envSchema = z.object({
   SESSION_TTL_DAYS: z.coerce.number().int().min(1).max(365).default(30),
   CORS_ORIGINS: z.string().default("http://localhost:8081,http://localhost:19006"),
   PUBLIC_BASE_URL: z.url().default("http://localhost:4000"),
+  APP_BASE_URL: z.url().refine((value) => ["http:", "https:"].includes(new URL(value).protocol),
+    "APP_BASE_URL must use HTTP or HTTPS.").default("http://localhost:8081"),
   GOOGLE_CLIENT_ID: optionalString,
   GOOGLE_CLIENT_SECRET: optionalString,
   GOOGLE_REDIRECT_URI: optionalUrl,
@@ -51,6 +61,10 @@ const envSchema = z.object({
   DELIVERY_WORKER_ENABLED: booleanFromString,
   DELIVERY_WORKER_INTERVAL_MS: z.coerce.number().int().min(250).max(60_000).default(5_000),
   DELIVERY_WORKER_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(20).default(5),
+}).superRefine((env, context) => {
+  if (env.NODE_ENV === "production" && new URL(env.APP_BASE_URL).protocol !== "https:") {
+    context.addIssue({ code: "custom", path: ["APP_BASE_URL"], message: "APP_BASE_URL must use HTTPS in production." });
+  }
 });
 
 export type AppEnv = z.infer<typeof envSchema> & { corsOrigins: string[]; platformAdminEmails: string[] };

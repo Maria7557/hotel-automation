@@ -12,13 +12,14 @@ type OAuthResult = {
 };
 
 export function sendOAuthResultPage(reply: FastifyReply, result: OAuthResult) {
+  const monitoring = reply.server.signalPageContext;
   reply
     .header("Cache-Control", "no-store")
-    .header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'self'")
+    .header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'self'" + (monitoring ? `; script-src 'self'; connect-src ${monitoring.collectorOrigin}` : ""))
     .type("text/html; charset=utf-8")
     .code(result.statusCode ?? (result.success ? 200 : 400));
 
-  return reply.send(renderOAuthResultPage(result));
+  return reply.send(renderOAuthResultPage(result).replace("</head>", monitoring ? '<script defer src="/signal.js" data-signal-screen="OAuthResult"></script></head>' : "</head>"));
 }
 
 export function oauthFailureStatus(error: unknown): number {

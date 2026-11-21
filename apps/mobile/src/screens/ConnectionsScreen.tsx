@@ -1,19 +1,12 @@
+import { confirmAction } from "../monitoring/dialogs";
+import { TextInput } from "../monitoring/controls";
+import { monitoredAction } from "../monitoring/actions";
+import { scopedApiClient } from "../api/client";
 import { t, translateLabel, getLanguage } from "../i18n";
 import { useEffect, useMemo, useState } from "react";
-import {
-  ActivityIndicator,
-  Alert,
-  AppState,
-  Image,
-  Linking,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import { ActivityIndicator, AppState, Image, Linking, Platform, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Alert } from "../monitoring/dialogs";
+import { Pressable } from "@/monitoring/Pressable";
 import { ArrowLeft, Check, Mail, MessageCircle, RefreshCw } from "lucide-react-native";
 import { theme } from "@hotel/design";
 import { ApiError, apiClient, authErrorMessage } from "@/api/client";
@@ -72,17 +65,18 @@ export function ConnectionsScreen({ onBack, demo }: { onBack: () => void; demo: 
     ]);
   };
 
-  const load = async () => {
+  const load = monitoredAction("action.ConnectionsScreen.load", "ConnectionsScreen.load", async (signalScope) => {
+    const apiClient = scopedApiClient(signalScope);
     setLoading(true);
     setError(null);
     try {
       setConnections(demo ? demoConnections : await apiClient.getConnections());
-    } catch (nextError) {
+    } catch (nextError) { signalScope.fail(nextError);
       setError(authErrorMessage(nextError));
     } finally {
       setLoading(false);
     }
-  };
+  });
 
   useEffect(() => { void load(); }, [demo]);
 
@@ -108,7 +102,8 @@ export function ConnectionsScreen({ onBack, demo }: { onBack: () => void; demo: 
   useEffect(() => {
     if (demo || !qrCode || waha.state === "connected") return undefined;
     let cancelled = false;
-    const refresh = async () => {
+    const refresh = monitoredAction("action.ConnectionsScreen.refresh", "ConnectionsScreen.refresh", async (signalScope) => {
+    const apiClient = scopedApiClient(signalScope);
       try {
         const updated = await apiClient.checkWaha();
         if (cancelled) return;
@@ -118,10 +113,10 @@ export function ConnectionsScreen({ onBack, demo }: { onBack: () => void; demo: 
           setNotice("WhatsApp is connected.");
           setError(null);
         }
-      } catch {
+      } catch { signalScope.fail(undefined);
         // Keep the QR visible and retry while this screen remains open.
       }
-    };
+    });
     void refresh();
     const timer = setInterval(() => { void refresh(); }, 2_000);
     return () => {
@@ -130,7 +125,8 @@ export function ConnectionsScreen({ onBack, demo }: { onBack: () => void; demo: 
     };
   }, [demo, qrCode, waha.state]);
 
-  const connectMail = async () => {
+  const connectMail = monitoredAction("action.ConnectionsScreen.connectMail", "ConnectionsScreen.connectMail", async (signalScope) => {
+    const apiClient = scopedApiClient(signalScope);
     setError(null);
     setNotice(null);
     if (demo) {
@@ -138,7 +134,7 @@ export function ConnectionsScreen({ onBack, demo }: { onBack: () => void; demo: 
       return;
     }
     setMailOpen(true);
-  };
+  });
 
   const editMail = () => {
     setError(null);
@@ -149,7 +145,8 @@ export function ConnectionsScreen({ onBack, demo }: { onBack: () => void; demo: 
   };
 
   const disconnectMail = () => {
-    const confirm = async () => {
+    const confirm = monitoredAction("action.ConnectionsScreen.confirm", "ConnectionsScreen.confirm", async (signalScope) => {
+    const apiClient = scopedApiClient(signalScope);
       setBusyKind("mail");
       setError(null);
       try {
@@ -158,14 +155,14 @@ export function ConnectionsScreen({ onBack, demo }: { onBack: () => void; demo: 
         setEmail("");
         setProvider(null);
         setNotice("Mail is disconnected.");
-      } catch (nextError) {
+      } catch (nextError) { signalScope.fail(nextError);
         setError(authErrorMessage(nextError));
       } finally {
         setBusyKind(null);
       }
-    };
+    });
     if (Platform.OS === "web") {
-      if (typeof window !== "undefined" && window.confirm(t("Disconnect this mail account?"))) void confirm();
+      if (typeof window !== "undefined" && confirmAction(t("Disconnect this mail account?"))) void confirm();
       return;
     }
     Alert.alert(t("Disconnect mail?"), t("Hotel messages will stop sending from this address."), [
@@ -174,15 +171,17 @@ export function ConnectionsScreen({ onBack, demo }: { onBack: () => void; demo: 
     ]);
   };
 
-  const detectMail = async () => {
+  const detectMail = monitoredAction("action.ConnectionsScreen.detectMail", "ConnectionsScreen.detectMail", async (signalScope) => {
+    const apiClient = scopedApiClient(signalScope);
     if (!email.includes("@")) { setError("Check the email address."); return; }
     setBusyKind("mail"); setError(null);
     try {
       const result = await apiClient.detectMailProvider(email); setProvider(result.provider);
-    } catch (nextError) { setError(authErrorMessage(nextError)); } finally { setBusyKind(null); }
-  };
+    } catch (nextError) { signalScope.fail(nextError); setError(authErrorMessage(nextError)); } finally { setBusyKind(null); }
+  });
 
-  const finishMail = async () => {
+  const finishMail = monitoredAction("action.ConnectionsScreen.finishMail", "ConnectionsScreen.finishMail", async (signalScope) => {
+    const apiClient = scopedApiClient(signalScope);
     if (!provider) return; setBusyKind("mail"); setError(null);
     try {
       if (provider === "smtp") {
@@ -199,16 +198,17 @@ export function ConnectionsScreen({ onBack, demo }: { onBack: () => void; demo: 
       }
       setMailOpen(false);
       await Linking.openURL(authorization.authorizationUrl);
-    } catch (nextError) {
+    } catch (nextError) { signalScope.fail(nextError);
       setError(provider === "microsoft" && nextError instanceof ApiError && nextError.code === "CONFIG_REQUIRED"
         ? t("Microsoft connection is temporarily unavailable.")
         : authErrorMessage(nextError));
     } finally {
       setBusyKind(null);
     }
-  };
+  });
 
-  const connectWhatsApp = async () => {
+  const connectWhatsApp = monitoredAction("action.ConnectionsScreen.connectWhatsApp", "ConnectionsScreen.connectWhatsApp", async (signalScope) => {
+    const apiClient = scopedApiClient(signalScope);
     setError(null);
     setNotice(null);
     if (demo) {
@@ -231,14 +231,15 @@ export function ConnectionsScreen({ onBack, demo }: { onBack: () => void; demo: 
       } else {
         setNotice("WhatsApp is still preparing. Tap Connect again in a few seconds.");
       }
-    } catch (nextError) {
+    } catch (nextError) { signalScope.fail(nextError);
       setError(authErrorMessage(nextError));
     } finally {
       setBusyKind(null);
     }
-  };
+  });
 
-  const checkWhatsApp = async () => {
+  const checkWhatsApp = monitoredAction("action.ConnectionsScreen.checkWhatsApp", "ConnectionsScreen.checkWhatsApp", async (signalScope) => {
+    const apiClient = scopedApiClient(signalScope);
     setError(null);
     setBusyKind("waha");
     try {
@@ -250,15 +251,16 @@ export function ConnectionsScreen({ onBack, demo }: { onBack: () => void; demo: 
       } else {
         setNotice("Scan the QR code, then check the connection again.");
       }
-    } catch (nextError) {
+    } catch (nextError) { signalScope.fail(nextError);
       setError(authErrorMessage(nextError));
     } finally {
       setBusyKind(null);
     }
-  };
+  });
 
   const disconnectWhatsApp = () => {
-    const confirm = async () => {
+    const confirm = monitoredAction("action.ConnectionsScreen.confirm", "ConnectionsScreen.confirm", async (signalScope) => {
+    const apiClient = scopedApiClient(signalScope);
       setBusyKind("waha");
       setError(null);
       setNotice(null);
@@ -266,14 +268,14 @@ export function ConnectionsScreen({ onBack, demo }: { onBack: () => void; demo: 
         replaceConnection(await apiClient.disconnectWaha());
         setQrCode(null);
         setNotice("WhatsApp is disconnected.");
-      } catch (nextError) {
+      } catch (nextError) { signalScope.fail(nextError);
         setError(authErrorMessage(nextError));
       } finally {
         setBusyKind(null);
       }
-    };
+    });
     if (Platform.OS === "web") {
-      if (typeof window !== "undefined" && window.confirm(t("Disconnect this WhatsApp account?"))) void confirm();
+      if (typeof window !== "undefined" && confirmAction(t("Disconnect this WhatsApp account?"))) void confirm();
       return;
     }
     Alert.alert(t("Disconnect WhatsApp?"), t("Hotel WhatsApp messages will stop sending from this number."), [
@@ -283,7 +285,8 @@ export function ConnectionsScreen({ onBack, demo }: { onBack: () => void; demo: 
   };
 
   const changeWhatsApp = () => {
-    const confirm = async () => {
+    const confirm = monitoredAction("action.ConnectionsScreen.confirm", "ConnectionsScreen.confirm", async (signalScope) => {
+    const apiClient = scopedApiClient(signalScope);
       setBusyKind("waha");
       setError(null);
       setNotice(null);
@@ -296,14 +299,14 @@ export function ConnectionsScreen({ onBack, demo }: { onBack: () => void; demo: 
         setNotice(result.connection.state === "connected"
           ? t("WhatsApp is connected.")
           : t("Scan the QR code with the new WhatsApp phone."));
-      } catch (nextError) {
+      } catch (nextError) { signalScope.fail(nextError);
         setError(authErrorMessage(nextError));
       } finally {
         setBusyKind(null);
       }
-    };
+    });
     if (Platform.OS === "web") {
-      if (typeof window !== "undefined" && window.confirm(t("Change the connected WhatsApp account? The current phone will be disconnected."))) void confirm();
+      if (typeof window !== "undefined" && confirmAction(t("Change the connected WhatsApp account? The current phone will be disconnected."))) void confirm();
       return;
     }
     Alert.alert(t("Change WhatsApp?"), t("The current phone will be disconnected before a new QR code is created."), [
@@ -354,7 +357,7 @@ export function ConnectionsScreen({ onBack, demo }: { onBack: () => void; demo: 
             <View style={styles.qrFrame}>
               <Image source={{ uri: qrCode }} style={styles.qrImage} resizeMode="contain" />
             </View>
-            <Button
+            <Button signalAction="ui.ConnectionsScreen.checkWhatsApp.press" signalPlacement="ConnectionsScreen.checkWhatsApp"
               icon={RefreshCw}
               loading={busyKind === "waha"}
               onPress={() => void checkWhatsApp()}
@@ -365,20 +368,20 @@ export function ConnectionsScreen({ onBack, demo }: { onBack: () => void; demo: 
         {mailOpen ? <View style={styles.mailCard}>
           <Text style={styles.qrTitle}>{mail.state === "connected" ? t("Change mail") : t("Connect mail")}</Text>
           <Text style={styles.qrText}>{t("Enter the address used to send hotel messages.")}</Text>
-          <TextInput autoCapitalize="none" keyboardType="email-address" placeholder="booking@hotel.it" value={email} onChangeText={(v) => { setEmail(v); setProvider(null); }} style={styles.input} />
-          {!provider ? <Button loading={busyKind === "mail"} onPress={() => void detectMail()}>{t("Continue")}</Button> : <>
+          <TextInput signalPlacement="ConnectionsScreen" autoCapitalize="none" keyboardType="email-address" placeholder="booking@hotel.it" value={email} onChangeText={(v) => { setEmail(v); setProvider(null); }} style={styles.input} />
+          {!provider ? <Button signalAction="ui.ConnectionsScreen.detectMail.press" signalPlacement="ConnectionsScreen.detectMail" loading={busyKind === "mail"} onPress={() => void detectMail()}>{t("Continue")}</Button> : <>
             <Text style={styles.providerText}>{t("Suggested:")}{" "}{provider === "google" ? "Google" : provider === "microsoft" ? "Microsoft" : t("Other mail provider")}</Text>
-            <View style={styles.providerRow}>{(["google", "microsoft", "smtp"] as const).map((value) => <Pressable key={value} onPress={() => setProvider(value)} style={[styles.providerChoice, provider === value && styles.providerSelected]}><Text>{value === "smtp" ? t("Other") : value === "microsoft" ? "Microsoft" : "Google"}</Text></Pressable>)}</View>
+            <View style={styles.providerRow}>{(["google", "microsoft", "smtp"] as const).map((value) => <Pressable signalAction="ui.ConnectionsScreen.setProvider.press" signalPlacement="ConnectionsScreen.setProvider" key={value} onPress={() => setProvider(value)} style={[styles.providerChoice, provider === value && styles.providerSelected]}><Text>{value === "smtp" ? t("Other") : value === "microsoft" ? "Microsoft" : "Google"}</Text></Pressable>)}</View>
             {provider === "smtp" ? <>
               <View style={styles.providerRow}>{[
                 ["Zoho", "smtp.zoho.com"], ["Namecheap", "mail.privateemail.com"], ["Aruba", "smtps.aruba.it"],
-              ].map(([label, host]) => <Pressable key={label} onPress={() => { setSmtpHost(host!); setSmtpPort(465); }} style={styles.providerChoice}><Text>{translateLabel(label)}</Text></Pressable>)}</View>
-              <TextInput autoCapitalize="none" placeholder={t("SMTP hostname")} value={smtpHost} onChangeText={setSmtpHost} style={styles.input} />
-              <View style={styles.providerRow}>{([465, 587] as const).map((port) => <Pressable key={port} onPress={() => setSmtpPort(port)} style={[styles.providerChoice, smtpPort === port && styles.providerSelected]}><Text>{port} · {port === 465 ? "TLS" : "STARTTLS"}</Text></Pressable>)}</View>
-              <TextInput autoCapitalize="none" placeholder={t("Username")} value={smtpUser} onChangeText={setSmtpUser} style={styles.input} />
-              <TextInput placeholder={t("App password")} secureTextEntry value={smtpPassword} onChangeText={setSmtpPassword} style={styles.input} />
+              ].map(([label, host]) => <Pressable signalAction="ui.ConnectionsScreen.setSmtpHost.press" signalPlacement="ConnectionsScreen.setSmtpHost" key={label} onPress={() => { setSmtpHost(host!); setSmtpPort(465); }} style={styles.providerChoice}><Text>{translateLabel(label)}</Text></Pressable>)}</View>
+              <TextInput signalPlacement="ConnectionsScreen" autoCapitalize="none" placeholder={t("SMTP hostname")} value={smtpHost} onChangeText={setSmtpHost} style={styles.input} />
+              <View style={styles.providerRow}>{([465, 587] as const).map((port) => <Pressable signalAction="ui.ConnectionsScreen.setSmtpPort.press" signalPlacement="ConnectionsScreen.setSmtpPort" key={port} onPress={() => setSmtpPort(port)} style={[styles.providerChoice, smtpPort === port && styles.providerSelected]}><Text>{port} · {port === 465 ? "TLS" : "STARTTLS"}</Text></Pressable>)}</View>
+              <TextInput signalPlacement="ConnectionsScreen" autoCapitalize="none" placeholder={t("Username")} value={smtpUser} onChangeText={setSmtpUser} style={styles.input} />
+              <TextInput signalPlacement="ConnectionsScreen" placeholder={t("App password")} secureTextEntry value={smtpPassword} onChangeText={setSmtpPassword} style={styles.input} />
             </> : null}
-            <Button loading={busyKind === "mail"} onPress={() => void finishMail()}>{t("Connect")}</Button>
+            <Button signalAction="ui.ConnectionsScreen.finishMail.press" signalPlacement="ConnectionsScreen.finishMail" loading={busyKind === "mail"} onPress={() => void finishMail()}>{t("Connect")}</Button>
           </>}
         </View> : null}
       </ScrollView>
@@ -429,16 +432,16 @@ function ConnectionRow({
             <Text style={styles.connectedBadgeText}>{t("Connected")}</Text>
           </View>
           {onEdit && onDisconnect ? <View style={styles.rowActions}>
-            <Pressable disabled={busy} onPress={onEdit} style={({ pressed }) => [styles.textAction, pressed && styles.pressed, busy && styles.disabled]}>
+            <Pressable signalAction="ui.ConnectionRow.onEdit.press" signalPlacement="ConnectionRow.onEdit" disabled={busy} onPress={onEdit} style={({ pressed }) => [styles.textAction, pressed && styles.pressed, busy && styles.disabled]}>
               <Text style={styles.textActionLabel}>{t("Change")}</Text>
             </Pressable>
-            <Pressable disabled={busy} onPress={onDisconnect} style={({ pressed }) => [styles.textAction, pressed && styles.pressed, busy && styles.disabled]}>
+            <Pressable signalAction="ui.ConnectionRow.onDisconnect.press" signalPlacement="ConnectionRow.onDisconnect" disabled={busy} onPress={onDisconnect} style={({ pressed }) => [styles.textAction, pressed && styles.pressed, busy && styles.disabled]}>
               <Text style={styles.disconnectLabel}>{t("Disconnect")}</Text>
             </Pressable>
           </View> : null}
         </View>
       ) : (
-        <Pressable
+        <Pressable signalAction="ui.ConnectionRow.onPress.press" signalPlacement="ConnectionRow.onPress"
           accessibilityRole="button"
           accessibilityLabel={`${label} ${title}`}
           accessibilityState={{ disabled: busy || !connection.available, busy }}
@@ -464,7 +467,7 @@ function ConnectionRow({
 function ScreenHeader({ onBack }: { onBack: () => void }) {
   return (
     <View style={styles.header}>
-      <Pressable accessibilityRole="button" accessibilityLabel={t("Back")} onPress={onBack} style={({ pressed }) => [styles.back, pressed && styles.pressed]}>
+      <Pressable signalAction="ui.ScreenHeader.onBack.press" signalPlacement="ScreenHeader.onBack" accessibilityRole="button" accessibilityLabel={t("Back")} onPress={onBack} style={({ pressed }) => [styles.back, pressed && styles.pressed]}>
         <ArrowLeft size={22} color={theme.colors.text} />
       </Pressable>
       <Text style={styles.headerTitle}>{t("Connections")}</Text>

@@ -22,14 +22,15 @@ export function requirePublicOfferUrl(value: string): string {
     throw new Error("publicOfferUrl must be an absolute HTTP(S) URL");
   }
 
+  const languageOnlyQuery = url.searchParams.size === 1 && ["en", "it"].includes(url.searchParams.get("lang") ?? "");
   if (
     !["https:", "http:"].includes(url.protocol) ||
     url.username !== "" ||
     url.password !== "" ||
-    url.search !== "" ||
+    (url.search !== "" && !languageOnlyQuery) ||
     url.hash !== ""
   ) {
-    throw new Error("publicOfferUrl must contain only an opaque path, without credentials, query or hash");
+    throw new Error("publicOfferUrl must use an opaque path with only an optional supported language, without credentials or hash");
   }
   return url.toString();
 }

@@ -21,6 +21,7 @@ export function duplicateRequestDraft(request: HotelRequest): RequestDraft {
     mealPlan: request.mealPlan,
     receivedVia: request.receivedVia ?? "other",
     note: request.note ?? "",
+    ...(request.details ? { details: { ...request.details, consents: { privacy: false, marketing: false } } } : {}),
     sendOffer: false,
     ...(offers?.length ? { offers } : {}),
   };

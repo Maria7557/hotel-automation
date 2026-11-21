@@ -1,4 +1,5 @@
 import { DEFAULT_GUEST_LANGUAGE } from "@hotel/contracts";
+import { languageFor } from "@hotel/templates";
 import { randomUUID } from "node:crypto";
 
 import type { AppEnv } from "../config/env.js";
@@ -395,9 +396,10 @@ export class ChannelService {
     input: PreviewInput,
     testOffer: Awaited<ReturnType<AutomationService["createTestProposal"]>>,
   ) {
+    const proposalUrl = `${testOffer.proposalUrl}${input.sample?.language ? `?lang=${languageFor(input.sample.language)}` : ""}`;
     const rendered = renderOfferDelivery({
       snapshot: { ...testOffer.snapshot, guestSnapshot: { ...(testOffer.snapshot.guestSnapshot as Record<string, unknown>), language: input.sample?.language ?? DEFAULT_GUEST_LANGUAGE } },
-      proposalUrl: `${testOffer.proposalUrl}${input.sample?.language ? `?lang=${input.sample.language}` : ""}`,
+      proposalUrl,
       channel: input.channel,
       settings: { hotelId: hotel.id, ...settings, createdAt: new Date(), updatedAt: new Date() },
     });
@@ -406,7 +408,7 @@ export class ChannelService {
     return {
       ...rendered,
       offer: {
-        url: `${testOffer.proposalUrl}${input.sample?.language ? `?lang=${input.sample.language}` : ""}`,
+        url: proposalUrl,
         hotelName: hotel.name,
         checkIn: typeof guest?.checkIn === "string" ? guest.checkIn : "",
         checkOut: typeof guest?.checkOut === "string" ? guest.checkOut : "",

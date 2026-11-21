@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { MailConnectionLostError, MailConnectionBusyError, mailKinds, selectMailConnection } from "./mail-selection.js";
 import { and, asc, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, lte, ne, sql } from "drizzle-orm";
 import type { DashboardQuery, MealPlan, OfferSettings } from "@hotel/contracts";
-import { AUTOMATIC_SENDING_TIMEOUT_MS } from "@hotel/contracts";
+import { AUTOMATIC_SENDING_TIMEOUT_MS, enquiryDetailsSchema } from "@hotel/contracts";
 
 import { createMailDatabase, type Database } from "../db/client.js";
 import {
@@ -16,6 +16,7 @@ import {
   inquiries,
   notificationPreferences,
   offerVersions,
+  passwordResetTokens,
   pushDevices,
   ratePeriods,
   rooms,
@@ -33,6 +34,7 @@ import type {
   DashboardPageFacts,
   DeliveryRecord,
   HotelCreate,
+  HotelIntakeUpdate,
   HotelProfile,
   HotelRepository,
   HotelUpdate,
@@ -87,6 +89,7 @@ function mapHotel(row: typeof hotels.$inferSelect): HotelProfile {
     id: row.id,
     publicKey: row.publicKey,
     allowedOrigins: row.allowedOrigins,
+    widgetCss: row.widgetCss,
     name: row.name,
     city: row.city,
     countryCode: row.countryCode,
@@ -280,8 +283,15 @@ class PostgresAuthRepository implements AuthRepository {
     await this.db.update(users).set({ uiLanguage }).where(eq(users.id, userId));
   }
 
-  async createSession(input: { userId: string; tokenHash: string; expiresAt: Date }): Promise<void> {
-    await this.db.insert(authSessions).values(input);
+  async createSession(input: { userId: string; tokenHash: string; expiresAt: Date; expectedPasswordHash?: string }): Promise<boolean> {
+    return this.db.transaction(async (transaction) => {
+      const [user] = await transaction.select({ passwordHash: users.passwordHash }).from(users)
+        .where(eq(users.id, input.userId)).for("update");
+      // A login that verified the old password before a reset must not recreate a revoked session.
+      if (!user || (input.expectedPasswordHash !== undefined && user.passwordHash !== input.expectedPasswordHash)) return false;
+      await transaction.insert(authSessions).values({ userId: input.userId, tokenHash: input.tokenHash, expiresAt: input.expiresAt });
+      return true;
+    });
   }
 
   async findUserBySessionHash(tokenHash: string, now: Date) {
@@ -313,6 +323,45 @@ class PostgresAuthRepository implements AuthRepository {
 
   async deleteSession(tokenHash: string): Promise<void> {
     await this.db.delete(authSessions).where(eq(authSessions.tokenHash, tokenHash));
+  }
+
+  async issuePasswordReset(input: {
+    userId: string; tokenHash: string; expiresAt: Date; requestedAt: Date; resendBefore: Date;
+  }): Promise<boolean> {
+    return this.db.transaction(async (transaction) => {
+      // Serialize requests and consumption for the same account across API instances.
+      const [user] = await transaction.select().from(users).where(eq(users.id, input.userId)).for("update");
+      if (!user?.passwordHash) return false;
+      const [existing] = await transaction.select().from(passwordResetTokens)
+        .where(eq(passwordResetTokens.userId, input.userId));
+      if (existing && existing.requestedAt > input.resendBefore) return false;
+      const values = {
+        userId: input.userId, tokenHash: input.tokenHash, expiresAt: input.expiresAt,
+        requestedAt: input.requestedAt, consumedAt: null,
+      };
+      await transaction.insert(passwordResetTokens).values(values)
+        .onConflictDoUpdate({ target: passwordResetTokens.userId, set: values });
+      return true;
+    });
+  }
+
+  async consumePasswordReset(input: { tokenHash: string; passwordHash: string; now: Date }) {
+    return this.db.transaction(async (transaction) => {
+      const [token] = await transaction.select().from(passwordResetTokens)
+        .where(eq(passwordResetTokens.tokenHash, input.tokenHash));
+      if (!token) return null;
+      await transaction.select({ id: users.id }).from(users).where(eq(users.id, token.userId)).for("update");
+      const [consumed] = await transaction.update(passwordResetTokens).set({ consumedAt: input.now })
+        .where(and(
+          eq(passwordResetTokens.userId, token.userId), eq(passwordResetTokens.tokenHash, input.tokenHash),
+          gt(passwordResetTokens.expiresAt, input.now), isNull(passwordResetTokens.consumedAt),
+        )).returning();
+      if (!consumed) return null;
+      const [user] = await transaction.update(users)
+        .set({ passwordHash: input.passwordHash, updatedAt: input.now }).where(eq(users.id, consumed.userId)).returning();
+      await transaction.delete(authSessions).where(eq(authSessions.userId, consumed.userId));
+      return user ? { id: user.id, email: user.email, displayName: user.displayName, uiLanguage: user.uiLanguage } : null;
+    });
   }
 }
 
@@ -366,12 +415,12 @@ class PostgresHotelRepository implements HotelRepository {
     return row ? mapHotel(row) : null;
   }
 
-  async updateIntakeSettingsForUser(userId: string, allowedOrigins: string[]): Promise<HotelProfile | null> {
+  async updateIntakeSettingsForUser(userId: string, settings: HotelIntakeUpdate): Promise<HotelProfile | null> {
     const current = await this.findForUser(userId);
     if (!current) return null;
     const rows = await this.db
       .update(hotels)
-      .set({ allowedOrigins, updatedAt: new Date() })
+      .set({ ...settings, updatedAt: new Date() })
       .where(and(eq(hotels.id, current.id), isNull(hotels.deletedAt)))
       .returning();
     return rows[0] ? mapHotel(rows[0]) : null;
@@ -462,6 +511,7 @@ class PostgresAutomationRepository implements AutomationRepository {
   }
 
   async createInquiryBundle(input: InquiryBundleCreate): Promise<InquiryBundle> {
+    const extraRooms = enquiryDetailsSchema.safeParse(input.inquiry.source.enquiryDetails).data?.additionalRooms ?? [];
     return this.db.transaction(async (transaction) => {
       const inserted = await transaction
         .insert(inquiries)
@@ -475,7 +525,7 @@ class PostgresAutomationRepository implements AutomationRepository {
           locale: input.inquiry.locale,
           checkIn: input.inquiry.checkIn,
           checkOut: input.inquiry.checkOut,
-          occupancies: [{ adults: input.inquiry.occupancy.adults, childrenAges: input.inquiry.occupancy.childAges }],
+          occupancies: [input.inquiry.occupancy, ...extraRooms.map((room) => room.occupancy)].map((room) => ({ adults: room.adults, childrenAges: room.childAges })),
           mealPlan: input.inquiry.mealPlan,
           source: input.inquiry.source,
           note: input.inquiry.note,
@@ -561,7 +611,7 @@ class PostgresAutomationRepository implements AutomationRepository {
         .where(and(eq(deliveries.inquiryId, input.inquiryId), eq(deliveries.kind, "offer"), eq(deliveries.state, "scheduled")));
       await transaction.insert(offerVersions).values({ ...input.offer, version: Math.max(0, ...existing.map(({ version }) => version)) + 1 });
       await transaction.insert(deliveries).values(input.deliveries);
-      await transaction.update(inquiries).set({ currentOfferId: input.offer.id, attentionReason: null, updatedAt: input.now })
+      await transaction.update(inquiries).set({ currentOfferId: input.offer.id, locale: input.locale, attentionReason: null, updatedAt: input.now })
         .where(eq(inquiries.id, input.inquiryId));
       return { replayed: false };
     });

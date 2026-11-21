@@ -12,7 +12,9 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate.ts",
     "dev:clients": "tsx watch src/client-worker.ts",
-    "start:clients": "node dist/client-worker.js"
+    "start:clients": "node dist/client-worker.js",
+    "monitoring:smoke": "tsx scripts/smoke-monitoring.ts",
+    "monitoring:audit": "tsx scripts/audit-monitoring.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.1.5",
@@ -28,7 +30,8 @@
     "nodemailer": "^10.3.1",
     "postgres": "^3.4.7",
     "zod": "^4.1.12",
-    "@hotel/i18n": "file:../../packages/i18n"
+    "@hotel/i18n": "file:../../packages/i18n",
+    "@hotel/monitoring": "file:../../packages/monitoring"
   },
   "devDependencies": {
     "@types/node": "^24.10.0",

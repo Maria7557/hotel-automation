@@ -1,6 +1,10 @@
+import { Switch } from "../monitoring/controls";
+import { monitoredAction } from "../monitoring/actions";
+import { scopedApiClient } from "../api/client";
 import { t, translateLabel } from "../i18n";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Switch, Text, View } from "react-native";
+import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Pressable } from "@/monitoring/Pressable";
 import { ArrowLeft, Plus } from "lucide-react-native";
 import { offerSettingsSchema, type ExtraChargeMode, type OfferExtra, type OfferSettings } from "@hotel/contracts";
 import { theme } from "@hotel/design";
@@ -30,36 +34,37 @@ export function OfferSettingsScreen({ demo, currency, onBack }: { demo: boolean;
     return () => { active = false; };
   }, [demo, reload]);
   const update = (id: string, patch: Partial<ExtraDraft>) => { setSaved(false); setExtras((items) => items.map((item) => item.id === id ? { ...item, ...patch } : item)); };
-  const save = async () => {
+  const save = monitoredAction("action.OfferSettingsScreen.save", "OfferSettingsScreen.save", async (signalScope) => {
+    const apiClient = scopedApiClient(signalScope);
     const result = offerSettingsSchema.safeParse({ extras: extras.map(({ price, ...extra }) => ({ ...extra, unitPriceCents: priceCents(price) })), defaultDepositPercent: deposit.trim() ? Number(deposit.replace(",", ".")) : NaN, cancellationPolicy: policy });
     if (!result.success) { setError("Enter a name and valid price for every extra, and a deposit from 0 to 100%."); return; }
     setSaving(true); setError(null); setSaved(false);
     try { apply(await apiClient.saveOfferSettings(result.data, { demo })); setSaved(true); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : t("Could not save offer settings.")); }
+    catch (cause) { signalScope.fail(cause); setError(cause instanceof Error ? cause.message : t("Could not save offer settings.")); }
     finally { setSaving(false); }
-  };
+  });
   return <ScrollView style={uiStyles.screen} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-    <View style={styles.heading}><Pressable accessibilityRole="button" accessibilityLabel={t("Back to Settings")} onPress={onBack} style={actionStyles.iconButton}><ArrowLeft size={20} color={theme.colors.text} /></Pressable><Text accessibilityRole="header" style={styles.title}>{t("Extras & offer defaults")}</Text></View>
+    <View style={styles.heading}><Pressable signalAction="ui.OfferSettingsScreen.onBack.press" signalPlacement="OfferSettingsScreen.onBack" accessibilityRole="button" accessibilityLabel={t("Back to Settings")} onPress={onBack} style={actionStyles.iconButton}><ArrowLeft size={20} color={theme.colors.text} /></Pressable><Text accessibilityRole="header" style={styles.title}>{t("Extras & offer defaults")}</Text></View>
     <Text style={styles.hint}>{t("Create services once and select them in any offer. Their charges are added automatically; sent offers keep their original prices and terms.")}</Text>
     {loading ? <ActivityIndicator color={theme.colors.action} /> : <View pointerEvents={saving ? "none" : "auto"} style={styles.section}>
-      <View style={styles.card}><Text style={styles.subTitle}>{t("Offer defaults")}</Text><Text style={styles.hint}>{t("Website requests send automatically. A guest note holds the request for staff review.")}</Text><Field label={t("Default deposit (%)")} value={deposit} onChangeText={(value) => { setDeposit(value); setSaved(false); }} keyboardType="decimal-pad" /><Field label={t("Default cancellation policy")} value={policy} onChangeText={(value) => { setPolicy(value); setSaved(false); }} multiline numberOfLines={4} maxLength={4000} /></View>
+      <View style={styles.card}><Text style={styles.subTitle}>{t("Offer defaults")}</Text><Text style={styles.hint}>{t("Website requests send automatically. A guest note holds the request for staff review.")}</Text><Field label={t("Default deposit (%)")} value={deposit} onChangeText={(value) => { setDeposit(value); setSaved(false); }} keyboardType="decimal-pad" /><Field label={t("Default cancellation policy")} tooltip={t("Enter your hotel’s standard cancellation terms in the text area below. They are copied into new offers and shown to guests. You can change them for each offer; sent offers keep their original terms.")} value={policy} onChangeText={(value) => { setPolicy(value); setSaved(false); }} multiline numberOfLines={4} maxLength={4000} /></View>
       <Text accessibilityRole="header" style={styles.subTitle}>{t("Extras ·")}{" "}{extras.length}/50</Text>
       {extras.map((extra, index) => <View key={extra.id} style={styles.card}>
-        <View style={styles.heading}><Text style={styles.subTitle}>{extra.name || t("New extra {{v0}}", { v0: index + 1 })}</Text><Switch accessibilityLabel={t("Extra {{v0}} available", { v0: index + 1 })} value={extra.active} onValueChange={(active) => update(extra.id, { active })} trackColor={{ true: theme.colors.action }} /></View>
+        <View style={styles.heading}><Text style={styles.subTitle}>{extra.name || t("New extra {{v0}}", { v0: index + 1 })}</Text><Switch signalPlacement="OfferSettingsScreen" accessibilityLabel={t("Extra {{v0}} available", { v0: index + 1 })} value={extra.active} onValueChange={(active) => update(extra.id, { active })} trackColor={{ true: theme.colors.action }} /></View>
         <Field label={t("Extra {{v0}} name", { v0: index + 1 })} value={extra.name} onChangeText={(name) => update(extra.id, { name })} maxLength={160} />
         <Field label={t("Extra {{v0}} description", { v0: index + 1 })} value={extra.description} onChangeText={(description) => update(extra.id, { description })} multiline maxLength={1000} />
         <Field label={t("Extra {{v0}} price ({{v1}})", { v0: index + 1, v1: currency })} value={extra.price} onChangeText={(price) => update(extra.id, { price })} keyboardType="decimal-pad" helper={t("Price for one unit, based on the charging method below.")} />
-        <View style={styles.choices}>{(Object.keys(extraChargeLabels) as ExtraChargeMode[]).map((chargeMode) => <Pressable key={chargeMode} accessibilityRole="radio" accessibilityLabel={t("Extra {{v0}}: {{v1}}", { v0: index + 1, v1: t(extraChargeLabels[chargeMode]) })} accessibilityState={{ checked: extra.chargeMode === chargeMode }} onPress={() => update(extra.id, { chargeMode })} style={[styles.choice, extra.chargeMode === chargeMode && styles.selected]}><Text style={styles.body}>{translateLabel(extraChargeLabels[chargeMode])}</Text></Pressable>)}</View>
-        <View style={styles.heading}><View style={styles.grow}><Text style={styles.body}>{t("Include by default")}</Text><Text style={styles.hint}>{t("Added to automatic offers; staff can remove it.")}</Text></View><Switch accessibilityLabel={t("Extra {{v0}} include by default", { v0: index + 1 })} value={extra.defaultSelected} onValueChange={(defaultSelected) => update(extra.id, { defaultSelected })} trackColor={{ true: theme.colors.action }} /></View>
+        <View style={styles.choices}>{(Object.keys(extraChargeLabels) as ExtraChargeMode[]).map((chargeMode) => <Pressable signalAction="ui.OfferSettingsScreen.update.press" signalPlacement="OfferSettingsScreen.update" key={chargeMode} accessibilityRole="radio" accessibilityLabel={t("Extra {{v0}}: {{v1}}", { v0: index + 1, v1: t(extraChargeLabels[chargeMode]) })} accessibilityState={{ checked: extra.chargeMode === chargeMode }} onPress={() => update(extra.id, { chargeMode })} style={[styles.choice, extra.chargeMode === chargeMode && styles.selected]}><Text style={styles.body}>{translateLabel(extraChargeLabels[chargeMode])}</Text></Pressable>)}</View>
+        <View style={styles.heading}><View style={styles.grow}><Text style={styles.body}>{t("Include by default")}</Text><Text style={styles.hint}>{t("Added to automatic offers; staff can remove it.")}</Text></View><Switch signalPlacement="OfferSettingsScreen" accessibilityLabel={t("Extra {{v0}} include by default", { v0: index + 1 })} value={extra.defaultSelected} onValueChange={(defaultSelected) => update(extra.id, { defaultSelected })} trackColor={{ true: theme.colors.action }} /></View>
         <Text style={styles.hint}>{extra.active ? t("Available") : t("Hidden from new offers")} · {Number.isFinite(priceCents(extra.price)) ? offerMoney(priceCents(extra.price), currency) : t("Enter a price")} · {translateLabel(extraChargeLabels[extra.chargeMode])}</Text>
-        <Button variant="tertiary" onPress={() => { setExtras((items) => items.filter(({ id }) => id !== extra.id)); setSaved(false); }}>{t("Remove extra")}{" "}{index + 1}</Button>
+        <Button signalAction="ui.OfferSettingsScreen.setExtras.press" signalPlacement="OfferSettingsScreen.setExtras" variant="tertiary" onPress={() => { setExtras((items) => items.filter(({ id }) => id !== extra.id)); setSaved(false); }}>{t("Remove extra")}{" "}{index + 1}</Button>
       </View>)}
-      <Button icon={Plus} variant="secondary" disabled={extras.length >= 50} onPress={() => { setExtras((items) => [...items, { id: newOfferKey(), name: "", description: "", unitPriceCents: 0, price: "", chargeMode: "per_stay", active: true, defaultSelected: false }]); setSaved(false); }}>{t("Add extra")}</Button>
+      <Button signalAction="ui.OfferSettingsScreen.setExtras.press" signalPlacement="OfferSettingsScreen.setExtras" icon={Plus} variant="secondary" disabled={extras.length >= 50} onPress={() => { setExtras((items) => [...items, { id: newOfferKey(), name: "", description: "", unitPriceCents: 0, price: "", chargeMode: "per_stay", active: true, defaultSelected: false }]); setSaved(false); }}>{t("Add extra")}</Button>
     </View>}
-    {error ? <><InlineState tone="danger">{translateLabel(error)}</InlineState>{!extras.length && !loading ? <Button variant="tertiary" onPress={() => setReload((value) => value + 1)}>{t("Reload settings")}</Button> : null}</> : null}
+    {error ? <><InlineState tone="danger">{translateLabel(error)}</InlineState>{!extras.length && !loading ? <Button signalAction="ui.OfferSettingsScreen.setReload.press" signalPlacement="OfferSettingsScreen.setReload" variant="tertiary" onPress={() => setReload((value) => value + 1)}>{t("Reload settings")}</Button> : null}</> : null}
     {saved ? <InlineState tone="success">{demo ? t("Offer settings saved in this demo.") : t("Offer settings saved. New offers will use these prices and defaults.")}</InlineState> : null}
     {demo ? <Text style={styles.hint}>{t("Demo mode · changes stay in this preview.")}</Text> : null}
-    <Button loading={saving} disabled={loading || !loaded} onPress={() => void save()}>{t("Save extras & defaults")}</Button>
+    <Button signalAction="ui.OfferSettingsScreen.save.press" signalPlacement="OfferSettingsScreen.save" loading={saving} disabled={loading || !loaded} onPress={() => void save()}>{t("Save extras & defaults")}</Button>
   </ScrollView>;
 }
 const styles = StyleSheet.create({

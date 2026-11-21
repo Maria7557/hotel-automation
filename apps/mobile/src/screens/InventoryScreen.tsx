@@ -1,19 +1,12 @@
+import { RefreshControl } from "../monitoring/controls";
+import { monitoredAction } from "../monitoring/actions";
+import { scopedApiClient } from "../api/client";
 import { locale as uiLocale, t, translateLabel } from "../i18n";
 import { BoardBadge, BoardSelector } from "@/components/BoardBadge";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
-import {
-  ActivityIndicator,
-  Image,
-  KeyboardAvoidingView,
-  Platform,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { ActivityIndicator, Image, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Pressable } from "@/monitoring/Pressable";
 import {
   ArrowLeft,
   BedDouble,
@@ -25,6 +18,7 @@ import {
   Edit3,
   ImageIcon,
   ImagePlus,
+  Info,
   Minus,
   Plus,
   Star,
@@ -45,7 +39,11 @@ import type {
 } from "@/api/types";
 import { Button, EmptyState, Field, InlineState, SectionTitle, uiStyles } from "@/components/ui";
 import { RateCalendar } from "@/components/RateCalendar";
+import { RoomGuestFields } from "@/requests/EnquiryFields";
 import { FilterDateField } from "@/clients/FilterDateField";
+import { NumberSelectField } from "@/components/NumberSelectField";
+import { ChildAgeField } from "@/components/ChildAgeField";
+import { screenViewed } from "@/monitoring";
 
 type InventoryView = "list" | "roomForm" | "detail" | "rates" | "rateForm";
 
@@ -61,6 +59,7 @@ type BedCounts = Record<BedType, number>;
 
 export function InventoryScreen({ onBack }: { onBack: () => void }) {
   const [view, setView] = useState<InventoryView>("list");
+  useEffect(() => { screenViewed(({ list: "Inventory", roomForm: "RoomEditor", detail: "Room", rates: "Rates", rateForm: "RateEditor" } as const)[view]); }, [view]);
   const [rooms, setRooms] = useState<Room[]>([]);
   const [selectedRoom, setSelectedRoom] = useState<Room | null>(null);
   const [selectedRate, setSelectedRate] = useState<RatePeriod | null>(null);
@@ -69,17 +68,18 @@ export function InventoryScreen({ onBack }: { onBack: () => void }) {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const loadRooms = useCallback(async (refresh = false) => {
+  const loadRooms = useCallback(monitoredAction("action.InventoryScreen.loadRooms", "InventoryScreen.loadRooms", async (signalScope, refresh: boolean = false) => {
+    const apiClient = scopedApiClient(signalScope);
     refresh ? setRefreshing(true) : setLoading(true);
     setError(null);
     try {
       setRooms(await apiClient.listRooms());
-    } catch (nextError) {
+    } catch (nextError) { signalScope.fail(nextError);
       setError(authErrorMessage(nextError));
     } finally {
       refresh ? setRefreshing(false) : setLoading(false);
     }
-  }, []);
+  }), []);
 
   useEffect(() => { void loadRooms(); }, [loadRooms]);
 
@@ -133,7 +133,7 @@ export function InventoryScreen({ onBack }: { onBack: () => void }) {
     <ScrollView
       style={uiStyles.screen}
       contentContainerStyle={styles.screenContent}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void loadRooms(true)} tintColor={theme.colors.action} />}
+      refreshControl={<RefreshControl signalPlacement="InventoryScreen" refreshing={refreshing} onRefresh={() => void loadRooms(true)} tintColor={theme.colors.action} />}
       showsVerticalScrollIndicator={false}
     >
       <ScreenHeader title={t("Rooms and rates")} onBack={onBack} />
@@ -142,7 +142,7 @@ export function InventoryScreen({ onBack }: { onBack: () => void }) {
       {error ? (
         <View style={styles.stateGap}>
           <InlineState tone="danger">{translateLabel(error)}</InlineState>
-          <Button variant="secondary" onPress={() => void loadRooms()}>{t("Try again")}</Button>
+          <Button signalAction="ui.InventoryScreen.loadRooms.press" signalPlacement="InventoryScreen.loadRooms" variant="secondary" onPress={() => void loadRooms()}>{t("Try again")}</Button>
         </View>
       ) : loading ? (
         <LoadingState label={t("Loading rooms…")} />
@@ -154,7 +154,7 @@ export function InventoryScreen({ onBack }: { onBack: () => void }) {
               <Text style={styles.summaryValue}>{rooms.length}</Text>
               <Text style={styles.summaryLabel}>{rooms.length === 1 ? t("room category") : t("room categories")}</Text>
             </View>
-            <Button
+            <Button signalAction="ui.InventoryScreen.setSelectedRoom.press" signalPlacement="InventoryScreen.setSelectedRoom"
               variant="tertiary"
               icon={Plus}
               onPress={() => { setSelectedRoom(null); setView("roomForm"); }}
@@ -167,13 +167,13 @@ export function InventoryScreen({ onBack }: { onBack: () => void }) {
             {rooms.length === 0 ? (
               <View style={styles.emptyWrap}>
                 <EmptyState title={t("Add your first room")} description={t("Set its capacity and beds, then add date-based rates.")} />
-                <Button onPress={() => { setSelectedRoom(null); setView("roomForm"); }} icon={Plus}>{t("Create room")}</Button>
+                <Button signalAction="ui.InventoryScreen.setSelectedRoom.press" signalPlacement="InventoryScreen.setSelectedRoom" onPress={() => { setSelectedRoom(null); setView("roomForm"); }} icon={Plus}>{t("Create room")}</Button>
               </View>
             ) : (
               <View style={styles.list}>
                 {rooms.map((room) => (
                   <View key={room.id} style={[uiStyles.card, styles.roomCardShell]}>
-                    <Pressable
+                    <Pressable signalAction="ui.InventoryScreen.setSelectedRoom.press" signalPlacement="InventoryScreen.setSelectedRoom"
                       accessibilityRole="button"
                       accessibilityLabel={t("{{v0}}, up to {{v1}} guests", { v0: room.name, v1: room.maxGuests })}
                       onPress={() => { setSelectedRoom(room); setView("detail"); }}
@@ -190,7 +190,7 @@ export function InventoryScreen({ onBack }: { onBack: () => void }) {
                       </View>
                       <ChevronRight size={20} color={theme.colors.textMuted} />
                     </Pressable>
-                    <Pressable
+                    <Pressable signalAction="ui.InventoryScreen.setSelectedRoom.press" signalPlacement="InventoryScreen.setSelectedRoom"
                       accessibilityRole="button"
                       accessibilityLabel={t("Open rates calendar for {{v0}}", { v0: room.name })}
                       onPress={() => { setSelectedRoom(room); setRateReturnView("rates"); setView("rates"); }}
@@ -236,7 +236,8 @@ function RoomForm({ room, onBack, onSaved }: { room: Room | null; onBack: () => 
   const capacityValid = adults !== null && adults > 0 && children !== null && children >= 0 && guests !== null && guests >= adults && guests <= adults + children;
   const valid = name.trim().length > 0 && capacityValid && bedCount > 0 && photos.length <= 30;
 
-  const pickPhotos = async () => {
+  const pickPhotos = monitoredAction("action.RoomForm.pickPhotos", "RoomForm.pickPhotos", async (signalScope) => {
+    const apiClient = scopedApiClient(signalScope);
     setError(null);
     const remaining = 30 - photos.length;
     if (remaining <= 0) {
@@ -281,7 +282,7 @@ function RoomForm({ room, onBack, onSaved }: { room: Room | null; onBack: () => 
     if (rejected > 0) {
       setError(t("{{count}} skipped photo", { count: rejected }));
     }
-  };
+  });
 
   const movePhoto = (from: number, to: number) => {
     if (to < 0 || to >= photos.length || from === to) return;
@@ -294,7 +295,8 @@ function RoomForm({ room, onBack, onSaved }: { room: Room | null; onBack: () => 
     });
   };
 
-  const save = async () => {
+  const save = monitoredAction("action.RoomForm.save", "RoomForm.save", async (signalScope) => {
+    const apiClient = scopedApiClient(signalScope);
     setSubmitted(true);
     setError(null);
     if (!valid || adults === null || children === null || guests === null) return;
@@ -313,7 +315,7 @@ function RoomForm({ room, onBack, onSaved }: { room: Room | null; onBack: () => 
         let uploadedUrl: string;
         try {
           uploadedUrl = await apiClient.uploadImage({ base64: photo.base64, mimeType: photo.mimeType });
-        } catch {
+        } catch { signalScope.fail(undefined);
           throw new Error(t("Photo {{v0}} could not be uploaded. Remove that photo and choose it again as JPEG or PNG (up to 5 MB).", { v0: index + 1 }));
         }
         uploadedPhotos.push({ id: photo.id, uri: uploadedUrl, uploadedUrl });
@@ -332,13 +334,13 @@ function RoomForm({ room, onBack, onSaved }: { room: Room | null; onBack: () => 
         active: room?.active ?? true,
       };
       onSaved(room ? await apiClient.updateRoom(room.id, input) : await apiClient.createRoom(input));
-    } catch (nextError) {
+    } catch (nextError) { signalScope.fail(nextError);
       setError(nextError instanceof ApiError ? authErrorMessage(nextError) : nextError instanceof Error ? nextError.message : authErrorMessage(nextError));
     } finally {
       setUploadingPhoto(null);
       setSaving(false);
     }
-  };
+  });
 
   return (
     <KeyboardAvoidingView style={uiStyles.screen} behavior={Platform.OS === "ios" ? "padding" : undefined}>
@@ -353,15 +355,15 @@ function RoomForm({ room, onBack, onSaved }: { room: Room | null; onBack: () => 
         <View style={styles.formSection}>
           <SectionTitle>{t("Capacity")}</SectionTitle>
           <View style={styles.fieldRow}>
-            <View style={styles.fieldHalf}><Field label={t("Adults")} keyboardType="number-pad" value={maxAdults} onChangeText={setMaxAdults} editable={!saving} /></View>
-            <View style={styles.fieldHalf}><Field label={t("Children")} keyboardType="number-pad" value={maxChildren} onChangeText={setMaxChildren} editable={!saving} /></View>
+            <View style={styles.fieldHalf}><NumberSelectField label={t("Adults")} value={maxAdults} onChange={setMaxAdults} disabled={saving} /></View>
+            <View style={styles.fieldHalf}><NumberSelectField label={t("Children")} min={0} max={20} value={maxChildren} onChange={setMaxChildren} disabled={saving} /></View>
           </View>
-          <Field
+          <NumberSelectField
             label={t("Total guests")}
-            keyboardType="number-pad"
+            max={70}
             value={maxGuests}
-            onChangeText={setMaxGuests}
-            editable={!saving}
+            onChange={setMaxGuests}
+            disabled={saving}
             error={submitted && !capacityValid ? t("Total guests must include all adults and stay within the combined capacity") : undefined}
           />
         </View>
@@ -386,10 +388,10 @@ function RoomForm({ room, onBack, onSaved }: { room: Room | null; onBack: () => 
               <SectionTitle>{t("Room photos")}</SectionTitle>
               <Text style={styles.sectionHelper}>{photos.length}{t("/30 · the first photo is the cover.")}</Text>
             </View>
-            <Button variant="secondary" icon={ImagePlus} onPress={() => void pickPhotos()} disabled={saving || photos.length >= 30}>{t("Add photos")}</Button>
+            <Button signalAction="ui.RoomForm.pickPhotos.press" signalPlacement="RoomForm.pickPhotos" variant="secondary" icon={ImagePlus} onPress={() => void pickPhotos()} disabled={saving || photos.length >= 30}>{t("Add photos")}</Button>
           </View>
           {photos.length === 0 ? (
-            <Pressable accessibilityRole="button" onPress={() => void pickPhotos()} disabled={saving} style={({ pressed }) => [styles.photoEmpty, pressed && styles.pressed]}>
+            <Pressable signalAction="ui.RoomForm.pickPhotos.press" signalPlacement="RoomForm.pickPhotos" accessibilityRole="button" onPress={() => void pickPhotos()} disabled={saving} style={({ pressed }) => [styles.photoEmpty, pressed && styles.pressed]}>
               <View style={styles.photoEmptyIcon}><ImagePlus size={25} color={theme.colors.action} /></View>
               <Text style={styles.photoEmptyTitle}>{t("Choose photos from this device")}</Text>
               <Text style={styles.photoEmptyText}>{t("JPEG or PNG · select several at once")}</Text>
@@ -413,7 +415,7 @@ function RoomForm({ room, onBack, onSaved }: { room: Room | null; onBack: () => 
           )}
         </View>
         {uploadingPhoto ? <InlineState tone="warning">{t("Uploading photo")}{" "}{uploadingPhoto} {" "}{t("of")}{" "}{photos.length}…</InlineState> : null}
-        <Button onPress={() => void save()} loading={saving} icon={Check}>{room ? t("Save changes") : t("Create room")}</Button>
+        <Button signalAction="ui.RoomForm.save.press" signalPlacement="RoomForm.save" onPress={() => void save()} loading={saving} icon={Check}>{room ? t("Save changes") : t("Create room")}</Button>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -445,7 +447,7 @@ function BedPicker({
               {count > 0 ? <Text style={styles.bedPickerSelectedText}>{count} {" "}{t("selected")}</Text> : null}
             </View>
             <View style={styles.stepper}>
-              <Pressable
+              <Pressable signalAction="ui.BedPicker.update.press" signalPlacement="BedPicker.update"
                 accessibilityRole="button"
                 accessibilityLabel={t("Remove one {{v0}}", { v0: t(option.label).toLowerCase() })}
                 accessibilityState={{ disabled: disabled || count === 0 }}
@@ -456,7 +458,7 @@ function BedPicker({
                 <Minus size={18} color={count === 0 ? theme.colors.textMuted : theme.colors.action} />
               </Pressable>
               <Text accessibilityLabel={`${count} ${t(option.label).toLowerCase()}`} style={styles.stepperValue}>{count}</Text>
-              <Pressable
+              <Pressable signalAction="ui.BedPicker.update.press" signalPlacement="BedPicker.update"
                 accessibilityRole="button"
                 accessibilityLabel={t("Add one {{v0}}", { v0: t(option.label).toLowerCase() })}
                 accessibilityState={{ disabled: disabled || count === 10 }}
@@ -495,7 +497,7 @@ function AmenityPicker({ selected, onChange, disabled }: { selected: string[]; o
           const isSelected = selected.includes(amenity);
           const choiceDisabled = disabled || (featureLimitReached && !isSelected);
           return (
-            <Pressable
+            <Pressable signalAction="ui.AmenityPicker.onChange.press" signalPlacement="AmenityPicker.onChange"
               key={t(amenity)}
               accessibilityRole="checkbox"
               accessibilityState={{ checked: isSelected, disabled: choiceDisabled }}
@@ -520,7 +522,7 @@ function AmenityPicker({ selected, onChange, disabled }: { selected: string[]; o
         onSubmitEditing={addFeature}
         helper={featureLimitReached ? t("You can select up to 100 features per room.") : t("Add a feature to include it with this room.")}
       />
-      <Button variant="secondary" icon={Plus} onPress={addFeature} disabled={disabled || featureLimitReached || !customFeature.trim()}>{t("Add feature")}</Button>
+      <Button signalAction="ui.AmenityPicker.addFeature.press" signalPlacement="AmenityPicker.addFeature" variant="secondary" icon={Plus} onPress={addFeature} disabled={disabled || featureLimitReached || !customFeature.trim()}>{t("Add feature")}</Button>
     </View>
   );
 }
@@ -550,19 +552,19 @@ function PhotoEditorCard({
       {index === 0 ? (
         <View style={styles.coverBadge}><Star size={12} color={theme.colors.onAction} /><Text style={styles.coverBadgeText}>{t("Cover")}</Text></View>
       ) : (
-        <Pressable accessibilityRole="button" accessibilityLabel={t("Make photo {{v0}} the cover", { v0: index + 1 })} disabled={disabled} onPress={onCover} style={({ pressed }) => [styles.makeCover, pressed && styles.pressed]}>
+        <Pressable signalAction="ui.PhotoEditorCard.onCover.press" signalPlacement="PhotoEditorCard.onCover" accessibilityRole="button" accessibilityLabel={t("Make photo {{v0}} the cover", { v0: index + 1 })} disabled={disabled} onPress={onCover} style={({ pressed }) => [styles.makeCover, pressed && styles.pressed]}>
           <Star size={14} color={theme.colors.action} /><Text style={styles.makeCoverText}>{t("Set cover")}</Text>
         </Pressable>
       )}
-      <Pressable accessibilityRole="button" accessibilityLabel={t("Remove photo {{v0}}", { v0: index + 1 })} disabled={disabled} onPress={onRemove} style={({ pressed }) => [styles.removePhoto, pressed && styles.pressed]}>
+      <Pressable signalAction="ui.PhotoEditorCard.onRemove.press" signalPlacement="PhotoEditorCard.onRemove" accessibilityRole="button" accessibilityLabel={t("Remove photo {{v0}}", { v0: index + 1 })} disabled={disabled} onPress={onRemove} style={({ pressed }) => [styles.removePhoto, pressed && styles.pressed]}>
         <Trash2 size={16} color={theme.colors.danger} />
       </Pressable>
       <View style={styles.photoOrderRow}>
-        <Pressable accessibilityRole="button" accessibilityLabel={t("Move photo {{v0}} left", { v0: index + 1 })} disabled={disabled || index === 0} onPress={onMoveLeft} style={({ pressed }) => [styles.orderButton, (disabled || index === 0) && styles.orderButtonDisabled, pressed && styles.pressed]}>
+        <Pressable signalAction="ui.PhotoEditorCard.onMoveLeft.press" signalPlacement="PhotoEditorCard.onMoveLeft" accessibilityRole="button" accessibilityLabel={t("Move photo {{v0}} left", { v0: index + 1 })} disabled={disabled || index === 0} onPress={onMoveLeft} style={({ pressed }) => [styles.orderButton, (disabled || index === 0) && styles.orderButtonDisabled, pressed && styles.pressed]}>
           <ChevronLeft size={18} color={theme.colors.textSecondary} />
         </Pressable>
         <Text style={styles.photoPosition}>{index + 1} / {count}</Text>
-        <Pressable accessibilityRole="button" accessibilityLabel={t("Move photo {{v0}} right", { v0: index + 1 })} disabled={disabled || index === count - 1} onPress={onMoveRight} style={({ pressed }) => [styles.orderButton, (disabled || index === count - 1) && styles.orderButtonDisabled, pressed && styles.pressed]}>
+        <Pressable signalAction="ui.PhotoEditorCard.onMoveRight.press" signalPlacement="PhotoEditorCard.onMoveRight" accessibilityRole="button" accessibilityLabel={t("Move photo {{v0}} right", { v0: index + 1 })} disabled={disabled || index === count - 1} onPress={onMoveRight} style={({ pressed }) => [styles.orderButton, (disabled || index === count - 1) && styles.orderButtonDisabled, pressed && styles.pressed]}>
           <ChevronRight size={18} color={theme.colors.textSecondary} />
         </Pressable>
       </View>
@@ -602,7 +604,7 @@ function RoomRatesView({ room, onBack, onAddRate, onEditRate }: { room: Room; on
         {!loading && !error && rates.length === 0 ? (
           <View style={styles.emptyWrap}>
             <EmptyState title={t("No rates yet")} description={t("Choose a free date range and add the first nightly price.")} />
-            <Button onPress={onAddRate} icon={Plus}>{t("Add first rate")}</Button>
+            <Button signalAction="ui.RoomRatesView.onAddRate.press" signalPlacement="RoomRatesView.onAddRate" onPress={onAddRate} icon={Plus}>{t("Add first rate")}</Button>
           </View>
         ) : !loading && !error ? (
           <View style={styles.list}>{rates.map((rate) => <RateCard key={rate.id} rate={rate} onPress={() => onEditRate(rate)} />)}</View>
@@ -618,13 +620,14 @@ function RoomDetail({ room, onBack, onEdit, onAddRate, onEditRate }: { room: Roo
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const loadRates = useCallback(async () => {
+  const loadRates = useCallback(monitoredAction("action.RoomDetail.loadRates", "RoomDetail.loadRates", async (signalScope) => {
+    const apiClient = scopedApiClient(signalScope);
     setLoading(true);
     setError(null);
     try { setRates(await apiClient.listRates(room.id)); }
-    catch (nextError) { setError(authErrorMessage(nextError)); }
+    catch (nextError) { signalScope.fail(nextError); setError(authErrorMessage(nextError)); }
     finally { setLoading(false); }
-  }, [room.id]);
+  }), [room.id]);
 
   useEffect(() => { void loadRates(); }, [loadRates]);
 
@@ -650,7 +653,7 @@ function RoomDetail({ room, onBack, onEdit, onAddRate, onEditRate }: { room: Roo
         {!loading && !error && rates.length === 0 ? (
           <View style={styles.emptyWrap}>
             <EmptyState title={t("No rates yet")} description={t("Choose a free date range and add the first nightly price.")} />
-            <Button onPress={onAddRate} icon={Plus}>{t("Add first rate")}</Button>
+            <Button signalAction="ui.RoomDetail.onAddRate.press" signalPlacement="RoomDetail.onAddRate" onPress={onAddRate} icon={Plus}>{t("Add first rate")}</Button>
           </View>
         ) : !loading && !error && rates.length > 0 ? (
           <View style={styles.list}>{rates.map((rate) => <RateCard key={rate.id} rate={rate} onPress={() => onEditRate(rate)} />)}</View>
@@ -708,7 +711,8 @@ function RateForm({ room, rate, onBack, onSaved }: { room: Room; rate: RatePerio
     (integerValues[0] ?? 0) + (integerValues[1] ?? 0) <= room.maxGuests;
   const valid = datesValid && capacityValid && moneyValues.every((value) => value !== null && value >= 0) && integerValues.every((value) => value !== null && value >= 0) && (integerValues[3] ?? 0) > 0 && (integerValues[2] ?? 18) <= 17;
 
-  const save = async () => {
+  const save = monitoredAction("action.RateForm.save", "RateForm.save", async (signalScope) => {
+    const apiClient = scopedApiClient(signalScope);
     setSubmitted(true);
     setError(null);
     if (!valid) return;
@@ -739,9 +743,9 @@ function RateForm({ room, rate, onBack, onSaved }: { room: Room; rate: RatePerio
       else await apiClient.createRate(room.id, input);
       onSaved();
     }
-    catch (nextError) { setError(authErrorMessage(nextError)); }
+    catch (nextError) { signalScope.fail(nextError); setError(authErrorMessage(nextError)); }
     finally { setSaving(false); }
-  };
+  });
 
   return (
     <KeyboardAvoidingView style={uiStyles.screen} behavior={Platform.OS === "ios" ? "padding" : undefined}>
@@ -752,7 +756,10 @@ function RateForm({ room, rate, onBack, onSaved }: { room: Room; rate: RatePerio
         <View style={styles.formSection}>
           <SectionTitle>{t("Board basis")}</SectionTitle>
           <BoardSelector value={mealPlan} disabled={saving} onChange={(value) => { setMealPlan(value); setCalendarError(null); }} />
-          <Text style={styles.sectionHelper}>{t("This price applies only to")}{" "}{mealPlan} {" "}{t("requests.")}</Text>
+          <View style={styles.boardPriceNotice}>
+            <Info size={18} color={theme.colors.action} aria-hidden />
+            <Text accessibilityLiveRegion="polite" style={styles.boardPriceNoticeText}>{t("This price applies only to {{board}} requests.", { board: mealPlan })}</Text>
+          </View>
           <SectionTitle>{t("Select dates")}</SectionTitle>
           <Text style={styles.sectionHelper}>{t("Grey dates already have a price for this board. Other boards can use the same dates.")}</Text>
           {ratesLoading ? <LoadingState label={t("Loading calendar…")} compact /> : (
@@ -787,16 +794,16 @@ function RateForm({ room, rate, onBack, onSaved }: { room: Room; rate: RatePerio
           <SectionTitle>{t("Guests and supplements")}</SectionTitle>
           <Text style={styles.sectionHelper}>{t("The package price includes accommodation and the selected board for the guests below. Extra guest supplements must include their board.")}</Text>
           <View style={styles.fieldRow}>
-            <View style={styles.fieldHalf}><Field label={t("Adults included")} keyboardType="number-pad" value={includedAdults} onChangeText={setIncludedAdults} editable={!saving} /></View>
-            <View style={styles.fieldHalf}><Field label={t("Children included")} keyboardType="number-pad" value={includedChildren} onChangeText={setIncludedChildren} editable={!saving} /></View>
+            <View style={styles.fieldHalf}><NumberSelectField label={t("Adults included")} min={0} value={includedAdults} onChange={setIncludedAdults} disabled={saving} /></View>
+            <View style={styles.fieldHalf}><NumberSelectField label={t("Children included")} min={0} max={20} value={includedChildren} onChange={setIncludedChildren} disabled={saving} /></View>
           </View>
           <View style={styles.fieldRow}>
             <View style={styles.fieldHalf}><Field label={t("Extra adult, EUR")} keyboardType="decimal-pad" value={extraAdult} onChangeText={setExtraAdult} editable={!saving} /></View>
             <View style={styles.fieldHalf}><Field label={t("Extra child, EUR")} keyboardType="decimal-pad" value={extraChild} onChangeText={setExtraChild} editable={!saving} /></View>
           </View>
           <View style={styles.fieldRow}>
-            <View style={styles.fieldHalf}><Field label={t("Child age up to")} keyboardType="number-pad" value={maxChildAge} onChangeText={setMaxChildAge} editable={!saving} /></View>
-            <View style={styles.fieldHalf}><Field label={t("Minimum nights")} keyboardType="number-pad" value={minNights} onChangeText={setMinNights} editable={!saving} /></View>
+            <View style={styles.fieldHalf}><ChildAgeField label={t("Child age up to")} value={maxChildAge} onChange={setMaxChildAge} disabled={saving} error={submitted && (parseInteger(maxChildAge) === null || Number(maxChildAge) > 17) ? t("Select the child’s age.") : undefined} /></View>
+            <View style={styles.fieldHalf}><NumberSelectField label={t("Minimum nights")} max={365} value={minNights} onChange={setMinNights} disabled={saving} /></View>
           </View>
           <View style={styles.mealCard}>
             <Text style={styles.fieldLabel}>{t("Additional board charge")}</Text>
@@ -808,7 +815,7 @@ function RateForm({ room, rate, onBack, onSaved }: { room: Room; rate: RatePerio
           </View>
           {submitted && !valid ? <Text style={styles.validationSummary}>{t("Check the numbers: included guests must fit the room, values cannot be negative, child age is up to 17, and minimum stay starts at 1 night.")}</Text> : null}
         </View>
-        <Button onPress={() => void save()} loading={saving} icon={Check}>{rate ? t("Save rate changes") : t("Add rate period")}</Button>
+        <Button signalAction="ui.RateForm.save.press" signalPlacement="RateForm.save" onPress={() => void save()} loading={saving} icon={Check}>{rate ? t("Save rate changes") : t("Add rate period")}</Button>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -821,7 +828,7 @@ function PreviewCalculator({ room, rates }: { room: Room; rates: RatePeriod[] })
   const [checkIn, setCheckIn] = useState(rates[0]?.start ?? "2026-11-01");
   const [checkOut, setCheckOut] = useState(rates[0]?.endExclusive ?? "2026-11-02");
   const [adults, setAdults] = useState("2");
-  const [childAges, setChildAges] = useState("");
+  const [childAges, setChildAges] = useState<string[]>([]);
   const [preview, setPreview] = useState<RatePreview | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -834,37 +841,33 @@ function PreviewCalculator({ room, rates }: { room: Room; rates: RatePeriod[] })
     { room: 0, guests: 0, board: 0 },
   ) : null;
 
-  const calculate = async () => {
+  const calculate = monitoredAction("action.PreviewCalculator.calculate", "PreviewCalculator.calculate", async (signalScope) => {
+    const apiClient = scopedApiClient(signalScope);
     setError(null);
     setPreview(null);
     const adultCount = parseInteger(adults);
-    const ages = childAges.split(",").map((value) => value.trim()).filter(Boolean).map(Number);
+    const ages = childAges.map((age) => age === "" ? NaN : Number(age));
     if (!isIsoDate(checkIn) || !isIsoDate(checkOut) || checkIn >= checkOut || !adultCount || ages.some((age) => !Number.isInteger(age) || age < 0 || age > 17)) {
       setError("Check the dates, adult count and child ages.");
       return;
     }
     setLoading(true);
     try { setPreview(await apiClient.previewRate(room.id, { planCode, mealPlan, checkIn, checkOut, adults: adultCount, childAges: ages })); }
-    catch (nextError) { setError(authErrorMessage(nextError)); }
+    catch (nextError) { signalScope.fail(nextError); setError(authErrorMessage(nextError)); }
     finally { setLoading(false); }
-  };
+  });
 
   return (
     <View style={styles.section}>
       <SectionTitle>{t("Test a stay price")}</SectionTitle>
       <Text style={styles.previewIntro}>{t("Choose a board plan and sample stay. This does not create a request or change your rates.")}</Text>
-      <BoardSelector value={mealPlan} onChange={(value) => { setMealPlan(value); setPreview(null); }} />
       <View style={[uiStyles.card, styles.previewCard]}>
         <Text style={styles.previewStep}>{t("1. Stay dates")}</Text>
         <View style={styles.fieldRow}>
-          <View style={styles.fieldHalf}><FilterDateField label={t("Check-in")} value={checkIn} onChange={(value) => { setCheckIn(value); setPreview(null); setError(null); }} /></View>
-          <View style={styles.fieldHalf}><FilterDateField label={t("Check-out")} value={checkOut} onChange={(value) => { setCheckOut(value); setPreview(null); setError(null); }} /></View>
+          <View style={styles.fieldHalf}><FilterDateField label={t("Check-in")} value={checkIn} onChange={(value) => { setCheckIn(value); setPreview(null); setError(null); }} disabled={loading} /></View>
+          <View style={styles.fieldHalf}><FilterDateField label={t("Check-out")} value={checkOut} onChange={(value) => { setCheckOut(value); setPreview(null); setError(null); }} disabled={loading} /></View>
         </View>
-        <Text style={styles.previewStep}>{t("2. Guests")}</Text>
-        <View style={styles.fieldRow}>
-          <View style={styles.fieldHalf}><Field label={t("Adults")} keyboardType="number-pad" value={adults} onChangeText={(value) => { setAdults(value); setPreview(null); setError(null); }} /></View>
-          <View style={styles.fieldHalf}><Field label={t("Child ages (comma-separated)")} keyboardType="numbers-and-punctuation" placeholder={t("None, or e.g. 5, 10")} value={childAges} onChangeText={(value) => { setChildAges(value); setPreview(null); setError(null); }} /></View>
-        </View>
+        <RoomGuestFields value={{ mealPlan, adults, childAges }} disabled={loading} onChange={(patch) => { if (patch.mealPlan) setMealPlan(patch.mealPlan); if (patch.adults !== undefined) setAdults(patch.adults); if (patch.childAges !== undefined) setChildAges(patch.childAges); setPreview(null); }} />
         {error ? <InlineState tone="danger">{translateLabel(error)}</InlineState> : null}
         {preview?.ok && breakdown ? (
           <View style={styles.previewBreakdown}>
@@ -879,7 +882,7 @@ function PreviewCalculator({ room, rates }: { room: Room; rates: RatePeriod[] })
         ) : preview && !preview.ok ? (
           <InlineState tone="warning">{t("No complete rate coverage:")}{" "}{preview.issues.map((issue) => issue.date ?? issue.type).join(", ")}</InlineState>
         ) : null}
-        <Button variant="secondary" onPress={() => void calculate()} loading={loading}>{t("Calculate sample price")}</Button>
+        <Button signalAction="ui.PreviewCalculator.calculate.press" signalPlacement="PreviewCalculator.calculate" variant="secondary" onPress={() => void calculate()} loading={loading}>{t("Calculate sample price")}</Button>
       </View>
     </View>
   );
@@ -888,7 +891,7 @@ function PreviewCalculator({ room, rates }: { room: Room; rates: RatePeriod[] })
 function RateCard({ rate, onPress }: { rate: RatePeriod; onPress: () => void }) {
   const mealDescription = t("{{v0}} · {{v1}}/adult · {{v2}}/child additional board charge", { v0: rate.mealPlan, v1: formatCents(rate.boardAdultCents), v2: formatCents(rate.boardChildCents) });
   return (
-    <Pressable accessibilityRole="button" accessibilityLabel={t("Edit {{v0}} rate from {{v1}} to {{v2}}", { v0: rate.mealPlan, v1: rate.start, v2: rate.endInclusive })} onPress={onPress} style={({ pressed }) => [uiStyles.card, styles.rateCard, pressed && styles.pressed]}>
+    <Pressable signalAction="ui.RateCard.onPress.press" signalPlacement="RateCard.onPress" accessibilityRole="button" accessibilityLabel={t("Edit {{v0}} rate from {{v1}} to {{v2}}", { v0: rate.mealPlan, v1: rate.start, v2: rate.endInclusive })} onPress={onPress} style={({ pressed }) => [uiStyles.card, styles.rateCard, pressed && styles.pressed]}>
       <View style={styles.rateTop}>
         <BoardBadge mealPlan={rate.mealPlan} />
         <View style={{ flex: 1 }}><Text style={styles.rateName}>{formatDate(rate.start)} — {formatDate(rate.endInclusive)}</Text><Text style={styles.rateCode}>{rate.mealPlan} · {rate.active ? t("Active") : t("Inactive")}</Text></View>
@@ -913,7 +916,7 @@ function RoomPhoto({ uri, variant }: { uri?: string | undefined; variant: "card"
 function ScreenHeader({ title, onBack, action }: { title: string; onBack: () => void; action?: ReactNode }) {
   return (
     <View style={styles.header}>
-      <Pressable accessibilityRole="button" accessibilityLabel={t("Back")} onPress={onBack} style={({ pressed }) => [styles.back, pressed && styles.pressed]}><ArrowLeft size={22} color={theme.colors.text} /></Pressable>
+      <Pressable signalAction="ui.ScreenHeader.onBack.press" signalPlacement="ScreenHeader.onBack" accessibilityRole="button" accessibilityLabel={t("Back")} onPress={onBack} style={({ pressed }) => [styles.back, pressed && styles.pressed]}><ArrowLeft size={22} color={theme.colors.text} /></Pressable>
       <Text numberOfLines={1} style={styles.headerTitle}>{translateLabel(title)}</Text>
       <View style={styles.headerAction}>{action}</View>
     </View>
@@ -922,7 +925,7 @@ function ScreenHeader({ title, onBack, action }: { title: string; onBack: () => 
 
 function HeaderAction({ icon: Icon, label, onPress }: { icon: typeof Plus; label: string; onPress: () => void }) {
   return (
-    <Pressable accessibilityRole="button" onPress={onPress} style={({ pressed }) => [styles.headerActionButton, pressed && styles.pressed]}>
+    <Pressable signalAction="ui.HeaderAction.onPress.press" signalPlacement="HeaderAction.onPress" accessibilityRole="button" onPress={onPress} style={({ pressed }) => [styles.headerActionButton, pressed && styles.pressed]}>
       <Icon size={17} color={theme.colors.action} /><Text style={styles.headerActionLabel}>{translateLabel(label)}</Text>
     </Pressable>
   );
@@ -931,7 +934,7 @@ function HeaderAction({ icon: Icon, label, onPress }: { icon: typeof Plus; label
 function ChoiceRow({ options, selected, onSelect }: { options: Array<{ value: string; label: string }>; selected: string; onSelect: (value: string) => void }) {
   return (
     <View style={styles.choices}>{options.map((option) => (
-      <Pressable key={option.value} accessibilityRole="button" accessibilityState={{ selected: option.value === selected }} onPress={() => onSelect(option.value)} style={({ pressed }) => [styles.choice, option.value === selected && styles.choiceSelected, pressed && styles.pressed]}>
+      <Pressable signalAction="ui.ChoiceRow.onSelect.press" signalPlacement="ChoiceRow.onSelect" key={option.value} accessibilityRole="button" accessibilityState={{ selected: option.value === selected }} onPress={() => onSelect(option.value)} style={({ pressed }) => [styles.choice, option.value === selected && styles.choiceSelected, pressed && styles.pressed]}>
         <Text style={[styles.choiceText, option.value === selected && styles.choiceTextSelected]}>{translateLabel(option.label)}</Text>
       </Pressable>
     ))}</View>
@@ -1035,6 +1038,8 @@ const styles = StyleSheet.create({
   formSection: { gap: theme.spacing[4], marginBottom: theme.spacing[3] },
   textArea: { minHeight: 108, paddingTop: theme.spacing[3], textAlignVertical: "top" },
   sectionHelper: { ...theme.typography.caption, color: theme.colors.textMuted, marginTop: -theme.spacing[3] },
+  boardPriceNotice: { flexDirection: "row", alignItems: "center", gap: theme.spacing[2], padding: theme.spacing[3], borderRadius: theme.radii.sm, backgroundColor: theme.colors.actionTint },
+  boardPriceNoticeText: { ...theme.typography.bodySmallMedium, color: theme.colors.text, flex: 1 },
   photoHeading: { flexDirection: "row", alignItems: "center", gap: theme.spacing[3] },
   photoStrip: { gap: theme.spacing[3], paddingRight: theme.spacing[2] },
   photoEmpty: { minHeight: 156, alignItems: "center", justifyContent: "center", gap: theme.spacing[2], backgroundColor: theme.colors.actionTint, borderWidth: 1, borderStyle: "dashed", borderColor: theme.colors.action, borderRadius: theme.radii.lg, padding: theme.spacing[4] },

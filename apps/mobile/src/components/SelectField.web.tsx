@@ -3,12 +3,13 @@ import { useId } from "react";
 import { StyleSheet, Text, View } from "react-native";
 import { theme } from "@hotel/design";
 import type { SelectFieldProps } from "./SelectField";
+import { actions } from "../monitoring/actions";
 
 export function SelectField({ label, value, options, onChange, disabled = false, error }: SelectFieldProps) {
   const errorId = useId();
   return <View style={styles.wrap}>
     <Text style={styles.label}>{translateLabel(label)}</Text>
-    <select aria-label={translateLabel(label)} aria-invalid={Boolean(error)} aria-describedby={error ? errorId : undefined} value={value} disabled={disabled} onChange={(event) => onChange(event.currentTarget.value)}
+    <select aria-label={translateLabel(label)} aria-invalid={Boolean(error)} aria-describedby={error ? errorId : undefined} value={value} disabled={disabled} onChange={(event) => actions.run("ui.select.change", "SelectField.web", () => onChange(event.currentTarget.value), "manual")}
       onKeyDown={(event) => { if (event.key === "Escape") event.stopPropagation(); }} onKeyUp={(event) => { if (event.key === "Escape") event.stopPropagation(); }} style={{
       minHeight: theme.controls.inputHeight, width: "100%", minWidth: 0, padding: "0 16px", boxSizing: "border-box",
       border: `${error ? 2 : 1}px solid ${error ? theme.colors.danger : theme.colors.borderStrong}`, borderRadius: theme.radii.md,

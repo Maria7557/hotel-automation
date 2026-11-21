@@ -1,3 +1,5 @@
+import { resolveLanguage, translate, type Language } from "@hotel/i18n";
+
 import { errors } from "../lib/errors.js";
 import { hashPassword, verifyPassword } from "../lib/password.js";
 import { createSessionToken, digestSessionToken } from "../lib/session-token.js";
@@ -7,6 +9,13 @@ import {
   type SocialTokenVerifier,
 } from "../providers/social-auth.js";
 import type { AuthRepository, PublicUser, SocialProvider } from "../repositories/types.js";
+import type { PlatformNotificationMailer } from "./notifications.js";
+
+type PasswordRecovery = {
+  mailer: PlatformNotificationMailer;
+  appBaseUrl: string;
+  onDeliveryError: () => void;
+};
 
 type AuthResult = {
   accessToken: string;
@@ -23,12 +32,81 @@ function publicUser(user: PublicUser): PublicUser {
 }
 
 export class AuthService {
+  private readonly pendingEmails = new Set<Promise<void>>();
+
   constructor(
     private readonly repository: AuthRepository,
     private readonly secret: string,
     private readonly sessionTtlDays: number,
     private readonly socialTokenVerifier: SocialTokenVerifier,
+    private readonly recovery?: PasswordRecovery,
   ) {}
+
+  requestPasswordReset(input: { email: string; language: Language }): void {
+    if (!this.recovery?.mailer.configured || this.pendingEmails.size >= 100) {
+      throw errors.passwordResetUnavailable();
+    }
+    // Delivery runs separately so SMTP latency cannot disclose whether an account exists.
+    this.queueEmail(() => this.deliverPasswordReset(input));
+  }
+
+  async finishPendingEmails(): Promise<void> {
+    await Promise.all(this.pendingEmails);
+  }
+
+  private queueEmail(deliver: () => Promise<void>): void {
+    const pending = deliver().catch(() => {
+      // SMTP errors may contain recipient details or reset links; log only a fixed message.
+      this.recovery?.onDeliveryError();
+    }).finally(() => this.pendingEmails.delete(pending));
+    this.pendingEmails.add(pending);
+  }
+
+  private resetTokenHash(token: string): string {
+    return digestSessionToken(`password-reset:${token}`, this.secret);
+  }
+
+  private async deliverPasswordReset(input: { email: string; language: Language }): Promise<void> {
+    const recovery = this.recovery!;
+    const user = await this.repository.findUserByEmail(normalizeEmail(input.email));
+    // Provider-only accounts recover access through their identity provider.
+    if (!user?.passwordHash) return;
+    const token = createSessionToken();
+    const now = new Date();
+    const issued = await this.repository.issuePasswordReset({
+      userId: user.id, tokenHash: this.resetTokenHash(token),
+      requestedAt: now, expiresAt: new Date(now.getTime() + 30 * 60_000),
+      resendBefore: new Date(now.getTime() - 60_000),
+    });
+    if (!issued) return;
+    const url = new URL(recovery.appBaseUrl);
+    // Fragments are never sent to the web server or included in HTTP referrers.
+    url.hash = `reset-password=${token}`;
+    const language = resolveLanguage(user.uiLanguage, input.language);
+    await recovery.mailer.send({
+      to: user.email,
+      subject: translate(language, "Reset your password"),
+      text: [
+        translate(language, "Use this link to choose a new password. It expires in 30 minutes and can only be used once."),
+        url.toString(),
+        translate(language, "If you did not request this, you can ignore this email. Your password has not changed."),
+      ].join("\n\n"),
+    });
+  }
+
+  async resetPassword(input: { token: string; password: string }): Promise<void> {
+    const user = await this.repository.consumePasswordReset({
+      tokenHash: this.resetTokenHash(input.token), passwordHash: await hashPassword(input.password), now: new Date(),
+    });
+    if (!user) throw errors.passwordResetInvalid();
+    if (this.recovery?.mailer.configured) {
+      this.queueEmail(() => this.recovery!.mailer.send({
+        to: user.email,
+        subject: translate(resolveLanguage(user.uiLanguage), "Your password has been changed"),
+        text: translate(resolveLanguage(user.uiLanguage), "Your password has been changed and all existing sessions have been signed out. If you did not make this change, reset your password immediately and contact support."),
+      }));
+    }
+  }
 
   async updateLanguage(userId: string, uiLanguage: "en" | "it") {
     await this.repository.updateUserLanguage(userId, uiLanguage);
@@ -59,7 +137,7 @@ export class AuthService {
       throw errors.invalidCredentials();
     }
 
-    return this.createSession(publicUser(user));
+    return this.createSession(publicUser(user), user.passwordHash);
   }
 
   async socialLogin(input: { provider: SocialProvider; idToken: string }): Promise<AuthResult> {
@@ -133,14 +211,16 @@ export class AuthService {
     await this.repository.deleteSession(digestSessionToken(accessToken, this.secret));
   }
 
-  private async createSession(user: PublicUser): Promise<AuthResult> {
+  private async createSession(user: PublicUser, expectedPasswordHash?: string): Promise<AuthResult> {
     const accessToken = createSessionToken();
     const expiresAt = new Date(Date.now() + this.sessionTtlDays * 24 * 60 * 60 * 1_000);
-    await this.repository.createSession({
+    const created = await this.repository.createSession({
       userId: user.id,
       tokenHash: digestSessionToken(accessToken, this.secret),
       expiresAt,
+      ...(expectedPasswordHash !== undefined ? { expectedPasswordHash } : {}),
     });
+    if (!created) throw errors.invalidCredentials();
     return { accessToken, expiresAt, user };
   }
 }
