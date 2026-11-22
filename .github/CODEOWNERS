@@ -1,0 +1,8 @@
+# Website and ordinary application changes use CI without a mandatory human review.
+# Infrastructure and migration changes require review by the other maintainer.
+# This rule also protects CODEOWNERS itself.
+/.github/ @Maria7557 @KseniaKuntsevich
+/deploy/ @Maria7557 @KseniaKuntsevich
+/apps/server/drizzle/ @Maria7557 @KseniaKuntsevich
+/apps/server/drizzle.config.ts @Maria7557 @KseniaKuntsevich
+/apps/server/src/db/migrate.ts @Maria7557 @KseniaKuntsevich
