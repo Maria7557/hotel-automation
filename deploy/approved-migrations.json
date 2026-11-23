@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "migrations": {
+    "0016_password_reset_tokens": {
+      "created_at": 1794436214142,
+      "sha256": "f8655f9fde77f5ae720a91e80d9ecf8b8830c46b27ee042922f298041423002e",
+      "kind": "additive"
+    },
+    "0017_widget_css": {
+      "created_at": 1794516852401,
+      "sha256": "727ca2a80bc1a145d4f2c2da81acf0326b1aad2bc187d518f9e3fe84b4a1be20",
+      "kind": "additive"
+    }
+  }
+}

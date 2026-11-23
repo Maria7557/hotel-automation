@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import json
 import os
 import pwd
@@ -33,10 +34,6 @@ CONFIG = Path("/etc/hotel-automation/server.env")
 DATABASE = "hotel_automation"
 SERVICES = ("hotel-automation.service", "hotel-automation-clients.service")
 HEADER = re.compile(rb"([0-9a-f]{40}) ([1-9][0-9]{0,17}) ([1-9][0-9]{0,17})\n")
-MIGRATIONS = {
-    "0016_password_reset_tokens": (1794436214142, "f8655f9fde77f5ae720a91e80d9ecf8b8830c46b27ee042922f298041423002e"),
-    "0017_widget_css": (1794516852401, "727ca2a80bc1a145d4f2c2da81acf0326b1aad2bc187d518f9e3fe84b4a1be20"),
-}
 PG = ("/usr/sbin/runuser", "-u", "postgres", "--")
 
 
@@ -95,19 +92,24 @@ def db_history():
 def migration_sql(candidate: Path, history: list[tuple[str, str]]) -> str:
     directory = candidate / "apps/server/drizzle"
     journal = json.loads((directory / "meta/_journal.json").read_text())["entries"]
+    approval = json.loads((candidate / "deploy/approved-migrations.json").read_text())
+    if approval.get("version") != 1 or not isinstance(approval.get("migrations"), dict):
+        raise ValueError("Unsupported migration approval manifest")
+    approved = approval["migrations"]
     expected = []
     for entry in journal:
         if not re.fullmatch(r"[0-9]{4}_[a-z0-9_]+", entry["tag"]) or not isinstance(entry["when"], int):
             raise ValueError("Unexpected migration journal entry")
         source = directory / (entry["tag"] + ".sql")
-        expected.append((str(entry["when"]), sha256(source), entry["tag"], source))
+        contents = source.read_bytes()
+        expected.append((str(entry["when"]), hashlib.sha256(contents).hexdigest(), entry["tag"], contents))
     if not history or history != [(when, digest) for when, digest, _, _ in expected[:len(history)]]:
         raise ValueError("Production migration history differs from the release")
     body = ["SET LOCAL lock_timeout = '5s';", "SET LOCAL statement_timeout = '45s';"]
-    for when, digest, tag, source in expected[len(history):]:
-        if MIGRATIONS.get(tag) != (int(when), digest):
+    for when, digest, tag, contents in expected[len(history):]:
+        if approved.get(tag) != {"created_at": int(when), "sha256": digest, "kind": "additive"}:
             raise ValueError("Unreviewed migration: " + tag)
-        body.extend((source.read_text(), f"INSERT INTO drizzle.__drizzle_migrations (hash, created_at) VALUES ('{digest}', {when});"))
+        body.extend((contents.decode("utf-8"), f"INSERT INTO drizzle.__drizzle_migrations (hash, created_at) VALUES ('{digest}', {when});"))
     return "\n".join(body) if len(body) > 2 else ""
 
 
@@ -117,7 +119,7 @@ def backup_database(destination: Path) -> None:
     run("/usr/bin/pg_restore", "--list", str(destination), stdout=subprocess.DEVNULL)
 
 
-def healthy(web: Path) -> None:
+def healthy(web: Path, expected_commit: str | None = None) -> None:
     for count in range(12):
         try:
             for service in SERVICES:
@@ -133,6 +135,10 @@ def healthy(web: Path) -> None:
     # Read the actual public index and verify the new browser bundle and legal pages.
     with urlopen(ORIGIN + "/", timeout=10) as response:
         index = response.read(500_000).decode()
+    if expected_commit:
+        with urlopen(ORIGIN + "/release.json", timeout=10) as response:
+            if json.load(response).get("commit") != expected_commit:
+                raise ValueError("Public frontend release does not match the backend release")
     match = re.search(r'(/_expo/static/js/web/[A-Za-z0-9_.-]+\.js)', index)
     if not match or not (web / match.group(1)[1:]).is_file():
         raise ValueError("Public web does not advertise this release's assets")
@@ -189,13 +195,16 @@ def deploy(tree: Path, commit: str) -> None:
         raise RuntimeError("Live Ospio server release is disabled")
     running = json.loads((SOURCE / ".ospio-release.json").read_text())["commit"]
     if running == commit:
-        healthy(WEB)
+        healthy(WEB, commit)
         print(f"Ospio commit {commit} is already live")
         return
     if shutil.disk_usage(SOURCE.parent).free < 3 * 1024**3:
         raise ValueError("Not enough disk space for a safe Ospio release")
     for service in SERVICES:
         run("/usr/bin/systemctl", "is-active", "--quiet", service)
+    # Read approvals and SQL from the root-private, verified artifact. The runtime
+    # copy is subsequently writable by hotelapp while npm installs dependencies.
+    db_changes = migration_sql(tree / "source", db_history())
 
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     label = f"{stamp}-{commit[:12]}"
@@ -226,7 +235,6 @@ def deploy(tree: Path, commit: str) -> None:
     for name in ("index", "client-worker"):
         run("/usr/sbin/runuser", "-u", "hotelapp", "--", "/opt/node24/bin/node", "--check",
             str(new_source / "apps/server/dist" / (name + ".js")), timeout=30)
-    db_changes = migration_sql(new_source, db_history())
     shutil.copy2(CONFIG, backup / "server.env")
     os.chmod(backup / "server.env", 0o600)
     # Verify a PostgreSQL backup before any schema changes.
@@ -240,7 +248,7 @@ def deploy(tree: Path, commit: str) -> None:
         run(*PG, "/usr/bin/psql", "-X", "-v", "ON_ERROR_STOP=1", "--single-transaction",
             "-d", DATABASE, "-f", "-", input=db_changes, text=True)
     try:
-        switch_pair(SOURCE, WEB, new_source, new_web, stop, start, lambda: healthy(WEB))
+        switch_pair(SOURCE, WEB, new_source, new_web, stop, start, lambda: healthy(WEB, commit))
     except Exception:
         # File rollback is performed by switch_pair; verify that API returned.
         healthy(WEB)

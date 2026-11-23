@@ -10,6 +10,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      - run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s deploy -p "test_ospio_*.py"
       - uses: actions/setup-node@v4
         with:
           node-version: 24
