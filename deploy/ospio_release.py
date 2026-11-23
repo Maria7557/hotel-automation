@@ -25,7 +25,10 @@ CHECKSUM = re.compile(r"[0-9a-f]{64}")
 
 def sha256(path: Path) -> str:
     with path.open("rb") as source:
-        return hashlib.file_digest(source, "sha256").hexdigest()
+        digest = hashlib.sha256()
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+        return digest.hexdigest()
 
 
 def safe_extract(path: Path, destination: Path, allowed: Callable[[str], bool]) -> None:
@@ -112,6 +115,7 @@ def switch_pair(old_source: Path, old_web: Path, new_source: Path, new_web: Path
         if destination.is_symlink() or (destination.exists() and not destination.is_file()):
             raise ValueError(f"Unsafe legal page target: {name}")
         shutil.copyfile(from_path, destination)
+        destination.chmod(0o644)
     moved: list[tuple[Path, Path]] = []
     stop()
     try:

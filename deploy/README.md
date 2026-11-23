@@ -121,3 +121,28 @@ Local release checks:
 - The paired-directory switch and rollback are exercised in isolation. Do not
   install or enable a live runner until PostgreSQL backup/migrations, both Hotel
   services, and the web/API cutover have been exercised together outside production.
+
+### Live release operator setup
+
+The staging job uploads the inner archive. The production job instead sends the
+original ZIP issued by GitHub Actions along with the commit, artifact and run IDs.
+The server rechecks current `main`, the repository, successful build, exact
+workflow and SHA-256 against GitHub before unpacking. No GitHub token is sent to
+the server. A copied SSH key alone cannot substitute a different release or ZIP.
+
+Install the pinned server scripts outside the app tree (root-owned):
+`/usr/local/libexec/ospio-hotel/{ospio_live.py,ospio_release.py}` and
+`/usr/local/libexec/ospio-hotel-receive` (the forced-command wrapper).
+Retain the legacy staging implementation as
+`/usr/local/libexec/ospio-hotel-stage`. The dedicated account can only run the
+root-owned live helper with **no arguments** through sudo, never a shell.
+Verify the original artifact on the target with the root-only `verify` mode
+before enabling. Keep both the host marker `/etc/ospio-hotel-deploy.enabled`
+and environment flag `OSPIO_HOTEL_DEPLOY_READY` off until reviewed.
+
+The live runner installs locked runtime dependencies without lifecycle scripts
+as `hotelapp`, verifies backup readability, restricts database upgrades to
+explicitly reviewed additive migrations, and retains the prior app and web trees.
+If health checks fail, it restores the previous code and web assets. It does not
+automatically restore the database, which could overwrite new writes. New
+migrations require a separately reviewed migration allowlist change.
