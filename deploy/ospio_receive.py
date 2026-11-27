@@ -7,9 +7,10 @@ import subprocess
 import sys
 
 command = os.environ.get("SSH_ORIGINAL_COMMAND", "")
-stage = "/usr/local/libexec/ospio-hotel-stage"
-if command == "ospio-hotel-deploy-check" or re.fullmatch(
-        r"ospio-hotel-stage [0-9a-f]{40} [0-9a-f]{64}", command):
+if command == "ospio-hotel-deploy-check":
+    os.execv("/usr/bin/sudo", ["sudo", "-n", "/usr/local/libexec/ospio-hotel/ospio_status.py"])
+if re.fullmatch(r"ospio-hotel-stage [0-9a-f]{40} [0-9a-f]{64}", command):
+    stage = "/usr/local/libexec/ospio-hotel/ospio_stage.py"
     os.execv(stage, [stage])
 
 match = re.fullmatch(r"ospio-hotel-deploy ([0-9a-f]{40}) ([1-9][0-9]{0,17}) ([1-9][0-9]{0,17})", command)

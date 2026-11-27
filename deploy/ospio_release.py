@@ -91,7 +91,10 @@ def prepare(bundle: Path, destination: Path, commit: str, digest: str) -> None:
         os.rename(built / "apps/server/dist", source / "apps/server/dist")
         os.rename(built / "apps/mobile/dist", tree / "web")
         shutil.rmtree(built)
-        (source / ".ospio-release.json").write_text(json.dumps({"commit": commit, "repository": "Maria7557/hotel-automation", "branch": "main"}) + "\n")
+        metadata = json.dumps({"commit": commit, "repository": "Maria7557/hotel-automation", "branch": "main"}) + "\n"
+        (source / ".ospio-release.json").write_text(metadata)
+        (tree / "web/release.json").write_text(metadata)
+        (tree / "web/release.json").chmod(0o644)
         os.rename(tree, destination)
 
 
@@ -117,7 +120,12 @@ def switch_pair(old_source: Path, old_web: Path, new_source: Path, new_web: Path
         shutil.copyfile(from_path, destination)
         destination.chmod(0o644)
     moved: list[tuple[Path, Path]] = []
-    stop()
+    try:
+        stop()
+    except BaseException:
+        # systemctl can stop one service before failing on the other.
+        start()
+        raise
     try:
         for (existing, staged), saved in zip(pairs, previous):
             os.rename(existing, saved)

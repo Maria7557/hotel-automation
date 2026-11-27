@@ -1,9 +1,11 @@
 import json
+import hashlib
+import shutil
 import tempfile
 import unittest
 import zipfile
 from pathlib import Path
-from ospio_live import MIGRATIONS, REPO, WORKFLOW, WORKFLOW_ID, github_digest, import_zip, migration_sql, sha256
+from ospio_live import REPO, WORKFLOW, WORKFLOW_ID, github_digest, import_zip, migration_sql, sha256
 
 
 class LiveReleaseTest(unittest.TestCase):
@@ -56,13 +58,42 @@ class LiveReleaseTest(unittest.TestCase):
         history = [(str(e["when"]), sha256(db / (e["tag"] + ".sql"))) for e in entries]
         self.assertEqual(migration_sql(root, history), "")
         plan = migration_sql(root, history[:-2])
-        for digest in (digest for _, digest in MIGRATIONS.values()):
+        approved = json.loads((root / "deploy/approved-migrations.json").read_text())["migrations"]
+        for digest in (entry["sha256"] for entry in approved.values()):
             self.assertIn(digest, plan)
         self.assertIn('ADD COLUMN "widget_css"', plan)
         with self.assertRaisesRegex(ValueError, "history differs"):
             migration_sql(root, [(history[0][0], "0" * 64)])
         with self.assertRaisesRegex(ValueError, "Unreviewed"):
             migration_sql(root, history[:-3])
+
+    def test_new_reviewed_migration_needs_no_installed_helper_edit(self):
+        original = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            directory = root / "apps/server/drizzle"
+            shutil.copytree(original / "apps/server/drizzle", directory)
+            (root / "deploy").mkdir()
+            approval = json.loads((original / "deploy/approved-migrations.json").read_text())
+            journal = json.loads((directory / "meta/_journal.json").read_text())
+            history = [(str(e["when"]), sha256(directory / (e["tag"] + ".sql"))) for e in journal["entries"]]
+            tag, contents = "0018_team_fixture", b'ALTER TABLE "hotels" ADD COLUMN "fixture" text;'
+            when = journal["entries"][-1]["when"] + 1
+            journal["entries"].append({"tag": tag, "when": when})
+            (directory / (tag + ".sql")).write_bytes(contents)
+            (directory / "meta/_journal.json").write_text(json.dumps(journal))
+            manifest = root / "deploy/approved-migrations.json"
+            manifest.write_text(json.dumps(approval))
+            with self.assertRaisesRegex(ValueError, "Unreviewed"):
+                migration_sql(root, history)
+            approval["migrations"][tag] = {
+                "created_at": when, "sha256": hashlib.sha256(contents).hexdigest(), "kind": "additive",
+            }
+            manifest.write_text(json.dumps(approval))
+            self.assertIn(contents.decode(), migration_sql(root, history))
+            (directory / (tag + ".sql")).write_text("DROP TABLE hotels;")
+            with self.assertRaisesRegex(ValueError, "Unreviewed"):
+                migration_sql(root, history)
 
 if __name__ == "__main__":
     unittest.main()

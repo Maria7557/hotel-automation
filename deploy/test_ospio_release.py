@@ -1,4 +1,6 @@
 import io
+import hashlib
+import json
 import tarfile
 import tempfile
 import unittest
@@ -7,6 +9,58 @@ from ospio_release import LEGAL, prepare, safe_extract, switch_pair
 
 
 class ReleaseTest(unittest.TestCase):
+    def test_real_bundle_preparation_publishes_same_fe_and_be_commit(self):
+        with tempfile.TemporaryDirectory() as work:
+            root = Path(work)
+            def archive(path, files):
+                with tarfile.open(path, "w:gz") as output:
+                    for name, data in files.items():
+                        member = tarfile.TarInfo(name)
+                        member.size = len(data)
+                        output.addfile(member, io.BytesIO(data))
+            archive(root / "source.tar.gz", {
+                "package-lock.json": b"{}",
+                "apps/server/drizzle/meta/_journal.json": b'{"entries":[]}',
+            })
+            archive(root / "build.tar.gz", {
+                "apps/server/dist/index.js": b"console.log('api')",
+                "apps/server/dist/client-worker.js": b"console.log('worker')",
+                "apps/mobile/dist/index.html": b'<script src="/_expo/static/js/web/index-fixture.js"></script>',
+                "apps/mobile/dist/_expo/static/js/web/index-fixture.js": b"console.log('web')",
+            })
+            commit = "a" * 40
+            archive(root / "bundle.tar.gz", {
+                "source.tar.gz": (root / "source.tar.gz").read_bytes(),
+                "build.tar.gz": (root / "build.tar.gz").read_bytes(),
+                "commit": (commit + "\n").encode(),
+            })
+            bundle = root / "bundle.tar.gz"
+            prepare(bundle, root / "ready", commit, hashlib.sha256(bundle.read_bytes()).hexdigest())
+            api = json.loads((root / "ready/source/.ospio-release.json").read_text())
+            web = json.loads((root / "ready/web/release.json").read_text())
+            self.assertEqual(api, web)
+            self.assertEqual(web["commit"], commit)
+            self.assertTrue((root / "ready/source/apps/server/dist/client-worker.js").is_file())
+
+    def test_partial_service_stop_failure_attempts_recovery_without_moving_files(self):
+        with tempfile.TemporaryDirectory() as work:
+            root = Path(work)
+            source, web, staged_source, staged_web = [root / n for n in ("api", "web", "new-api", "new-web")]
+            for path in (source, web, staged_source, staged_web):
+                path.mkdir()
+            for page in LEGAL:
+                (web / page).write_text("live legal")
+            actions = []
+            def stop():
+                actions.append("stop")
+                raise RuntimeError("second unit failed to stop")
+            with self.assertRaisesRegex(RuntimeError, "second unit"):
+                switch_pair(source, web, staged_source, staged_web, stop,
+                            lambda: actions.append("start"), lambda: self.fail("must not switch"))
+            self.assertEqual(actions, ["stop", "start"])
+            self.assertTrue(source.is_dir())
+            self.assertFalse((root / "api.previous").exists())
+
     def test_rejects_unsafe_archive_members(self):
         for name, link in (("../outside", False), ("/absolute", False), ("nested/link", True)):
             with self.subTest(name=name), tempfile.TemporaryDirectory() as work:

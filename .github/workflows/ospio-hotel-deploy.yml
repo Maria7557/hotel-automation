@@ -1,23 +1,39 @@
 name: Deploy Ospio Hotel
+run-name: Ospio ${{ inputs.operation }} by @${{ github.actor }}
 
 on:
   workflow_dispatch:
     inputs:
-      stage_on_server:
-        description: 'Upload a verified candidate to isolated Ospio staging; do not touch the running site'
-        type: boolean
-        default: false
-      deploy_to_production:
-        description: 'Publish this main commit to Ospio Hotel (off = verify and build only)'
-        type: boolean
-        default: false
+      operation:
+        description: 'deploy = release FE + BE; status = check access; stage = upload only; build = verify only'
+        type: choice
+        required: true
+        default: deploy
+        options: [deploy, status, stage, build]
 
 permissions:
   contents: read
 
 jobs:
+  access:
+    if: github.ref == 'refs/heads/main' && inputs.operation != 'build'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    environment: ospio-hotel-production
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check team credential and server permission before building
+        run: python3 deploy/ospio_actions.py status ${{ inputs.operation == 'deploy' && '--require-enabled' || '' }}
+        env:
+          OSPIO_HOTEL_DEPLOY_KEY: ${{ secrets.OSPIO_HOTEL_DEPLOY_KEY }}
+          OSPIO_HOTEL_KNOWN_HOSTS: ${{ secrets.OSPIO_HOTEL_KNOWN_HOSTS }}
+          OSPIO_HOTEL_DEPLOY_READY: ${{ vars.OSPIO_HOTEL_DEPLOY_READY }}
+
   build:
-    if: github.ref == 'refs/heads/main'
+    needs: access
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' && inputs.operation != 'status' && (inputs.operation == 'build' || needs.access.result == 'success') }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     outputs:
@@ -69,7 +85,7 @@ jobs:
     permissions:
       contents: read
       actions: read
-    if: github.ref == 'refs/heads/main' && (inputs.deploy_to_production || inputs.stage_on_server)
+    if: github.ref == 'refs/heads/main' && (inputs.operation == 'deploy' || inputs.operation == 'stage')
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -79,59 +95,26 @@ jobs:
     concurrency:
       group: ospio-hotel-production
       cancel-in-progress: false
+    env:
+      OSPIO_HOTEL_DEPLOY_KEY: ${{ secrets.OSPIO_HOTEL_DEPLOY_KEY }}
+      OSPIO_HOTEL_KNOWN_HOSTS: ${{ secrets.OSPIO_HOTEL_KNOWN_HOSTS }}
+      OSPIO_HOTEL_DEPLOY_READY: ${{ vars.OSPIO_HOTEL_DEPLOY_READY }}
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ospio-hotel-release
-      - name: Send release to the restricted Hotel deploy entrypoint
-        shell: bash
+      - name: Publish through the team service identity
+        run: python3 deploy/ospio_actions.py ${{ inputs.operation }}
         env:
-          ARTIFACT_ID: ${{ needs.build.outputs.artifact_id }}
           GH_TOKEN: ${{ github.token }}
-          LIVE_DEPLOY: ${{ inputs.deploy_to_production }}
-          DEPLOY_READY: ${{ vars.OSPIO_HOTEL_DEPLOY_READY }}
-          DEPLOY_KEY: ${{ secrets.OSPIO_HOTEL_DEPLOY_KEY }}
-          KNOWN_HOSTS: ${{ secrets.OSPIO_HOTEL_KNOWN_HOSTS }}
+          OSPIO_RELEASE_ARTIFACT_ID: ${{ needs.build.outputs.artifact_id }}
+      - name: Verify frontend and backend release
+        if: inputs.operation == 'deploy'
         run: |
-          set -euo pipefail
-          mode=ospio-hotel-stage
-          if [[ "$LIVE_DEPLOY" == true ]]; then
-            if [[ "$DEPLOY_READY" != true ]]; then
-              echo "::error::Ospio Hotel production deployment is disabled."
-              exit 1
-            fi
-            mode=ospio-hotel-deploy
-          fi
-          if [[ -z "$DEPLOY_KEY" || -z "$KNOWN_HOSTS" ]]; then
-            echo "::error::Ospio Hotel production access has not been configured."
-            exit 1
-          fi
-          umask 077
-          auth="$(mktemp -d)"
-          trap 'rm -rf "$auth"' EXIT
-          printf '%s\n' "$DEPLOY_KEY" > "$auth/key"
-          printf '%s\n' "$KNOWN_HOSTS" > "$auth/known_hosts"
-          if [[ "$mode" == ospio-hotel-deploy ]]; then
-            [[ "$ARTIFACT_ID" =~ ^[0-9]+$ ]]
-            # Send the untouched GitHub ZIP. The target independently checks its
-            # digest and provenance against GitHub's public API, without our token.
-            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID/zip" > "$auth/github.zip"
-            payload="$auth/github.zip"
-            command="$mode $GITHUB_SHA $ARTIFACT_ID $GITHUB_RUN_ID"
-          else
-            payload=ospio-hotel-release.tar.gz
-            checksum="$(sha256sum "$payload" | cut -d ' ' -f 1)"
-            command="$mode $GITHUB_SHA $checksum"
-          fi
-          ssh -T -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=yes \
-            -o IdentitiesOnly=yes -o UserKnownHostsFile="$auth/known_hosts" \
-            -i "$auth/key" ospio-hotel-deploy@ospio.online \
-            "$command" < "$payload"
-      - name: Verify the public API and app after deployment
-        if: inputs.deploy_to_production
-        run: |
-          curl --fail --silent --show-error --retry 4 --retry-connrefused https://ospio.online/health >/dev/null
-          curl --fail --silent --show-error https://ospio.online/ >/dev/null
-          for page in privacy.html terms.html terms-it.html; do
-            curl --fail --silent --show-error "https://ospio.online/$page" >/dev/null
-          done
+          python3 deploy/ospio_actions.py status --require-enabled --require-current
+          curl --fail --silent --show-error --retry 4 --retry-connrefused https://ospio.online/health
+          curl --fail --silent --show-error https://ospio.online/release.json > "$RUNNER_TEMP/ospio-live-release.json"
+          python3 -c 'import json, os; assert json.load(open(os.environ["RUNNER_TEMP"] + "/ospio-live-release.json"))["commit"] == os.environ["GITHUB_SHA"]'
